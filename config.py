@@ -12,7 +12,7 @@ FONT_PATH_TALL = "assets/fonts/6x10.bdf"
 FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
 
 # --- WMATA (DC Metro) ---
-WMATA_API_KEY = "c53cb0be42a44223bd50e608d5428b03"
+WMATA_API_KEY = ""
 WMATA_STATION_CODE = "E05"
 
 STATION_SHORT_NAMES = {
@@ -33,7 +33,7 @@ OPENWEATHER_CITY_ID = "4140963" # Washington DC
 WEATHER_UNITS = "metric"
 
 # Flight Tracking Configuration
-AVIATIONSTACK_API_KEY = "056c570bf590bae3e6abf270b769d214"
+AVIATIONSTACK_API_KEY = ""
 FLIGHT_NUMBER = "AC57"  # Default flight to track
 FLIGHT_UPDATE_INTERVAL = 1800
 
