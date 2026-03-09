@@ -8,13 +8,12 @@ MATRIX_BRIGHTNESS = 30
 MATRIX_MAPPING = 'adafruit-hat' 
 
 # --- FONTS ---
-# Ensure these files exist in your assets/fonts/ folder
 FONT_PATH_TALL = "assets/fonts/6x10.bdf" 
 FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
 
 # --- WMATA (DC Metro) ---
 WMATA_API_KEY = "c53cb0be42a44223bd50e608d5428b03"
-WMATA_STATION_CODE = "E05" # Metro Center
+WMATA_STATION_CODE = "E05"
 
 STATION_SHORT_NAMES = {
     "Greenbelt": "Grnblt",
@@ -29,7 +28,7 @@ STATION_SHORT_NAMES = {
 }
 
 # --- WEATHER ---
-OPENWEATHER_API_KEY = "d5092fab79001316a8ce418977440796" # <--- PASTE YOUR KEY HERE
+OPENWEATHER_API_KEY = "" 
 OPENWEATHER_CITY_ID = "4140963" # Washington DC
 WEATHER_UNITS = "metric"
 

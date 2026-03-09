@@ -11,9 +11,8 @@ PALETTE = {
 }
 
 def create_sun_21x32(expanded_rays=False):
-    # Grid size is now 21 * 32 = 672
     grid = [0] * 672
-    center_x, center_y = 10, 15 # Centered in 21px width
+    center_x, center_y = 10, 15 
     radius = 6
     
     # Draw Core
@@ -52,10 +51,6 @@ def create_rain_21x32(frame_offset=0):
         if 18 < y_pos < 31:
             grid[int(y_pos)*21 + dx] = 5
     return grid
-
-# Add this to widgets/icons.py
-
-# widgets/icons.py
 
 def create_side_view_plane():
     # 14x6 side-profile airliner silhouette (Pointing RIGHT)

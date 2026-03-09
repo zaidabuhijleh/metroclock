@@ -149,8 +149,6 @@ class FlightWidget(Widget):
         # --- DYNAMIC LAYOUT & STATUS COLORS ---
         flight_no = self.data['flight']['iata']
         raw_status = self.data.get('flight_status', '').lower()
-        # raw_status = "delayed"
-        # print("Status: "+ raw_status)
         
         if raw_status == "active":
             status_line1, status_line2 = "EN", "ROUTE"

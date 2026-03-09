@@ -5,8 +5,6 @@ from core.widget import Widget
 import config
 
 # --- PIXEL PERFECT LETTER MAPS ---
-# 1 = Pixel On, 0 = Pixel Off
-# These are 3x5 bitmaps (Compact and sharp)
 BITMAP_LETTERS = {
     'R': [(0,0), (1,0), (2,0), (0,1), (2,1), (0,2), (1,2), (0,3), (2,3), (0,4), (2,4)],
     'B': [(0,0), (1,0), (0,1), (2,1), (0,2), (1,2), (0,3), (2,3), (0,4), (1,4)],
@@ -65,17 +63,16 @@ class MetroWidget(Widget):
         if not self.trains:
             return self.canvas
 
-        # --- 1. DETERMINE WHICH TRAINS TO SHOW ---
+        # --- DETERMINE WHICH TRAINS TO SHOW ---
         t1 = self.trains[self.scroll_index]
         t2 = self.trains[(self.scroll_index + 1) % len(self.trains)] if len(self.trains) > 1 else None
         
         current_pair = [t1]
         if t2: current_pair.append(t2)
 
-        # --- 2. CALCULATE PAGE DURATION ---
+        # --- CALCULATE PAGE DURATION ---
         longest_scroll_time = 0
         
-        # CHANGED: Adjusted start position to 13 (since mask is smaller)
         TEXT_START_X = 13 
         
         for train in current_pair:
@@ -99,7 +96,7 @@ class MetroWidget(Widget):
 
         page_duration = max(4.0, 1.0 + longest_scroll_time + 2.0)
 
-        # --- 3. HANDLE CYCLING ---
+        # --- HANDLE CYCLING ---
         now = time.time()
         time_on_page = now - self.page_start_time
 
@@ -109,7 +106,7 @@ class MetroWidget(Widget):
             self.page_start_time = now
             time_on_page = 0 
 
-        # --- 4. DRAW ROWS ---
+        # --- DRAW ROWS ---
         for i, train in enumerate(current_pair):
             row_y = i * 16
             line = train['Line']
@@ -117,14 +114,14 @@ class MetroWidget(Widget):
             mins = train['Min']
             line_color = config.LINE_COLORS.get(line, config.COLOR_GREY)
 
-            # --- A. DYNAMIC MASK CALCULATION ---
+            # --- DYNAMIC MASK CALCULATION ---
             eta_width = self.font_tall.getlength(mins)
             mask_x_start = 64 - eta_width - 3
             
             # Recalculate space based on new TEXT_START_X
             visible_space = mask_x_start - TEXT_START_X
 
-            # --- B. SCROLLING TEXT ---
+            # --- SCROLLING TEXT ---
             text_width = self.font_tall.getlength(dest)
             x_pos = TEXT_START_X
             
@@ -147,13 +144,11 @@ class MetroWidget(Widget):
             
             draw.text((x_pos, row_y + 3), dest, font=self.font_tall, fill=config.COLOR_BLUE)
 
-            # --- C. MASKS ---
-            # CHANGED: Left Mask is now smaller (0 to 12) to fit tighter to the icon
+            # --- MASKS ---
             draw.rectangle((0, row_y, 12, row_y + 16), fill=(0,0,0)) 
             draw.rectangle((mask_x_start, row_y, 64, row_y + 16), fill=(0,0,0)) # Right
 
-            # --- D. ICONS & TIME ---
-            # CHANGED: Octagon shifted right to x=2
+            # --- ICONS & TIME ---
             self._draw_octagon(draw, 2, row_y + 3, line_color, line[0])
 
             # Time (Right)

@@ -14,9 +14,8 @@ class WeatherWidget(Widget):
         self.anim_frame = 0
         self.last_anim = time.time()
 
-        # COLOR PALETTE: Dusk Theme
-        self.COLOR_TEMP = (255, 180, 0)   # Soft Gold
-        self.COLOR_DESC = (180, 80, 255) # Periwinkle (Blue/Purple mix)
+        self.COLOR_TEMP = (255, 180, 0)   
+        self.COLOR_DESC = (180, 80, 255)
 
         try:
             self.font = ImageFont.truetype(config.FONT_PATH_TALL, 10)
