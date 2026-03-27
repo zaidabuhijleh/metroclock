@@ -13,7 +13,7 @@ FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
 
 # --- WMATA (DC Metro) ---
 WMATA_API_KEY = ""
-WMATA_STATION_CODE = "E05"
+WMATA_STATION_CODE = "E05" # Metro Center
 
 STATION_SHORT_NAMES = {
     "Greenbelt": "Grnblt",
