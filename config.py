@@ -51,3 +51,7 @@ LINE_COLORS = {
     "OR": (255, 165, 0),
     "SV": (220, 220, 220)
 }
+
+DISPLAY_MODE = "metro"
+WEB_SERVER_PORT = 80
+SETUP_MODE = False
