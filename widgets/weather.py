@@ -63,6 +63,12 @@ class WeatherWidget(Widget):
             return right - left
         return int(font.getlength(text))
 
+    def _text_left_offset(self, text, font):
+        if hasattr(font, "getbbox"):
+            left, _, _, _ = font.getbbox(text)
+            return left
+        return 0
+
     def _resolve_condition_key(self, weather_data):
         weather = weather_data["weather"][0]
         main = weather.get("main", "")
@@ -166,8 +172,9 @@ class WeatherWidget(Widget):
 
     def _label_scroll_x(self, label, right_start, visible_width):
         text_width = self._measure_text(label, self.temp_font)
+        left_offset = self._text_left_offset(label, self.temp_font)
         if text_width <= visible_width:
-            return right_start + max(0, (visible_width - text_width) // 2)
+            return right_start + max(0, (visible_width - text_width) // 2) - left_offset
 
         cycle_start = 1.0
         pause_end = 1.0
@@ -179,7 +186,7 @@ class WeatherWidget(Widget):
         else:
             offset = min(scroll_distance, (elapsed - cycle_start) * self.label_scroll_speed)
 
-        return right_start - offset
+        return right_start - left_offset - offset
 
     def _draw_temp_block(self, draw, temp, label, accent):
         right_start = 23
@@ -192,10 +199,12 @@ class WeatherWidget(Widget):
         total_width = temp_width + degree_width + 1
         temp_x = right_start + max(0, (right_width - total_width) // 2)
         temp_y = 2
+        temp_left = self._text_left_offset(temp_str, self.temp_font)
+        degree_left = self._text_left_offset(degree_sign, self.temp_font)
 
-        draw.text((temp_x, temp_y), temp_str, font=self.temp_font, fill=self.color_temp)
+        draw.text((temp_x - temp_left, temp_y), temp_str, font=self.temp_font, fill=self.color_temp)
         draw.text(
-            (temp_x + temp_width + 1, temp_y),
+            (temp_x + temp_width + 1 - degree_left, temp_y),
             degree_sign,
             font=self.temp_font,
             fill=self.color_degree,
