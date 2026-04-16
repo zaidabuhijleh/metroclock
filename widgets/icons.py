@@ -312,8 +312,15 @@ def frame_thunderstorm(phase):
 
 def frame_snow(phase):
     grid = frame_broken_clouds(phase)
-    draw_snow(grid, phase)
-    return grid
+    shifted = blank()
+    for index, color in enumerate(grid):
+        if color == 0:
+            continue
+        x = index % WIDTH
+        y = index // WIDTH
+        set_px(shifted, x, y - 4, color)
+    draw_snow(shifted, phase)
+    return shifted
 
 
 def frame_mist(phase):
