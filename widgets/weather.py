@@ -205,8 +205,7 @@ class WeatherWidget(Widget):
         label_x = self._label_scroll_x(label, right_start, right_width)
         draw.text((label_x, label_y), label, font=self.temp_font, fill=self.color_label)
 
-        draw.rectangle((0, 19, right_start - 1, self.height), fill=(0, 0, 0))
-        draw.rectangle((self.width - 1, 19, self.width, self.height), fill=(0, 0, 0))
+        draw.rectangle((right_start, 19, self.width, self.height), fill=(0, 0, 0))
         draw.line((24, 17, self.width - 3, 17), fill=accent)
 
     def _accent_color(self, key):

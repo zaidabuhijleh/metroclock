@@ -105,16 +105,18 @@ def draw_sun(grid, phase=0, x=7, y=10):
 
 
 def draw_moon(grid, twinkle=0, x=7, y=10):
-    draw_disc(grid, x, y, 6, 8)
+    draw_disc(grid, x, y, 7, 8)
     draw_disc(grid, x + 3, y - 1, 5, 0)
 
     stars = [
-        (3, 4, 6, 3, twinkle % 2 == 0),
-        (15, 3, 6, 3, True),
-        (18, 8, 6, 3, twinkle % 3 != 0),
-        (4, 15, 6, 3, twinkle % 2 == 1),
-        (17, 18, 6, 3, twinkle % 3 == 1),
-        (8, 26, 6, 3, twinkle % 2 == 0),
+        (2, 3, 6, 3, twinkle % 2 == 0),
+        (9, 2, 6, 3, twinkle % 3 != 1),
+        (17, 4, 6, 3, True),
+        (18, 10, 6, 3, twinkle % 3 != 0),
+        (4, 17, 6, 3, twinkle % 2 == 1),
+        (16, 19, 6, 3, twinkle % 3 == 1),
+        (6, 24, 6, 3, twinkle % 2 == 0),
+        (13, 27, 6, 3, twinkle % 3 == 2),
     ]
     for sx, sy, bright, dim, state in stars:
         draw_star(grid, sx, sy, bright, dim, state)
@@ -233,7 +235,7 @@ def frame_clear_day(phase):
 
 def frame_clear_night(phase):
     grid = blank()
-    draw_moon(grid, phase, x=8, y=13)
+    draw_moon(grid, phase, x=7, y=15)
     return grid
 
 
