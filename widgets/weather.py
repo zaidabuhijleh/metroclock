@@ -205,7 +205,6 @@ class WeatherWidget(Widget):
         label_x = self._label_scroll_x(label, right_start, right_width)
         draw.text((label_x, label_y), label, font=self.temp_font, fill=self.color_label)
 
-        draw.rectangle((right_start, 19, self.width, self.height), fill=(0, 0, 0))
         draw.line((24, 17, self.width - 3, 17), fill=accent)
 
     def _accent_color(self, key):
@@ -252,7 +251,7 @@ class WeatherWidget(Widget):
 
         # Keep scrolling text out of the lower-left icon area while preserving
         # the animation itself above that masked region.
-        text_draw.rectangle((0, 19, 21, self.height), fill=(0, 0, 0))
+        text_draw.rectangle((0, 19, 23, self.height), fill=(0, 0, 0))
 
         self.canvas.paste(text_layer, (0, 0))
         self._draw_icon(draw, condition_key)
