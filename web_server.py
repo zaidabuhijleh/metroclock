@@ -10,7 +10,7 @@ from flask import Flask, jsonify, request, send_from_directory
 app = Flask(__name__, static_folder="web", static_url_path="")
 
 _mode_lock = threading.Lock()
-_display_mode = None  # lazily loaded from config
+_display_mode = None
 
 
 def get_display_mode() -> str:
@@ -51,9 +51,6 @@ def _mask_config(cfg: dict) -> dict:
         else:
             result[k] = v
     return result
-
-
-# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -163,8 +160,6 @@ def api_reboot():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-
-# ── Server startup ─────────────────────────────────────────────────────────────
 
 def start_server():
     port = getattr(config, "WEB_SERVER_PORT", 80)

@@ -16,7 +16,6 @@ def main():
         brightness=config.MATRIX_BRIGHTNESS
     )
 
-    # Initialize Widgets
     metro = MetroWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
     weather = WeatherWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
     flight = FlightWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)

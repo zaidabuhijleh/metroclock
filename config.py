@@ -1,5 +1,3 @@
-# MetroClock/config.py
-
 # --- HARDWARE ---
 MATRIX_WIDTH = 64
 MATRIX_HEIGHT = 32
@@ -13,8 +11,7 @@ FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
 
 # --- WMATA (DC Metro) ---
 WMATA_API_KEY = ""
-WMATA_STATION_CODE = "E05" # Metro Center
-
+WMATA_STATION_CODE = "E05" 
 STATION_SHORT_NAMES = {
     "Greenbelt": "Grnblt",
     "Huntington": "Huntgtn",

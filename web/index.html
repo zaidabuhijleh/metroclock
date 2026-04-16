@@ -39,7 +39,6 @@
       min-height: 100vh;
     }
 
-    /* ── Setup Banner ── */
     #setup-banner {
       display: none;
       background: linear-gradient(90deg, #ff9800, #ff5722);
@@ -52,7 +51,6 @@
     }
     #setup-banner.visible { display: block; }
 
-    /* ── Layout ── */
     .container {
       max-width: 720px;
       margin: 0 auto;
@@ -67,7 +65,6 @@
     }
     .subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 28px; }
 
-    /* ── Tabs ── */
     .tabs {
       display: flex;
       gap: 4px;
@@ -96,11 +93,9 @@
     .tab-btn:hover { background: var(--surface2); color: var(--text); }
     .tab-btn.active { background: var(--accent); color: #fff; }
 
-    /* ── Panels ── */
     .panel { display: none; }
     .panel.active { display: block; }
 
-    /* ── Card ── */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -117,7 +112,6 @@
       margin-bottom: 14px;
     }
 
-    /* ── Form elements ── */
     label {
       display: block;
       font-size: 13px;
@@ -140,7 +134,6 @@
     }
     input:focus, select:focus { border-color: var(--accent); }
 
-    /* ── Buttons ── */
     .btn {
       display: inline-flex;
       align-items: center;
@@ -167,7 +160,6 @@
     .btn-danger:hover:not(:disabled) { background: #5a2020; }
     .btn-full { width: 100%; justify-content: center; }
 
-    /* ── Mode buttons ── */
     .mode-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -190,7 +182,6 @@
     .mode-btn:hover { border-color: var(--accent); color: var(--text); }
     .mode-btn.active { border-color: var(--accent); background: #1a2040; color: var(--text); }
 
-    /* ── Units toggle ── */
     .toggle-row {
       display: flex;
       gap: 8px;
@@ -211,7 +202,6 @@
     }
     .unit-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-    /* ── Station picker ── */
     #station-search {
       margin-bottom: 8px;
     }
@@ -243,7 +233,6 @@
       flex-shrink: 0;
     }
 
-    /* ── WiFi network list ── */
     .network-list {
       max-height: 180px;
       overflow-y: auto;
@@ -266,7 +255,6 @@
     .network-item:hover { background: var(--surface2); }
     .network-item.selected { background: #1a2040; color: var(--accent); }
 
-    /* ── Status info ── */
     .info-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -279,7 +267,6 @@
 
     .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
-    /* ── Warning box ── */
     .warning-box {
       background: #2a200a;
       border: 1px solid #5a3a00;
@@ -291,7 +278,6 @@
       line-height: 1.5;
     }
 
-    /* ── Toast ── */
     #toast-container {
       position: fixed;
       bottom: 24px;
@@ -322,7 +308,6 @@
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ── Brightness slider ── */
     input[type="range"] {
       width: 100%;
       accent-color: var(--accent);
@@ -332,7 +317,6 @@
     .slider-row input[type="range"] { flex: 1; margin-bottom: 0; }
     .slider-val { font-size: 14px; font-weight: 600; min-width: 28px; text-align: right; }
 
-    /* scrollbar */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
