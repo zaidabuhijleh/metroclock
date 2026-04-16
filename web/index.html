@@ -267,6 +267,14 @@
 
     .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
+    .hint {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.5;
+      margin-top: -4px;
+      margin-bottom: 14px;
+    }
+
     .warning-box {
       background: #2a200a;
       border: 1px solid #5a3a00;
@@ -401,6 +409,36 @@
       <label>OpenWeatherMap API Key</label>
       <input type="password" id="openweather-api-key" placeholder="Enter key (leave blank to keep current)" autocomplete="new-password" />
       <button class="btn btn-primary" onclick="saveWeather()">Save</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Weather Test</div>
+      <label>Preview Animation</label>
+      <select id="weather-preview">
+        <option value="live">Live Weather Data</option>
+        <option value="clear_day">Clear Day</option>
+        <option value="clear_night">Clear Night</option>
+        <option value="few_clouds_day">Few Clouds Day</option>
+        <option value="few_clouds_night">Few Clouds Night</option>
+        <option value="scattered_clouds">Scattered Clouds</option>
+        <option value="broken_clouds">Broken Clouds</option>
+        <option value="overcast">Overcast</option>
+        <option value="drizzle">Drizzle</option>
+        <option value="rain">Rain</option>
+        <option value="shower_rain">Shower Rain</option>
+        <option value="thunderstorm">Thunderstorm</option>
+        <option value="snow">Snow</option>
+        <option value="mist">Mist / Fog</option>
+        <option value="haze">Haze</option>
+        <option value="dust">Dust / Sand</option>
+        <option value="squall">Squall</option>
+        <option value="tornado">Tornado</option>
+        <option value="smoke">Smoke / Ash</option>
+      </select>
+      <p class="hint">This is only a temporary preview on the display. It does not save to config.</p>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="applyWeatherPreview()">Show Preview</button>
+        <button class="btn btn-ghost" onclick="clearWeatherPreview()">Back to Live</button>
+      </div>
     </div>
   </div>
 
@@ -641,6 +679,7 @@ async function init() {
         b.classList.toggle("active", b.dataset.unit === selectedUnit);
       });
     }
+    document.getElementById("weather-preview").value = data.weather_preview || "live";
 
     // Flight
     if (data.FLIGHT_NUMBER) {
@@ -763,6 +802,34 @@ async function saveWeather() {
   if (key) payload.OPENWEATHER_API_KEY = key;
   await saveSettings(payload);
   if (key) document.getElementById("openweather-api-key").value = "";
+}
+
+async function applyWeatherPreview() {
+  const preview = document.getElementById("weather-preview").value;
+  try {
+    const res = await fetch("/api/weather/preview", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({preview})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      if (preview === "live") {
+        toast("Weather preview cleared");
+      } else {
+        toast("Previewing " + document.getElementById("weather-preview").selectedOptions[0].text);
+      }
+    } else {
+      toast(data.error || "Preview failed", "error");
+    }
+  } catch (e) {
+    toast("Preview failed", "error");
+  }
+}
+
+async function clearWeatherPreview() {
+  document.getElementById("weather-preview").value = "live";
+  await applyWeatherPreview();
 }
 
 async function saveFlight() {

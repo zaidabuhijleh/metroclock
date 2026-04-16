@@ -4,6 +4,7 @@ import requests
 from PIL import ImageDraw, ImageFont
 
 import config
+import web_server
 import widgets.icons as icons
 from core.widget import Widget
 
@@ -137,6 +138,33 @@ class WeatherWidget(Widget):
             short = words[0]
         return short.upper()
 
+    def _preview_payload(self, preview):
+        previews = {
+            "clear_day": ("Clear", "clear sky", "01d"),
+            "clear_night": ("Clear", "clear sky", "01n"),
+            "few_clouds_day": ("Clouds", "few clouds", "02d"),
+            "few_clouds_night": ("Clouds", "few clouds", "02n"),
+            "scattered_clouds": ("Clouds", "scattered clouds", "03d"),
+            "broken_clouds": ("Clouds", "broken clouds", "04d"),
+            "overcast": ("Clouds", "overcast clouds", "04d"),
+            "drizzle": ("Drizzle", "light drizzle", "09d"),
+            "rain": ("Rain", "light rain", "10d"),
+            "shower_rain": ("Rain", "shower rain", "09d"),
+            "thunderstorm": ("Thunderstorm", "thunderstorm", "11d"),
+            "snow": ("Snow", "light snow", "13d"),
+            "mist": ("Mist", "mist", "50d"),
+            "haze": ("Haze", "haze", "50d"),
+            "dust": ("Dust", "dust", "50d"),
+            "squall": ("Squall", "squalls", "50d"),
+            "tornado": ("Tornado", "tornado", "50d"),
+            "smoke": ("Smoke", "smoke", "50d"),
+        }
+        main, description, icon_code = previews.get(preview, previews["clear_day"])
+        return {
+            "main": {"temp": 72 if config.WEATHER_UNITS == "imperial" else 22},
+            "weather": [{"main": main, "description": description, "icon": icon_code}],
+        }
+
     def _draw_icon(self, draw, key):
         pixels, palette = icons.get_frame(key, self.anim_frame)
         for index, color_code in enumerate(pixels):
@@ -218,12 +246,15 @@ class WeatherWidget(Widget):
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
-        if not self.data:
+        preview = web_server.get_weather_preview()
+        weather_data = self._preview_payload(preview) if preview else self.data
+
+        if not weather_data:
             return self.canvas
 
-        temp = round(self.data["main"]["temp"])
-        condition_key = self._resolve_condition_key(self.data)
-        label = self._format_condition_label(self.data)
+        temp = round(weather_data["main"]["temp"])
+        condition_key = self._resolve_condition_key(weather_data)
+        label = self._format_condition_label(weather_data)
         accent = self._accent_color(condition_key)
 
         self._draw_icon(draw, condition_key)

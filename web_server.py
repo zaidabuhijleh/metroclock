@@ -11,6 +11,8 @@ app = Flask(__name__, static_folder="web", static_url_path="")
 
 _mode_lock = threading.Lock()
 _display_mode = None
+_weather_preview_lock = threading.Lock()
+_weather_preview = None
 
 
 def get_display_mode() -> str:
@@ -25,6 +27,17 @@ def set_display_mode(mode: str):
     with _mode_lock:
         global _display_mode
         _display_mode = mode
+
+
+def get_weather_preview():
+    with _weather_preview_lock:
+        return _weather_preview
+
+
+def set_weather_preview(preview):
+    with _weather_preview_lock:
+        global _weather_preview
+        _weather_preview = preview
 
 
 def _get_ip() -> str:
@@ -65,6 +78,7 @@ def api_status():
     masked["ip"] = _get_ip()
     masked["hostname"] = socket.gethostname()
     masked["display_mode"] = get_display_mode()
+    masked["weather_preview"] = get_weather_preview()
     return jsonify(masked)
 
 
@@ -94,6 +108,43 @@ def api_mode():
         return jsonify({"ok": False, "error": "Invalid mode"}), 400
     set_display_mode(mode)
     return jsonify({"ok": True, "mode": mode})
+
+
+@app.route("/api/weather/preview", methods=["POST"])
+def api_weather_preview():
+    data = request.get_json(force=True) or {}
+    preview = data.get("preview")
+
+    if preview in ("", None, "live"):
+        set_weather_preview(None)
+        return jsonify({"ok": True, "preview": None})
+
+    allowed_previews = {
+        "clear_day",
+        "clear_night",
+        "few_clouds_day",
+        "few_clouds_night",
+        "scattered_clouds",
+        "broken_clouds",
+        "overcast",
+        "drizzle",
+        "rain",
+        "shower_rain",
+        "thunderstorm",
+        "snow",
+        "mist",
+        "haze",
+        "dust",
+        "squall",
+        "tornado",
+        "smoke",
+    }
+
+    if preview not in allowed_previews:
+        return jsonify({"ok": False, "error": "Invalid weather preview"}), 400
+
+    set_weather_preview(preview)
+    return jsonify({"ok": True, "preview": preview})
 
 
 @app.route("/api/wifi/scan")
