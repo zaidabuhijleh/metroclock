@@ -1,88 +1,380 @@
-# widgets/icons.py
-import math
+WIDTH = 21
+HEIGHT = 32
+PIXELS = WIDTH * HEIGHT
 
 PALETTE = {
-    0: (0,0,0),         # Black
-    1: (255, 200, 0),   # Sun Yellow
-    2: (255, 140, 0),   # Sun Orange
-    3: (255, 255, 255), # White (Used for Plane)
-    4: (100, 100, 100), # Grey (Used for Plane shading)
-    5: (180, 80, 255),  # Purple
+    0: (0, 0, 0),
+    1: (255, 214, 74),
+    2: (255, 163, 51),
+    3: (245, 247, 255),
+    4: (163, 176, 196),
+    5: (82, 174, 255),
+    6: (255, 245, 140),
+    7: (88, 108, 145),
+    8: (184, 197, 255),
+    9: (156, 214, 214),
+    10: (192, 248, 255),
+    11: (165, 234, 255),
+    12: (214, 196, 255),
 }
 
-def create_sun_21x32(expanded_rays=False):
-    grid = [0] * 672
-    center_x, center_y = 10, 15 
-    radius = 6
-    
-    # Draw Core
-    for y in range(32):
-        for x in range(21):
-            dist = ((x-center_x)**2 + (y-center_y)**2)**0.5
-            if dist < radius:
-                grid[y*21 + x] = 1 if x < center_x + 1 else 2
-                
-    # Draw Rays
-    ray_len = 9 if expanded_rays else 7
-    for i in range(0, 360, 45):
-        rad = math.radians(i)
-        for d in range(radius, ray_len + radius):
-            rx = int(center_x + math.cos(rad) * d)
-            ry = int(center_y + math.sin(rad) * d)
-            if 0 <= rx < 21 and 0 <= ry < 32:
-                grid[ry*21 + rx] = 1
-    return grid
 
-def create_rain_21x32(frame_offset=0):
-    grid = [0] * 672
-    # Narrower cloud for 21px
-    for y in range(8, 18):
-        for x in range(2, 19):
-            dist_left = ((x-7)**2 + (y-13)**2)**0.5
-            dist_mid = ((x-10)**2 + (y-11)**2)**0.5
-            dist_right = ((x-14)**2 + (y-13)**2)**0.5
-            if dist_left < 4 or dist_mid < 5 or dist_right < 4:
-                grid[y*21 + x] = 3 if y < 14 else 4
-                
-    # Rain Drops
-    drops = [(6, 20), (10, 22), (14, 20), (8, 24), (12, 24)]
-    for dx, dy in drops:
-        y_pos = (dy + frame_offset) % 32
-        if 18 < y_pos < 31:
-            grid[int(y_pos)*21 + dx] = 5
-    return grid
+def blank():
+    return [0] * PIXELS
+
+
+def set_px(grid, x, y, color):
+    if 0 <= x < WIDTH and 0 <= y < HEIGHT:
+        grid[y * WIDTH + x] = color
+
+
+def draw_disc(grid, cx, cy, radius, color):
+    radius_sq = radius * radius
+    for y in range(cy - radius, cy + radius + 1):
+        for x in range(cx - radius, cx + radius + 1):
+            if (x - cx) ** 2 + (y - cy) ** 2 <= radius_sq:
+                set_px(grid, x, y, color)
+
+
+def draw_line(grid, x1, y1, x2, y2, color):
+    dx = abs(x2 - x1)
+    dy = -abs(y2 - y1)
+    sx = 1 if x1 < x2 else -1
+    sy = 1 if y1 < y2 else -1
+    err = dx + dy
+
+    while True:
+        set_px(grid, x1, y1, color)
+        if x1 == x2 and y1 == y2:
+            break
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x1 += sx
+        if e2 <= dx:
+            err += dx
+            y1 += sy
+
+
+def draw_cloud(grid, x_offset=0, y_offset=0, tint=3, shadow=4):
+    lobes = [
+        (6 + x_offset, 15 + y_offset, 4),
+        (10 + x_offset, 12 + y_offset, 5),
+        (15 + x_offset, 15 + y_offset, 4),
+    ]
+    for cx, cy, radius in lobes:
+        draw_disc(grid, cx, cy, radius, tint)
+
+    for y in range(15 + y_offset, 19 + y_offset):
+        for x in range(4 + x_offset, 18 + x_offset):
+            set_px(grid, x, y, tint)
+
+    for y in range(17 + y_offset, 20 + y_offset):
+        for x in range(5 + x_offset, 17 + x_offset):
+            if grid[y * WIDTH + x] == tint:
+                set_px(grid, x, y, shadow)
+
+
+def draw_sun(grid, phase=0, x=7, y=10):
+    draw_disc(grid, x, y, 5, 1)
+    for px in range(x - 3, x + 1):
+        for py in range(y - 4, y + 4):
+            if 0 <= px < WIDTH and 0 <= py < HEIGHT and grid[py * WIDTH + px] == 1:
+                set_px(grid, px, py, 2)
+
+    short = 2 + (phase % 2)
+    long = 4 + (phase % 2)
+    rays = [
+        ((x, y - 7), (x, y - 7 - short)),
+        ((x, y + 7), (x, y + 7 + short)),
+        ((x - 7, y), (x - 7 - short, y)),
+        ((x + 7, y), (x + 7 + short, y)),
+        ((x - 5, y - 5), (x - 5 - long, y - 5 - long)),
+        ((x + 5, y - 5), (x + 5 + long, y - 5 - long)),
+        ((x - 5, y + 5), (x - 5 - long, y + 5 + long)),
+        ((x + 5, y + 5), (x + 5 + long, y + 5 + long)),
+    ]
+    for start, end in rays:
+        draw_line(grid, start[0], start[1], end[0], end[1], 1)
+
+
+def draw_moon(grid, twinkle=0, x=7, y=10):
+    draw_disc(grid, x, y, 5, 8)
+    draw_disc(grid, x + 2, y - 1, 4, 0)
+    stars_a = [(15, 5), (17, 10), (14, 14)]
+    stars_b = [(16, 7), (13, 11), (18, 13)]
+    for sx, sy in stars_a:
+        set_px(grid, sx, sy, 3)
+    for sx, sy in stars_b[:: 1 + (twinkle % 2)]:
+        set_px(grid, sx, sy, 6)
+
+
+def draw_rain(grid, offset=0, heavy=False):
+    columns = [6, 10, 14]
+    if heavy:
+        columns.extend([4, 16])
+    starts = [20, 22, 21, 19, 23]
+    for i, x in enumerate(columns):
+        y = starts[i] + (offset % 4)
+        if y < HEIGHT - 1:
+            set_px(grid, x, y, 5)
+        if heavy and y + 1 < HEIGHT:
+            set_px(grid, x, y + 1, 11)
+
+
+def draw_drizzle(grid, offset=0):
+    columns = [7, 10, 13]
+    for i, x in enumerate(columns):
+        y = 20 + ((offset + i) % 3) * 2
+        set_px(grid, x, y, 9)
+
+
+def draw_snow(grid, offset=0):
+    flakes = [(6, 20), (10, 23), (14, 21), (8, 26), (12, 27)]
+    for index, (x, y) in enumerate(flakes):
+        py = y + ((offset + index) % 3) - 1
+        for dx, dy in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)):
+            set_px(grid, x + dx, py + dy, 10)
+
+
+def draw_fog(grid, offset=0):
+    bands = [20, 24, 28]
+    shift = offset % 3
+    for row, y in enumerate(bands):
+        start = 2 + ((row + shift) % 3)
+        end = WIDTH - 3 - ((shift + row) % 2)
+        for x in range(start, end):
+            set_px(grid, x, y, 9 if (x + row) % 3 else 3)
+
+
+def draw_haze(grid, offset=0):
+    for y in (17, 20, 23):
+        for x in range(3 + ((offset + y) % 2), WIDTH - 3):
+            set_px(grid, x, y, 9 if (x + y + offset) % 4 else 6)
+
+
+def draw_wind(grid, offset=0, color=11):
+    rows = [13, 18, 23]
+    for row, y in enumerate(rows):
+        start = 3 + ((offset + row) % 4)
+        end = WIDTH - 2 - ((offset + row) % 2)
+        for x in range(start, end):
+            if (x + row) % 5 != 0:
+                set_px(grid, x, y, color)
+        set_px(grid, end - 1, y - 1 + (row % 2), color)
+
+
+def draw_lightning(grid, phase=0):
+    if phase % 2 == 0:
+        bolt = [(11, 18), (9, 22), (12, 22), (10, 27)]
+    else:
+        bolt = [(12, 18), (10, 21), (13, 21), (11, 27)]
+    for start, end in zip(bolt, bolt[1:]):
+        draw_line(grid, start[0], start[1], end[0], end[1], 6)
+
+
+def draw_tornado(grid, phase=0):
+    widths = [13, 10, 8, 6, 4, 2]
+    wobble = [-1, 0, 1, 0][phase % 4]
+    top_y = 8
+    for i, span in enumerate(widths):
+        y = top_y + i * 3
+        center = 10 + wobble - (i // 3)
+        for x in range(center - span // 2, center + span // 2 + 1):
+            color = 4 if i < 3 else 7
+            set_px(grid, x, y, color)
+            if y + 1 < HEIGHT and i < len(widths) - 1:
+                set_px(grid, x, y + 1, color)
+    draw_wind(grid, phase, 9)
+
+
+def draw_smoke(grid, phase=0):
+    puffs = [
+        (7 + (phase % 2), 22, 3, 4),
+        (11, 18 + (phase % 2), 4, 7),
+        (14 - (phase % 2), 12, 3, 4),
+    ]
+    for cx, cy, radius, color in puffs:
+        draw_disc(grid, cx, cy, radius, color)
+
 
 def create_side_view_plane():
-    # 14x6 side-profile airliner silhouette (Pointing RIGHT)
-    # 0=Black, 3=White, 4=Grey shading
     grid = [
-        0,3,0,0,0,0,0,0,0,0,0,0,0,0, # Tail top (now on left)
-        0,3,3,0,0,0,0,0,0,0,0,0,0,0, # Tail fin
-        0,3,3,3,3,3,3,3,3,3,3,3,3,0, # Fuselage top
-        3,3,3,3,3,4,4,4,4,3,3,3,3,3, # Main body + wing area
-        0,0,3,3,3,3,3,3,3,3,3,3,0,0, # Fuselage bottom
-        0,0,0,0,0,4,4,4,4,0,0,0,0,0, # Lower wing/engine
+        0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0,
+        3, 3, 3, 3, 3, 4, 4, 4, 4, 3, 3, 3, 3, 3,
+        0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0,
+        0, 0, 0, 0, 0, 4, 4, 4, 4, 0, 0, 0, 0, 0,
     ]
     return grid
 
+
+def frame_clear_day(phase):
+    grid = blank()
+    draw_sun(grid, phase)
+    return grid
+
+
+def frame_clear_night(phase):
+    grid = blank()
+    draw_moon(grid, phase)
+    return grid
+
+
+def frame_few_clouds_day(phase):
+    grid = blank()
+    draw_sun(grid, phase, x=7, y=10)
+    draw_cloud(grid, x_offset=phase % 2, y_offset=2, tint=3, shadow=4)
+    return grid
+
+
+def frame_few_clouds_night(phase):
+    grid = blank()
+    draw_moon(grid, phase, x=7, y=10)
+    draw_cloud(grid, x_offset=phase % 2, y_offset=2, tint=3, shadow=4)
+    return grid
+
+
+def frame_scattered_clouds(phase):
+    grid = blank()
+    draw_cloud(grid, x_offset=(phase % 2) - 1, y_offset=-1, tint=3, shadow=4)
+    draw_cloud(grid, x_offset=3 - (phase % 2), y_offset=5, tint=4, shadow=7)
+    return grid
+
+
+def frame_broken_clouds(phase):
+    grid = blank()
+    draw_cloud(grid, x_offset=-1, y_offset=0, tint=4, shadow=7)
+    draw_cloud(grid, x_offset=2 + (phase % 2), y_offset=4, tint=3, shadow=4)
+    return grid
+
+
+def frame_overcast(phase):
+    grid = blank()
+    draw_cloud(grid, x_offset=-1 + (phase % 2), y_offset=-1, tint=4, shadow=7)
+    draw_cloud(grid, x_offset=1 - (phase % 2), y_offset=4, tint=7, shadow=4)
+    return grid
+
+
+def frame_drizzle(phase):
+    grid = frame_overcast(phase)
+    draw_drizzle(grid, phase)
+    return grid
+
+
+def frame_rain(phase):
+    grid = frame_broken_clouds(phase)
+    draw_rain(grid, phase, heavy=False)
+    return grid
+
+
+def frame_shower_rain(phase):
+    grid = frame_overcast(phase)
+    draw_rain(grid, phase, heavy=True)
+    return grid
+
+
+def frame_thunderstorm(phase):
+    grid = frame_overcast(phase)
+    draw_rain(grid, phase, heavy=True)
+    draw_lightning(grid, phase)
+    return grid
+
+
+def frame_snow(phase):
+    grid = frame_broken_clouds(phase)
+    draw_snow(grid, phase)
+    return grid
+
+
+def frame_mist(phase):
+    grid = blank()
+    draw_cloud(grid, x_offset=0, y_offset=-2, tint=4, shadow=7)
+    draw_fog(grid, phase)
+    return grid
+
+
+def frame_haze(phase):
+    grid = blank()
+    draw_sun(grid, phase, x=7, y=10)
+    draw_haze(grid, phase)
+    return grid
+
+
+def frame_dust(phase):
+    grid = blank()
+    draw_wind(grid, phase, color=6)
+    for x, y in ((5, 12), (9, 15), (13, 21), (16, 24)):
+        set_px(grid, x + (phase % 2), y, 2)
+    return grid
+
+
+def frame_squall(phase):
+    grid = blank()
+    draw_cloud(grid, x_offset=0, y_offset=-2, tint=4, shadow=7)
+    draw_wind(grid, phase, color=11)
+    draw_rain(grid, phase, heavy=False)
+    return grid
+
+
+def frame_tornado(phase):
+    grid = blank()
+    draw_tornado(grid, phase)
+    return grid
+
+
+def frame_smoke(phase):
+    grid = blank()
+    draw_smoke(grid, phase)
+    return grid
+
+
+def build_frames(builder, count):
+    return [builder(index) for index in range(count)]
+
+
 SIDE_PLANE = create_side_view_plane()
 
-SUN_1 = create_sun_21x32(False)
-SUN_2 = create_sun_21x32(True)
-RAIN_1 = create_rain_21x32(0)
-RAIN_2 = create_rain_21x32(2)
-
 ANIMATIONS = {
-    "Clear": [[0]*672],
-    "Clouds": [RAIN_1, RAIN_2],
-    "Rain": [RAIN_1, RAIN_2],
-    "Drizzle": [RAIN_1, RAIN_2],
-    "Thunderstorm": [RAIN_1, RAIN_2],
-    "SidePlane": [SIDE_PLANE]
+    "clear_day": build_frames(frame_clear_day, 2),
+    "clear_night": build_frames(frame_clear_night, 2),
+    "few_clouds_day": build_frames(frame_few_clouds_day, 2),
+    "few_clouds_night": build_frames(frame_few_clouds_night, 2),
+    "scattered_clouds": build_frames(frame_scattered_clouds, 2),
+    "broken_clouds": build_frames(frame_broken_clouds, 2),
+    "overcast": build_frames(frame_overcast, 2),
+    "drizzle": build_frames(frame_drizzle, 3),
+    "rain": build_frames(frame_rain, 3),
+    "shower_rain": build_frames(frame_shower_rain, 4),
+    "thunderstorm": build_frames(frame_thunderstorm, 3),
+    "snow": build_frames(frame_snow, 3),
+    "mist": build_frames(frame_mist, 2),
+    "haze": build_frames(frame_haze, 2),
+    "dust": build_frames(frame_dust, 3),
+    "squall": build_frames(frame_squall, 3),
+    "tornado": build_frames(frame_tornado, 4),
+    "smoke": build_frames(frame_smoke, 2),
+    "Clear": build_frames(frame_clear_day, 2),
+    "Clouds": build_frames(frame_overcast, 2),
+    "Rain": build_frames(frame_rain, 3),
+    "Drizzle": build_frames(frame_drizzle, 3),
+    "Thunderstorm": build_frames(frame_thunderstorm, 3),
+    "Snow": build_frames(frame_snow, 3),
+    "Mist": build_frames(frame_mist, 2),
+    "Haze": build_frames(frame_haze, 2),
+    "Dust": build_frames(frame_dust, 3),
+    "Fog": build_frames(frame_mist, 2),
+    "Smoke": build_frames(frame_smoke, 2),
+    "Ash": build_frames(frame_smoke, 2),
+    "Sand": build_frames(frame_dust, 3),
+    "Squall": build_frames(frame_squall, 3),
+    "Tornado": build_frames(frame_tornado, 4),
+    "SidePlane": [SIDE_PLANE],
 }
 
 
 def get_frame(condition, frame_index):
-    frames = ANIMATIONS.get(condition, ANIMATIONS["Clear"])
+    frames = ANIMATIONS.get(condition, ANIMATIONS["clear_day"])
     current_frame = frames[frame_index % len(frames)]
     return current_frame, PALETTE
