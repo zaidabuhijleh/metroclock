@@ -17,6 +17,7 @@ class WeatherWidget(Widget):
         self.update_interval = 600
         self.anim_frame = 0
         self.last_anim = time.time()
+        self.label_scroll_speed = 20
 
         self.color_temp = (245, 247, 255)
         self.color_degree = (255, 196, 72)
@@ -121,22 +122,11 @@ class WeatherWidget(Widget):
     def _format_condition_label(self, weather_data):
         weather = weather_data["weather"][0]
         description = weather.get("description", "").replace("-", " ").title()
-        replacements = {
-            "Thunderstorm": "Storm",
-            "With": "",
-            "Intensity": "",
-        }
-        for old, new in replacements.items():
-            description = description.replace(old, new)
-
         words = [word for word in description.split() if word]
         if not words:
-            words = [weather.get("main", "Weather").title()]
+            return weather.get("main", "Weather").title()
 
-        short = " ".join(words[:2])
-        if len(short) > 13 and len(words) > 1:
-            short = words[0]
-        return short.upper()
+        return " ".join(words)
 
     def _preview_payload(self, preview):
         previews = {
@@ -174,6 +164,23 @@ class WeatherWidget(Widget):
             y = index // 21
             draw.point((x, y), fill=palette[color_code])
 
+    def _label_scroll_x(self, label, right_start, visible_width):
+        text_width = self._measure_text(label, self.temp_font)
+        if text_width <= visible_width:
+            return right_start + max(0, (visible_width - text_width) // 2)
+
+        cycle_start = 1.0
+        pause_end = 1.0
+        scroll_distance = text_width - visible_width
+        elapsed = time.time() % (cycle_start + (scroll_distance / self.label_scroll_speed) + pause_end)
+
+        if elapsed < cycle_start:
+            offset = 0
+        else:
+            offset = min(scroll_distance, (elapsed - cycle_start) * self.label_scroll_speed)
+
+        return right_start - offset
+
     def _draw_temp_block(self, draw, temp, label, accent):
         right_start = 23
         right_width = self.width - right_start - 1
@@ -181,43 +188,26 @@ class WeatherWidget(Widget):
 
         temp_str = str(temp)
         temp_width = self._measure_text(temp_str, self.temp_font)
-        degree_width = self._measure_text(degree_sign, self.label_font)
+        degree_width = self._measure_text(degree_sign, self.temp_font)
         total_width = temp_width + degree_width + 1
         temp_x = right_start + max(0, (right_width - total_width) // 2)
-        temp_y = 3
+        temp_y = 2
 
         draw.text((temp_x, temp_y), temp_str, font=self.temp_font, fill=self.color_temp)
         draw.text(
-            (temp_x + temp_width + 1, temp_y + 2),
+            (temp_x + temp_width + 1, temp_y),
             degree_sign,
-            font=self.label_font,
+            font=self.temp_font,
             fill=self.color_degree,
         )
 
-        label_width = self._measure_text(label, self.label_font)
-        label_x = right_start + max(0, (right_width - label_width) // 2)
-        label_y = 22 if label_width <= right_width else 19
+        label_y = 20
+        label_x = self._label_scroll_x(label, right_start, right_width)
+        draw.text((label_x, label_y), label, font=self.temp_font, fill=self.color_label)
 
-        if label_width > right_width and " " in label:
-            first, second = label.split(" ", 1)
-            first_width = self._measure_text(first, self.label_font)
-            second_width = self._measure_text(second, self.label_font)
-            draw.text(
-                (right_start + max(0, (right_width - first_width) // 2), 19),
-                first,
-                font=self.label_font,
-                fill=self.color_label,
-            )
-            draw.text(
-                (right_start + max(0, (right_width - second_width) // 2), 25),
-                second,
-                font=self.label_font,
-                fill=self.color_label,
-            )
-        else:
-            draw.text((label_x, label_y), label, font=self.label_font, fill=self.color_label)
-
-        draw.line((24, 18, self.width - 3, 18), fill=accent)
+        draw.rectangle((0, 19, right_start - 1, self.height), fill=(0, 0, 0))
+        draw.rectangle((self.width - 1, 19, self.width, self.height), fill=(0, 0, 0))
+        draw.line((24, 17, self.width - 3, 17), fill=accent)
 
     def _accent_color(self, key):
         accent_map = {
@@ -260,5 +250,6 @@ class WeatherWidget(Widget):
         self._draw_icon(draw, condition_key)
         draw.line((21, 2, 21, self.height - 3), fill=self.color_separator)
         self._draw_temp_block(draw, temp, label, accent)
+        draw.line((21, 2, 21, self.height - 3), fill=self.color_separator)
 
         return self.canvas
