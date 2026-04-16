@@ -131,9 +131,10 @@ def draw_rain(grid, offset=0, heavy=False):
     columns = [5, 9, 13]
     if heavy:
         columns.extend([17])
-    starts = [19, 22, 20, 24]
+    starts = [10, 13, 11, 15]
+    cycle = 12
     for i, x in enumerate(columns):
-        y = starts[i] + (offset % 5)
+        y = starts[i] + (offset % cycle)
         if y < HEIGHT - 1:
             set_px_if_empty(grid, x, y, 5)
             if y + 1 < HEIGHT:
@@ -292,13 +293,17 @@ def frame_drizzle(phase):
 
 
 def frame_rain(phase):
-    grid = frame_broken_clouds(phase)
+    grid = blank()
+    draw_cloud(grid, x_offset=-3, y_offset=-2, tint=7, shadow=4)
+    draw_cloud(grid, x_offset=2 + (phase % 2), y_offset=4, tint=3, shadow=4)
     draw_rain(grid, phase, heavy=False)
     return grid
 
 
 def frame_shower_rain(phase):
-    grid = frame_overcast(phase)
+    grid = blank()
+    draw_cloud(grid, x_offset=-3 + (phase % 2), y_offset=-2, tint=7, shadow=4)
+    draw_cloud(grid, x_offset=1, y_offset=3, tint=4, shadow=7)
     draw_rain(grid, phase, heavy=True)
     return grid
 
@@ -312,15 +317,17 @@ def frame_thunderstorm(phase):
 
 def frame_snow(phase):
     grid = blank()
-    draw_cloud(grid, x_offset=-3 + (phase % 2), y_offset=-1, tint=7, shadow=4)
-    draw_cloud(grid, x_offset=2, y_offset=6, tint=3, shadow=4)
+    draw_cloud(grid, x_offset=-3 + (phase % 2), y_offset=-4, tint=7, shadow=4)
+    draw_cloud(grid, x_offset=2, y_offset=3, tint=3, shadow=4)
 
     flakes = [
-        (6, 17), (10, 19), (14, 18),
-        (5, 24), (9, 26), (13, 25),
+        (6, 10), (10, 12), (14, 11),
+        (5, 16), (9, 19), (13, 17),
+        (7, 22), (12, 24),
     ]
+    cycle = 12
     for index, (x, y) in enumerate(flakes):
-        py = y + ((phase + index) % 2)
+        py = y + ((phase + index) % cycle)
         for dx, dy in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)):
             set_px_if_empty(grid, x + dx, py + dy, 10)
 
@@ -389,10 +396,10 @@ ANIMATIONS = {
     "broken_clouds": build_frames(frame_broken_clouds, 2),
     "overcast": build_frames(frame_overcast, 2),
     "drizzle": build_frames(frame_drizzle, 3),
-    "rain": build_frames(frame_rain, 3),
-    "shower_rain": build_frames(frame_shower_rain, 4),
+    "rain": build_frames(frame_rain, 5),
+    "shower_rain": build_frames(frame_shower_rain, 5),
     "thunderstorm": build_frames(frame_thunderstorm, 3),
-    "snow": build_frames(frame_snow, 3),
+    "snow": build_frames(frame_snow, 5),
     "mist": build_frames(frame_mist, 2),
     "haze": build_frames(frame_haze, 2),
     "dust": build_frames(frame_dust, 3),
@@ -401,10 +408,10 @@ ANIMATIONS = {
     "smoke": build_frames(frame_smoke, 2),
     "Clear": build_frames(frame_clear_day, 2),
     "Clouds": build_frames(frame_overcast, 2),
-    "Rain": build_frames(frame_rain, 3),
+    "Rain": build_frames(frame_rain, 5),
     "Drizzle": build_frames(frame_drizzle, 3),
     "Thunderstorm": build_frames(frame_thunderstorm, 3),
-    "Snow": build_frames(frame_snow, 3),
+    "Snow": build_frames(frame_snow, 5),
     "Mist": build_frames(frame_mist, 2),
     "Haze": build_frames(frame_haze, 2),
     "Dust": build_frames(frame_dust, 3),
