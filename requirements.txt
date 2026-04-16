@@ -1,5 +1,6 @@
 requests
 Pillow
+flask
 
 # rgbmatrix is NOT installed via pip.
 # Install from source on the Pi:

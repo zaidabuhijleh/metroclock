@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MetroClock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3350;
+      --accent: #5b7bff;
+      --accent-hover: #7b96ff;
+      --danger: #ff5f5f;
+      --success: #4cde88;
+      --text: #e8eaf6;
+      --text-dim: #8890b0;
+      --radius: 12px;
+      --transition: 0.18s ease;
+
+      --metro-rd: #e53935;
+      --metro-or: #f57c00;
+      --metro-yl: #fdd835;
+      --metro-gr: #43a047;
+      --metro-bl: #1e88e5;
+      --metro-sv: #9e9e9e;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    #setup-banner {
+      display: none;
+      background: linear-gradient(90deg, #ff9800, #ff5722);
+      color: #fff;
+      text-align: center;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+    }
+    #setup-banner.visible { display: block; }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 32px 16px 64px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 28px; }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      flex: 1;
+      min-width: 80px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background var(--transition), color var(--transition);
+      white-space: nowrap;
+    }
+    .tab-btn:hover { background: var(--surface2); color: var(--text); }
+    .tab-btn.active { background: var(--accent); color: #fff; }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    input[type="text"], input[type="password"], select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color var(--transition);
+      margin-bottom: 14px;
+    }
+    input:focus, select:focus { border-color: var(--accent); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 9px 16px;
+      transition: opacity var(--transition), background var(--transition);
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-ghost {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) { background: var(--border); }
+    .btn-danger { background: #3d1a1a; color: var(--danger); border: 1px solid #6b2a2a; }
+    .btn-danger:hover:not(:disabled) { background: #5a2020; }
+    .btn-full { width: 100%; justify-content: center; }
+
+    .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .mode-btn {
+      background: var(--surface2);
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 18px 8px;
+      cursor: pointer;
+      transition: all var(--transition);
+      text-align: center;
+    }
+    .mode-btn .icon { font-size: 24px; display: block; margin-bottom: 6px; }
+    .mode-btn:hover { border-color: var(--accent); color: var(--text); }
+    .mode-btn.active { border-color: var(--accent); background: #1a2040; color: var(--text); }
+
+    .toggle-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .unit-btn {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 9px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .unit-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    #station-search {
+      margin-bottom: 8px;
+    }
+    .station-list {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      margin-bottom: 14px;
+    }
+    .station-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background var(--transition);
+      border-bottom: 1px solid var(--border);
+    }
+    .station-item:last-child { border-bottom: none; }
+    .station-item:hover { background: var(--surface2); }
+    .station-item.selected { background: #1a2040; }
+    .line-dots { display: flex; gap: 3px; }
+    .dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .network-list {
+      max-height: 180px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      margin-bottom: 14px;
+    }
+    .network-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
+      transition: background var(--transition);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .network-item:last-child { border-bottom: none; }
+    .network-item:hover { background: var(--surface2); }
+    .network-item.selected { background: #1a2040; color: var(--accent); }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .info-item { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    .info-label { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+    .info-value { font-size: 15px; font-weight: 600; }
+
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .warning-box {
+      background: #2a200a;
+      border: 1px solid #5a3a00;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 13px;
+      color: #ffbb55;
+      margin-bottom: 14px;
+      line-height: 1.5;
+    }
+
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 9999;
+    }
+    .toast {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: 13px;
+      font-weight: 500;
+      min-width: 220px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      animation: slideIn 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .toast.success { border-color: var(--success); color: var(--success); }
+    .toast.error { border-color: var(--danger); color: var(--danger); }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .slider-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .slider-row input[type="range"] { flex: 1; margin-bottom: 0; }
+    .slider-val { font-size: 14px; font-weight: 600; min-width: 28px; text-align: right; }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div id="setup-banner">
+  First-time setup mode — connect this device to your WiFi network using the WiFi tab below.
+</div>
+
+<div class="container">
+  <h1>MetroClock</h1>
+  <p class="subtitle">LED display control panel</p>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="display">Display</button>
+    <button class="tab-btn" data-tab="metro">Metro</button>
+    <button class="tab-btn" data-tab="weather">Weather</button>
+    <button class="tab-btn" data-tab="flight">Flight</button>
+    <button class="tab-btn" data-tab="wifi">WiFi</button>
+    <button class="tab-btn" data-tab="system">System</button>
+  </div>
+
+  <!-- Display Tab -->
+  <div class="panel active" id="panel-display">
+    <div class="card">
+      <div class="card-title">Active Mode</div>
+      <div class="mode-grid">
+        <button class="mode-btn" data-mode="metro" onclick="switchMode('metro')">
+          <span class="icon">🚇</span>Metro
+        </button>
+        <button class="mode-btn" data-mode="weather" onclick="switchMode('weather')">
+          <span class="icon">🌤</span>Weather
+        </button>
+        <button class="mode-btn" data-mode="flight" onclick="switchMode('flight')">
+          <span class="icon">✈️</span>Flight
+        </button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Brightness</div>
+      <div class="slider-row">
+        <input type="range" id="brightness-slider" min="1" max="100" value="30"
+               oninput="document.getElementById('brightness-val').textContent=this.value" />
+        <span class="slider-val" id="brightness-val">30</span>
+      </div>
+      <button class="btn btn-primary" onclick="saveBrightness()">Save Brightness</button>
+    </div>
+  </div>
+
+  <!-- Metro Tab -->
+  <div class="panel" id="panel-metro">
+    <div class="card">
+      <div class="card-title">Station</div>
+      <input type="text" id="station-search" placeholder="Search stations..." oninput="filterStations(this.value)" />
+      <div class="station-list" id="station-list"></div>
+      <input type="hidden" id="wmata-station-code" />
+    </div>
+    <div class="card">
+      <div class="card-title">API Key</div>
+      <label>WMATA API Key</label>
+      <input type="password" id="wmata-api-key" placeholder="Enter key (leave blank to keep current)" autocomplete="new-password" />
+      <button class="btn btn-primary" onclick="saveMetro()">Save</button>
+    </div>
+  </div>
+
+  <!-- Weather Tab -->
+  <div class="panel" id="panel-weather">
+    <div class="card">
+      <div class="card-title">Location & Units</div>
+      <label>OpenWeatherMap City ID</label>
+      <input type="text" id="weather-city-id" placeholder="e.g. 4140963 for Washington DC" />
+      <label>Units</label>
+      <div class="toggle-row">
+        <button class="unit-btn" data-unit="imperial" onclick="selectUnit('imperial')">°F Imperial</button>
+        <button class="unit-btn" data-unit="metric" onclick="selectUnit('metric')">°C Metric</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">API Key</div>
+      <label>OpenWeatherMap API Key</label>
+      <input type="password" id="openweather-api-key" placeholder="Enter key (leave blank to keep current)" autocomplete="new-password" />
+      <button class="btn btn-primary" onclick="saveWeather()">Save</button>
+    </div>
+  </div>
+
+  <!-- Flight Tab -->
+  <div class="panel" id="panel-flight">
+    <div class="card">
+      <div class="card-title">Flight</div>
+      <label>IATA Flight Number</label>
+      <input type="text" id="flight-number" placeholder="e.g. AC57" />
+    </div>
+    <div class="card">
+      <div class="card-title">API Key</div>
+      <label>AviationStack API Key</label>
+      <input type="password" id="aviationstack-api-key" placeholder="Enter key (leave blank to keep current)" autocomplete="new-password" />
+      <button class="btn btn-primary" onclick="saveFlight()">Save</button>
+    </div>
+  </div>
+
+  <!-- WiFi Tab -->
+  <div class="panel" id="panel-wifi">
+    <div class="warning-box">
+      Warning: entering wrong credentials will disconnect this device. If that happens, reconnect to the
+      <strong>MetroClock-Setup</strong> hotspot and try again.
+    </div>
+    <div class="card">
+      <div class="card-title">Scan Networks</div>
+      <button class="btn btn-ghost btn-full" onclick="scanWifi()">Scan for Networks</button>
+      <div class="network-list" id="network-list" style="display:none; margin-top:12px;"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Connect</div>
+      <label>SSID</label>
+      <input type="text" id="wifi-ssid" placeholder="Network name" />
+      <label>Password</label>
+      <input type="password" id="wifi-password" placeholder="Network password" autocomplete="new-password" />
+      <button class="btn btn-primary btn-full" onclick="connectWifi()">Connect</button>
+    </div>
+  </div>
+
+  <!-- System Tab -->
+  <div class="panel" id="panel-system">
+    <div class="card">
+      <div class="card-title">Device Info</div>
+      <div class="info-grid">
+        <div class="info-item">
+          <div class="info-label">IP Address</div>
+          <div class="info-value" id="sys-ip">—</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Hostname</div>
+          <div class="info-value" id="sys-hostname">—</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Display Mode</div>
+          <div class="info-value" id="sys-mode">—</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Web Port</div>
+          <div class="info-value" id="sys-port">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Actions</div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="restartDisplay()">Restart Display</button>
+        <button class="btn btn-danger" onclick="confirmReboot()">Reboot Pi</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+// ── WMATA Stations ─────────────────────────────────────────────────────────
+const STATIONS = [
+  {code:"A01",name:"Metro Center",lines:["RD","OR","SV","BL"]},
+  {code:"A02",name:"Farragut North",lines:["RD"]},
+  {code:"A03",name:"Dupont Circle",lines:["RD"]},
+  {code:"A04",name:"Woodley Park",lines:["RD"]},
+  {code:"A05",name:"Cleveland Park",lines:["RD"]},
+  {code:"A06",name:"Van Ness-UDC",lines:["RD"]},
+  {code:"A07",name:"Tenleytown",lines:["RD"]},
+  {code:"A08",name:"Friendship Heights",lines:["RD"]},
+  {code:"A09",name:"Bethesda",lines:["RD"]},
+  {code:"A10",name:"Medical Center",lines:["RD"]},
+  {code:"A11",name:"Grosvenor",lines:["RD"]},
+  {code:"A12",name:"White Flint",lines:["RD"]},
+  {code:"A13",name:"Twinbrook",lines:["RD"]},
+  {code:"A14",name:"Rockville",lines:["RD"]},
+  {code:"A15",name:"Shady Grove",lines:["RD"]},
+  {code:"B01",name:"Gallery Pl-Chinatown",lines:["RD","GR","YL"]},
+  {code:"B02",name:"Judiciary Square",lines:["RD"]},
+  {code:"B03",name:"Union Station",lines:["RD"]},
+  {code:"B04",name:"Rhode Island Ave",lines:["RD"]},
+  {code:"B05",name:"Brookland-CUA",lines:["RD"]},
+  {code:"B06",name:"Fort Totten",lines:["RD","GR","YL"]},
+  {code:"B07",name:"Takoma",lines:["RD"]},
+  {code:"B08",name:"Silver Spring",lines:["RD"]},
+  {code:"B09",name:"Forest Glen",lines:["RD"]},
+  {code:"B10",name:"Wheaton",lines:["RD"]},
+  {code:"B11",name:"Glenmont",lines:["RD"]},
+  {code:"B35",name:"NoMa-Gallaudet U",lines:["RD"]},
+  {code:"C01",name:"Metro Center",lines:["OR","SV","BL"]},
+  {code:"C02",name:"McPherson Square",lines:["OR","SV","BL"]},
+  {code:"C03",name:"Farragut West",lines:["OR","SV","BL"]},
+  {code:"C04",name:"Foggy Bottom-GWU",lines:["OR","SV","BL"]},
+  {code:"C05",name:"Rosslyn",lines:["OR","SV","BL"]},
+  {code:"C06",name:"Arlington Cemetery",lines:["BL"]},
+  {code:"C07",name:"Pentagon",lines:["BL","YL"]},
+  {code:"C08",name:"Pentagon City",lines:["BL","YL"]},
+  {code:"C09",name:"Crystal City",lines:["BL","YL"]},
+  {code:"C10",name:"Reagan National Airport",lines:["BL","YL"]},
+  {code:"C12",name:"Braddock Road",lines:["BL","YL"]},
+  {code:"C13",name:"King St-Old Town",lines:["BL","YL"]},
+  {code:"C14",name:"Eisenhower Avenue",lines:["YL"]},
+  {code:"C15",name:"Huntington",lines:["YL"]},
+  {code:"D01",name:"Federal Triangle",lines:["OR","SV","BL"]},
+  {code:"D02",name:"Smithsonian",lines:["OR","SV","BL"]},
+  {code:"D03",name:"L'Enfant Plaza",lines:["OR","SV","BL","GR","YL"]},
+  {code:"D04",name:"Federal Center SW",lines:["OR","SV","BL"]},
+  {code:"D05",name:"Capitol South",lines:["OR","SV","BL"]},
+  {code:"D06",name:"Eastern Market",lines:["OR","SV","BL"]},
+  {code:"D07",name:"Potomac Ave",lines:["OR","SV","BL"]},
+  {code:"D08",name:"Stadium-Armory",lines:["OR","SV","BL"]},
+  {code:"D09",name:"Minnesota Ave",lines:["OR"]},
+  {code:"D10",name:"Deanwood",lines:["OR"]},
+  {code:"D11",name:"Cheverly",lines:["OR"]},
+  {code:"D12",name:"Landover",lines:["OR"]},
+  {code:"D13",name:"New Carrollton",lines:["OR"]},
+  {code:"E01",name:"Mt Vernon Sq",lines:["GR","YL"]},
+  {code:"E02",name:"Shaw-Howard U",lines:["GR","YL"]},
+  {code:"E03",name:"Columbia Heights",lines:["GR","YL"]},
+  {code:"E04",name:"Georgia Ave-Petworth",lines:["GR","YL"]},
+  {code:"E05",name:"Fort Totten",lines:["GR","YL"]},
+  {code:"E06",name:"West Hyattsville",lines:["GR"]},
+  {code:"E07",name:"Prince George's Plaza",lines:["GR"]},
+  {code:"E08",name:"College Park",lines:["GR"]},
+  {code:"E09",name:"Greenbelt",lines:["GR"]},
+  {code:"E10",name:"U Street",lines:["GR","YL"]},
+  {code:"F01",name:"Gallery Pl-Chinatown",lines:["GR","YL"]},
+  {code:"F02",name:"Archives",lines:["GR","YL"]},
+  {code:"F03",name:"L'Enfant Plaza",lines:["GR","YL"]},
+  {code:"F04",name:"Waterfront",lines:["GR"]},
+  {code:"F05",name:"Navy Yard-Ballpark",lines:["GR"]},
+  {code:"F06",name:"Anacostia",lines:["GR"]},
+  {code:"F07",name:"Congress Heights",lines:["GR"]},
+  {code:"F08",name:"Southern Avenue",lines:["GR"]},
+  {code:"F09",name:"Naylor Road",lines:["GR"]},
+  {code:"F10",name:"Suitland",lines:["GR"]},
+  {code:"F11",name:"Branch Av",lines:["GR"]},
+  {code:"G01",name:"Benning Road",lines:["BL","SV"]},
+  {code:"G02",name:"Capitol Heights",lines:["BL","SV"]},
+  {code:"G03",name:"Addison Road",lines:["BL","SV"]},
+  {code:"G04",name:"Morgan Boulevard",lines:["BL","SV"]},
+  {code:"G05",name:"Largo Town Center",lines:["BL","SV"]},
+  {code:"J02",name:"Van Dorn Street",lines:["BL"]},
+  {code:"J03",name:"Franconia-Springfield",lines:["BL"]},
+  {code:"K01",name:"Court House",lines:["OR","SV"]},
+  {code:"K02",name:"Clarendon",lines:["OR","SV"]},
+  {code:"K03",name:"Virginia Square",lines:["OR","SV"]},
+  {code:"K04",name:"Ballston",lines:["OR","SV"]},
+  {code:"K05",name:"East Falls Church",lines:["OR","SV"]},
+  {code:"K06",name:"West Falls Church",lines:["OR"]},
+  {code:"K07",name:"Dunn Loring",lines:["OR"]},
+  {code:"K08",name:"Vienna",lines:["OR"]},
+  {code:"N01",name:"McLean",lines:["SV"]},
+  {code:"N02",name:"Tysons Corner",lines:["SV"]},
+  {code:"N03",name:"Greensboro",lines:["SV"]},
+  {code:"N04",name:"Spring Hill",lines:["SV"]},
+  {code:"N06",name:"Wiehle-Reston East",lines:["SV"]},
+  {code:"N07",name:"Reston Town Center",lines:["SV"]},
+  {code:"N08",name:"Herndon",lines:["SV"]},
+  {code:"N09",name:"Innovation Center",lines:["SV"]},
+  {code:"N10",name:"Washington Dulles",lines:["SV"]},
+  {code:"N11",name:"Loudoun Gateway",lines:["SV"]},
+  {code:"N12",name:"Ashburn",lines:["SV"]},
+];
+
+const LINE_COLORS = {
+  RD: "#e53935", OR: "#f57c00", YL: "#fdd835",
+  GR: "#43a047", BL: "#1e88e5", SV: "#9e9e9e"
+};
+
+let selectedStation = null;
+let selectedUnit = "metric";
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+  });
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  renderStations(STATIONS);
+  try {
+    const res = await fetch("/api/status");
+    const data = await res.json();
+
+    // Setup banner
+    if (data.SETUP_MODE) {
+      document.getElementById("setup-banner").classList.add("visible");
+    }
+
+    // System tab
+    document.getElementById("sys-ip").textContent = data.ip || "—";
+    document.getElementById("sys-hostname").textContent = data.hostname || "—";
+    document.getElementById("sys-mode").textContent = data.display_mode || "—";
+    document.getElementById("sys-port").textContent = data.WEB_SERVER_PORT || "—";
+
+    // Mode buttons
+    setActiveMode(data.display_mode);
+
+    // Brightness
+    if (data.MATRIX_BRIGHTNESS != null) {
+      document.getElementById("brightness-slider").value = data.MATRIX_BRIGHTNESS;
+      document.getElementById("brightness-val").textContent = data.MATRIX_BRIGHTNESS;
+    }
+
+    // Metro station
+    if (data.WMATA_STATION_CODE) {
+      selectStation(data.WMATA_STATION_CODE, false);
+    }
+
+    // Weather
+    if (data.OPENWEATHER_CITY_ID) {
+      document.getElementById("weather-city-id").value = data.OPENWEATHER_CITY_ID;
+    }
+    if (data.WEATHER_UNITS) {
+      selectedUnit = data.WEATHER_UNITS;
+      document.querySelectorAll(".unit-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.unit === selectedUnit);
+      });
+    }
+
+    // Flight
+    if (data.FLIGHT_NUMBER) {
+      document.getElementById("flight-number").value = data.FLIGHT_NUMBER;
+    }
+
+  } catch (e) {
+    toast("Failed to load settings", "error");
+  }
+}
+
+// ── Stations ───────────────────────────────────────────────────────────────
+function renderStations(list) {
+  const el = document.getElementById("station-list");
+  el.innerHTML = list.map(s => `
+    <div class="station-item${s.code === selectedStation ? " selected" : ""}"
+         onclick="selectStation('${s.code}')">
+      <div class="line-dots">
+        ${s.lines.map(l => `<span class="dot" style="background:${LINE_COLORS[l]}"></span>`).join("")}
+      </div>
+      <span>${s.name}</span>
+      <span style="margin-left:auto;color:var(--text-dim);font-size:11px;">${s.code}</span>
+    </div>
+  `).join("");
+}
+
+function filterStations(q) {
+  q = q.toLowerCase();
+  renderStations(STATIONS.filter(s =>
+    s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)
+  ));
+}
+
+function selectStation(code, scroll = true) {
+  selectedStation = code;
+  document.getElementById("wmata-station-code").value = code;
+  document.querySelectorAll(".station-item").forEach(el => {
+    el.classList.toggle("selected", el.textContent.includes(code));
+  });
+  if (scroll) {
+    const sel = document.querySelector(".station-item.selected");
+    if (sel) sel.scrollIntoView({block: "nearest"});
+  }
+}
+
+// ── Mode switching ─────────────────────────────────────────────────────────
+function setActiveMode(mode) {
+  document.querySelectorAll(".mode-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.mode === mode);
+  });
+}
+
+async function switchMode(mode) {
+  try {
+    const res = await fetch("/api/mode", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({mode})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setActiveMode(mode);
+      document.getElementById("sys-mode").textContent = mode;
+      toast("Mode switched to " + mode);
+    } else {
+      toast(data.error || "Failed to switch mode", "error");
+    }
+  } catch (e) {
+    toast("Failed to switch mode", "error");
+  }
+}
+
+// ── Brightness ─────────────────────────────────────────────────────────────
+async function saveBrightness() {
+  const val = parseInt(document.getElementById("brightness-slider").value);
+  await saveSettings({MATRIX_BRIGHTNESS: val});
+}
+
+// ── Unit toggle ────────────────────────────────────────────────────────────
+function selectUnit(unit) {
+  selectedUnit = unit;
+  document.querySelectorAll(".unit-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.unit === unit);
+  });
+}
+
+// ── Save helpers ───────────────────────────────────────────────────────────
+async function saveSettings(payload) {
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.ok) {
+      toast("Settings saved");
+    } else {
+      toast(data.error || "Save failed", "error");
+    }
+  } catch (e) {
+    toast("Save failed", "error");
+  }
+}
+
+async function saveMetro() {
+  const payload = {WMATA_STATION_CODE: selectedStation};
+  const key = document.getElementById("wmata-api-key").value.trim();
+  if (key) payload.WMATA_API_KEY = key;
+  await saveSettings(payload);
+  if (key) document.getElementById("wmata-api-key").value = "";
+}
+
+async function saveWeather() {
+  const payload = {
+    OPENWEATHER_CITY_ID: document.getElementById("weather-city-id").value.trim(),
+    WEATHER_UNITS: selectedUnit
+  };
+  const key = document.getElementById("openweather-api-key").value.trim();
+  if (key) payload.OPENWEATHER_API_KEY = key;
+  await saveSettings(payload);
+  if (key) document.getElementById("openweather-api-key").value = "";
+}
+
+async function saveFlight() {
+  const payload = {
+    FLIGHT_NUMBER: document.getElementById("flight-number").value.trim()
+  };
+  const key = document.getElementById("aviationstack-api-key").value.trim();
+  if (key) payload.AVIATIONSTACK_API_KEY = key;
+  await saveSettings(payload);
+  if (key) document.getElementById("aviationstack-api-key").value = "";
+}
+
+// ── WiFi ───────────────────────────────────────────────────────────────────
+async function scanWifi() {
+  try {
+    toast("Scanning...");
+    const res = await fetch("/api/wifi/scan");
+    const data = await res.json();
+    const list = document.getElementById("network-list");
+    list.style.display = "block";
+    if (data.ok && data.ssids.length) {
+      list.innerHTML = data.ssids.map(ssid => `
+        <div class="network-item" onclick="pickNetwork('${ssid.replace(/'/g,"\\'")}')">
+          <span>📶</span> ${ssid}
+        </div>
+      `).join("");
+    } else {
+      list.innerHTML = `<div class="network-item" style="color:var(--text-dim)">No networks found</div>`;
+    }
+  } catch (e) {
+    toast("Scan failed", "error");
+  }
+}
+
+function pickNetwork(ssid) {
+  document.getElementById("wifi-ssid").value = ssid;
+  document.querySelectorAll(".network-item").forEach(el => {
+    el.classList.toggle("selected", el.textContent.trim().includes(ssid));
+  });
+  document.getElementById("wifi-password").focus();
+}
+
+async function connectWifi() {
+  const ssid = document.getElementById("wifi-ssid").value.trim();
+  const password = document.getElementById("wifi-password").value;
+  if (!ssid) { toast("Enter an SSID", "error"); return; }
+  try {
+    const res = await fetch("/api/wifi/connect", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ssid, password})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      toast("Connecting to " + ssid + "…");
+    } else {
+      toast(data.error || "Connection failed", "error");
+    }
+  } catch (e) {
+    toast("Connection failed", "error");
+  }
+}
+
+// ── System actions ─────────────────────────────────────────────────────────
+async function restartDisplay() {
+  try {
+    await fetch("/api/restart", {method: "POST"});
+    toast("Display restarting…");
+  } catch (e) {
+    toast("Failed", "error");
+  }
+}
+
+function confirmReboot() {
+  if (!confirm("Reboot the Pi? The device will be unavailable for ~30 seconds.")) return;
+  fetch("/api/reboot", {method: "POST"}).catch(() => {});
+  toast("Rebooting…");
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function toast(msg, type = "success") {
+  const el = document.createElement("div");
+  el.className = `toast ${type}`;
+  el.textContent = type === "success" ? "✓  " + msg : "✕  " + msg;
+  document.getElementById("toast-container").appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+init();
+</script>
+</body>
+</html>
