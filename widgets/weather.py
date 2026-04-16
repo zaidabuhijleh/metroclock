@@ -18,6 +18,7 @@ class WeatherWidget(Widget):
         self.anim_frame = 0
         self.last_anim = time.time()
         self.label_scroll_speed = 20
+        self.label_left_padding = 3
 
         self.color_temp = (245, 247, 255)
         self.color_degree = (255, 196, 72)
@@ -173,12 +174,14 @@ class WeatherWidget(Widget):
     def _label_scroll_x(self, label, right_start, visible_width):
         text_width = self._measure_text(label, self.temp_font)
         left_offset = self._text_left_offset(label, self.temp_font)
+        start_x = right_start + self.label_left_padding
+        padded_width = max(1, visible_width - self.label_left_padding)
         if text_width <= visible_width:
-            return right_start + max(0, (visible_width - text_width) // 2) - left_offset
+            return start_x + max(0, (padded_width - text_width) // 2) - left_offset
 
         cycle_start = 1.0
         pause_end = 1.0
-        scroll_distance = text_width - visible_width
+        scroll_distance = max(0, text_width - padded_width)
         elapsed = time.time() % (cycle_start + (scroll_distance / self.label_scroll_speed) + pause_end)
 
         if elapsed < cycle_start:
@@ -186,7 +189,7 @@ class WeatherWidget(Widget):
         else:
             offset = min(scroll_distance, (elapsed - cycle_start) * self.label_scroll_speed)
 
-        return right_start - left_offset - offset
+        return start_x - left_offset - offset
 
     def _draw_temp_block(self, draw, temp, label, accent):
         right_start = 23
