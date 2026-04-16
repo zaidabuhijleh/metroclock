@@ -7,10 +7,10 @@ PALETTE = {
     1: (255, 214, 74),
     2: (255, 163, 51),
     3: (245, 247, 255),
-    4: (163, 176, 196),
+    4: (182, 190, 204),
     5: (82, 174, 255),
     6: (255, 245, 140),
-    7: (120, 142, 173),
+    7: (138, 146, 160),
     8: (184, 197, 255),
     9: (156, 214, 214),
     10: (192, 248, 255),
@@ -25,6 +25,11 @@ def blank():
 
 def set_px(grid, x, y, color):
     if 0 <= x < WIDTH and 0 <= y < HEIGHT:
+        grid[y * WIDTH + x] = color
+
+
+def set_px_if_empty(grid, x, y, color):
+    if 0 <= x < WIDTH and 0 <= y < HEIGHT and grid[y * WIDTH + x] == 0:
         grid[y * WIDTH + x] = color
 
 
@@ -109,14 +114,14 @@ def draw_moon(grid, twinkle=0, x=7, y=10):
     draw_disc(grid, x + 3, y - 1, 5, 0)
 
     stars = [
-        (2, 3, 6, 3, twinkle % 2 == 0),
-        (9, 2, 6, 3, twinkle % 3 != 1),
-        (17, 4, 6, 3, True),
-        (18, 10, 6, 3, twinkle % 3 != 0),
-        (4, 17, 6, 3, twinkle % 2 == 1),
-        (16, 19, 6, 3, twinkle % 3 == 1),
-        (6, 24, 6, 3, twinkle % 2 == 0),
-        (13, 27, 6, 3, twinkle % 3 == 2),
+        (1, 2, 6, 3, twinkle % 2 == 0),
+        (15, 2, 6, 3, True),
+        (19, 6, 6, 3, twinkle % 3 != 1),
+        (17, 11, 6, 3, twinkle % 2 == 1),
+        (18, 17, 6, 3, twinkle % 3 == 0),
+        (15, 23, 6, 3, twinkle % 2 == 0),
+        (19, 27, 6, 3, twinkle % 3 == 2),
+        (9, 27, 6, 3, twinkle % 2 == 1),
     ]
     for sx, sy, bright, dim, state in stars:
         draw_star(grid, sx, sy, bright, dim, state)
@@ -130,20 +135,20 @@ def draw_rain(grid, offset=0, heavy=False):
     for i, x in enumerate(columns):
         y = starts[i] + (offset % 5)
         if y < HEIGHT - 1:
-            set_px(grid, x, y, 5)
+            set_px_if_empty(grid, x, y, 5)
             if y + 1 < HEIGHT:
-                set_px(grid, x + 1, y + 1, 11)
+                set_px_if_empty(grid, x + 1, y + 1, 11)
         if heavy and y + 1 < HEIGHT:
-            set_px(grid, x, y + 1, 11)
+            set_px_if_empty(grid, x, y + 1, 11)
             if y + 2 < HEIGHT:
-                set_px(grid, x + 1, y + 2, 5)
+                set_px_if_empty(grid, x + 1, y + 2, 5)
 
 
 def draw_drizzle(grid, offset=0):
     columns = [6, 10, 14]
     for i, x in enumerate(columns):
         y = 20 + ((offset + i) % 4) * 2
-        set_px(grid, x, y, 9)
+        set_px_if_empty(grid, x, y, 9)
 
 
 def draw_snow(grid, offset=0):
@@ -151,7 +156,7 @@ def draw_snow(grid, offset=0):
     for index, (x, y) in enumerate(flakes):
         py = y + ((offset + index) % 3) - 1
         for dx, dy in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)):
-            set_px(grid, x + dx, py + dy, 10)
+            set_px_if_empty(grid, x + dx, py + dy, 10)
 
 
 def draw_fog(grid, offset=0):
@@ -165,9 +170,13 @@ def draw_fog(grid, offset=0):
 
 
 def draw_haze(grid, offset=0):
-    for y in (17, 20, 23):
-        for x in range(3 + ((offset + y) % 2), WIDTH - 3):
-            set_px(grid, x, y, 9 if (x + y + offset) % 4 else 6)
+    rows = [18, 22, 26]
+    for row, y in enumerate(rows):
+        start = 2 + ((offset + row) % 2)
+        end = WIDTH - 3 - ((offset + row) % 2)
+        for x in range(start, end):
+            color = 6 if (x + row + offset) % 5 else 2
+            set_px_if_empty(grid, x, y, color)
 
 
 def draw_wind(grid, offset=0, color=11):
@@ -177,8 +186,8 @@ def draw_wind(grid, offset=0, color=11):
         end = WIDTH - 2 - ((offset + row) % 2)
         for x in range(start, end):
             if (x + row) % 5 != 0:
-                set_px(grid, x, y, color)
-        set_px(grid, end - 1, y - 1 + (row % 2), color)
+                set_px_if_empty(grid, x, y, color)
+        set_px_if_empty(grid, end - 1, y - 1 + (row % 2), color)
 
 
 def draw_lightning(grid, phase=0):
@@ -191,18 +200,20 @@ def draw_lightning(grid, phase=0):
 
 
 def draw_tornado(grid, phase=0):
-    widths = [13, 10, 8, 6, 4, 2]
+    widths = [12, 10, 8, 6, 4, 2]
     wobble = [-1, 0, 1, 0][phase % 4]
-    top_y = 8
+    top_y = 7
     for i, span in enumerate(widths):
         y = top_y + i * 3
-        center = 10 + wobble - (i // 3)
+        center = 11 + wobble - (i // 3)
         for x in range(center - span // 2, center + span // 2 + 1):
-            color = 4 if i < 3 else 7
+            color = 4 if i < 2 else 7
             set_px(grid, x, y, color)
             if y + 1 < HEIGHT and i < len(widths) - 1:
                 set_px(grid, x, y + 1, color)
-    draw_wind(grid, phase, 9)
+    debris = [(4, 24), (6, 27), (14, 26), (17, 29)]
+    for dx, dy in debris:
+        set_px_if_empty(grid, dx + (phase % 2), dy, 2 if (dx + dy + phase) % 2 else 6)
 
 
 def draw_smoke(grid, phase=0):
@@ -255,21 +266,21 @@ def frame_few_clouds_night(phase):
 
 def frame_scattered_clouds(phase):
     grid = blank()
-    draw_cloud(grid, x_offset=-2 + (phase % 2), y_offset=2, tint=3, shadow=4)
-    draw_cloud(grid, x_offset=3 - (phase % 2), y_offset=8, tint=4, shadow=7)
+    draw_cloud(grid, x_offset=-2 + (phase % 2), y_offset=2, tint=4, shadow=7)
+    draw_cloud(grid, x_offset=3 - (phase % 2), y_offset=8, tint=3, shadow=4)
     return grid
 
 
 def frame_broken_clouds(phase):
     grid = blank()
-    draw_cloud(grid, x_offset=-2, y_offset=1, tint=4, shadow=7)
+    draw_cloud(grid, x_offset=-2, y_offset=1, tint=7, shadow=4)
     draw_cloud(grid, x_offset=2 + (phase % 2), y_offset=8, tint=3, shadow=4)
     return grid
 
 
 def frame_overcast(phase):
     grid = blank()
-    draw_cloud(grid, x_offset=-2 + (phase % 2), y_offset=1, tint=4, shadow=7)
+    draw_cloud(grid, x_offset=-2 + (phase % 2), y_offset=1, tint=7, shadow=4)
     draw_cloud(grid, x_offset=1 - (phase % 2), y_offset=8, tint=4, shadow=7)
     return grid
 
@@ -307,29 +318,34 @@ def frame_snow(phase):
 
 def frame_mist(phase):
     grid = blank()
-    draw_cloud(grid, x_offset=0, y_offset=1, tint=4, shadow=7)
+    draw_cloud(grid, x_offset=0, y_offset=1, tint=3, shadow=4)
     draw_fog(grid, phase)
     return grid
 
 
 def frame_haze(phase):
     grid = blank()
-    draw_sun(grid, phase, x=8, y=12)
+    draw_sun(grid, phase, x=7, y=11)
     draw_haze(grid, phase)
     return grid
 
 
 def frame_dust(phase):
     grid = blank()
-    draw_wind(grid, phase, color=6)
-    for x, y in ((5, 12), (9, 15), (13, 21), (16, 24)):
-        set_px(grid, x + (phase % 2), y, 2)
+    rows = [10, 16, 22]
+    for row, y in enumerate(rows):
+        start = 1 + ((phase + row) % 2)
+        for x in range(start, WIDTH - 2):
+            if x % 4 != row % 3:
+                set_px_if_empty(grid, x, y, 6)
+    for x, y in ((4, 8), (8, 12), (12, 18), (16, 24), (10, 27)):
+        set_px_if_empty(grid, x + (phase % 2), y, 2)
     return grid
 
 
 def frame_squall(phase):
     grid = blank()
-    draw_cloud(grid, x_offset=0, y_offset=1, tint=4, shadow=7)
+    draw_cloud(grid, x_offset=0, y_offset=1, tint=7, shadow=4)
     draw_wind(grid, phase, color=11)
     draw_rain(grid, phase, heavy=False)
     return grid
