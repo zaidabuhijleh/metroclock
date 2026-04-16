@@ -1,7 +1,7 @@
 import time
 
 import requests
-from PIL import ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 import config
 import web_server
@@ -232,8 +232,8 @@ class WeatherWidget(Widget):
         return accent_map.get(key, self.color_separator)
 
     def draw(self):
+        self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
         draw = ImageDraw.Draw(self.canvas)
-        draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
         preview = web_server.get_weather_preview()
         weather_data = self._preview_payload(preview) if preview else self.data
@@ -246,9 +246,16 @@ class WeatherWidget(Widget):
         label = self._format_condition_label(weather_data)
         accent = self._accent_color(condition_key)
 
+        text_layer = Image.new("RGB", (self.width, self.height), (0, 0, 0))
+        text_draw = ImageDraw.Draw(text_layer)
+        self._draw_temp_block(text_draw, temp, label, accent)
+
+        # Keep scrolling text out of the lower-left icon area while preserving
+        # the animation itself above that masked region.
+        text_draw.rectangle((0, 19, 21, self.height), fill=(0, 0, 0))
+
+        self.canvas.paste(text_layer, (0, 0))
         self._draw_icon(draw, condition_key)
-        draw.line((21, 2, 21, self.height - 3), fill=self.color_separator)
-        self._draw_temp_block(draw, temp, label, accent)
         draw.line((21, 2, 21, self.height - 3), fill=self.color_separator)
 
         return self.canvas
