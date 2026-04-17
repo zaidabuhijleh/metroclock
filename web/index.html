@@ -345,6 +345,7 @@
     <button class="tab-btn" data-tab="metro">Metro</button>
     <button class="tab-btn" data-tab="weather">Weather</button>
     <button class="tab-btn" data-tab="flight">Flight</button>
+    <button class="tab-btn" data-tab="ambient">Ambient</button>
     <button class="tab-btn" data-tab="wifi">WiFi</button>
     <button class="tab-btn" data-tab="system">System</button>
   </div>
@@ -446,6 +447,21 @@
       <label>AviationStack API Key</label>
       <input type="password" id="aviationstack-api-key" placeholder="Enter key (leave blank to keep current)" autocomplete="new-password" />
       <button class="btn btn-primary" onclick="saveFlight()">Save</button>
+    </div>
+  </div>
+
+  <!-- Ambient Tab -->
+  <div class="panel" id="panel-ambient">
+    <div class="card">
+      <div class="card-title">Scene</div>
+      <div class="mode-grid">
+        <button class="mode-btn" data-scene="beach"        onclick="setAmbientScene('beach')">        <span class="icon">🏖️</span>Beach</button>
+        <button class="mode-btn" data-scene="city_night"   onclick="setAmbientScene('city_night')">   <span class="icon">🌃</span>City Night</button>
+        <button class="mode-btn" data-scene="forest"       onclick="setAmbientScene('forest')">       <span class="icon">🌲</span>Forest</button>
+        <button class="mode-btn" data-scene="winter_cabin" onclick="setAmbientScene('winter_cabin')"> <span class="icon">🏔️</span>Winter Cabin</button>
+        <button class="mode-btn" data-scene="space"        onclick="setAmbientScene('space')">        <span class="icon">🚀</span>Space</button>
+        <button class="mode-btn" data-scene="auto"         onclick="setAmbientScene('auto')">         <span class="icon">🔀</span>Auto</button>
+      </div>
     </div>
   </div>
 
@@ -678,6 +694,9 @@ async function init() {
       document.getElementById("flight-number").value = data.FLIGHT_NUMBER;
     }
 
+    // Ambient
+    setActiveAmbientScene(data.ambient_scene || "auto");
+
   } catch (e) {
     toast("Failed to load settings", "error");
   }
@@ -832,6 +851,32 @@ async function saveFlight() {
   if (key) payload.AVIATIONSTACK_API_KEY = key;
   await saveSettings(payload);
   if (key) document.getElementById("aviationstack-api-key").value = "";
+}
+
+// ── Ambient ────────────────────────────────────────────────────────────────
+function setActiveAmbientScene(scene) {
+  document.querySelectorAll("#panel-ambient .mode-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.scene === scene);
+  });
+}
+
+async function setAmbientScene(scene) {
+  try {
+    const res = await fetch("/api/ambient/scene", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({scene})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setActiveAmbientScene(scene);
+      toast(scene === "auto" ? "Auto-cycling scenes" : "Scene: " + scene.replace("_", " "));
+    } else {
+      toast(data.error || "Failed to set scene", "error");
+    }
+  } catch (e) {
+    toast("Failed to set scene", "error");
+  }
 }
 
 // ── WiFi ───────────────────────────────────────────────────────────────────

@@ -13,6 +13,8 @@ _mode_lock = threading.Lock()
 _display_mode = None
 _weather_preview_lock = threading.Lock()
 _weather_preview = None
+_ambient_scene_lock = threading.Lock()
+_ambient_scene = None  # None = auto-cycle; scene key string = pinned
 
 
 def get_display_mode() -> str:
@@ -57,6 +59,17 @@ def set_weather_preview(preview):
         _weather_preview = preview
 
 
+def get_ambient_scene():
+    with _ambient_scene_lock:
+        return _ambient_scene
+
+
+def set_ambient_scene(scene):
+    with _ambient_scene_lock:
+        global _ambient_scene
+        _ambient_scene = scene
+
+
 def _get_ip() -> str:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -96,6 +109,7 @@ def api_status():
     masked["hostname"] = socket.gethostname()
     masked["display_mode"] = get_display_mode()
     masked["weather_preview"] = get_weather_preview()
+    masked["ambient_scene"] = get_ambient_scene()
     return jsonify(masked)
 
 
@@ -151,6 +165,20 @@ def api_weather_preview():
 
     set_weather_preview(preview)
     return jsonify({"ok": True, "preview": preview})
+
+
+@app.route("/api/ambient/scene", methods=["POST"])
+def api_ambient_scene():
+    data = request.get_json(force=True) or {}
+    scene = data.get("scene")
+    allowed = {"beach", "city_night", "forest", "winter_cabin", "space"}
+    if scene in ("", None, "auto"):
+        set_ambient_scene(None)
+        return jsonify({"ok": True, "scene": None})
+    if scene not in allowed:
+        return jsonify({"ok": False, "error": "Invalid scene"}), 400
+    set_ambient_scene(scene)
+    return jsonify({"ok": True, "scene": scene})
 
 
 @app.route("/api/wifi/scan")
