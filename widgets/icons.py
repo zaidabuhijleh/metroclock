@@ -347,14 +347,10 @@ def frame_thunderstorm(phase):
         if py + 2 < HEIGHT:
             set_px_if_empty(grid, x, py + 2, 11)
 
-    bolt_variants = [
-        [(12, 20), (10, 23), (13, 23), (11, 27), (14, 27), (12, 30)],
-        [(13, 20), (11, 23), (14, 23), (12, 27), (15, 27), (13, 30)],
-        [(11, 20), (9, 23), (12, 23), (10, 27), (13, 27), (11, 30)],
-        [(12, 21), (10, 24), (13, 24), (11, 28), (14, 28), (12, 31)],
-    ]
-    bolt = bolt_variants[phase % len(bolt_variants)]
-    for start, end in zip(bolt, bolt[1:]):
+    bolt_path = [(12, 20), (10, 23), (13, 23), (11, 27), (14, 27), (12, 30)]
+    strike_progress = [1, 2, 3, 5, 5]
+    segments_to_draw = strike_progress[phase % len(strike_progress)]
+    for start, end in zip(bolt_path[:segments_to_draw], bolt_path[1:segments_to_draw + 1]):
         draw_line(grid, start[0], start[1], end[0], end[1], 6)
 
     return grid
@@ -443,7 +439,7 @@ ANIMATIONS = {
     "drizzle": build_frames(frame_drizzle, 3),
     "rain": build_frames(frame_rain, 10),
     "shower_rain": build_frames(frame_shower_rain, 10),
-    "thunderstorm": build_frames(frame_thunderstorm, 3),
+    "thunderstorm": build_frames(frame_thunderstorm, 5),
     "snow": build_frames(frame_snow, 10),
     "mist": build_frames(frame_mist, 2),
     "haze": build_frames(frame_haze, 2),
@@ -455,7 +451,7 @@ ANIMATIONS = {
     "Clouds": build_frames(frame_overcast, 2),
     "Rain": build_frames(frame_rain, 10),
     "Drizzle": build_frames(frame_drizzle, 3),
-    "Thunderstorm": build_frames(frame_thunderstorm, 3),
+    "Thunderstorm": build_frames(frame_thunderstorm, 5),
     "Snow": build_frames(frame_snow, 10),
     "Mist": build_frames(frame_mist, 2),
     "Haze": build_frames(frame_haze, 2),
