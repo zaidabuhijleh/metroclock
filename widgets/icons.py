@@ -131,18 +131,18 @@ def draw_rain(grid, offset=0, heavy=False):
     columns = [2, 5, 9, 13]
     if heavy:
         columns.extend([17])
-    starts = [8, 10, 13, 11, 15]
+    starts = [14, 16, 18, 17, 19]
     cycle = 10
     for i, x in enumerate(columns):
         y = starts[i] + (offset % cycle)
         if y < HEIGHT - 1:
-            set_px_if_empty(grid, x, y, 5)
+            set_px(grid, x, y, 5)
             if y + 1 < HEIGHT:
-                set_px_if_empty(grid, x + 1, y + 1, 11)
+                set_px(grid, x + 1, y + 1, 11)
         if heavy and y + 1 < HEIGHT:
-            set_px_if_empty(grid, x, y + 1, 11)
+            set_px(grid, x, y + 1, 11)
             if y + 2 < HEIGHT:
-                set_px_if_empty(grid, x + 1, y + 2, 5)
+                set_px(grid, x + 1, y + 2, 5)
 
 
 def draw_drizzle(grid, offset=0):
