@@ -21,7 +21,8 @@ class AmbientWidget(Widget):
         now = time.time()
         scene = self._scene()
 
-        if now - self._scene_start_time >= config.AMBIENT_SCENE_DURATION:
+        duration = getattr(config, "AMBIENT_SCENE_DURATION", 60)
+        if now - self._scene_start_time >= duration:
             self._scene_index = (self._scene_index + 1) % len(SCENES)
             self._frame_index = 0
             self._last_frame_time = now
