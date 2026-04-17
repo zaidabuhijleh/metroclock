@@ -331,9 +331,30 @@ def frame_shower_rain(phase):
 
 
 def frame_thunderstorm(phase):
-    grid = frame_overcast(phase)
-    draw_rain(grid, phase, heavy=True)
-    draw_lightning(grid, phase)
+    grid = blank()
+    draw_cloud(grid, x_offset=-3 + (phase % 2), y_offset=-3, tint=7, shadow=4)
+    draw_cloud(grid, x_offset=1, y_offset=3, tint=4, shadow=7)
+
+    drops = [
+        (2, 14), (6, 16), (10, 17), (14, 16), (17, 18),
+        (4, 22), (8, 24), (12, 23), (16, 25),
+    ]
+    cycle = 10
+    for index, (x, y) in enumerate(drops):
+        py = y + ((phase + index) % cycle)
+        set_px_if_empty(grid, x, py, 5)
+        set_px_if_empty(grid, x + 1, py + 1, 11)
+        if py + 2 < HEIGHT:
+            set_px_if_empty(grid, x, py + 2, 11)
+
+    bolt_variants = [
+        [(9, 15), (7, 19), (10, 19), (8, 24), (11, 24), (9, 29)],
+        [(10, 15), (8, 19), (11, 19), (9, 24), (12, 24), (10, 29)],
+    ]
+    bolt = bolt_variants[phase % len(bolt_variants)]
+    for start, end in zip(bolt, bolt[1:]):
+        draw_line(grid, start[0], start[1], end[0], end[1], 6)
+
     return grid
 
 
