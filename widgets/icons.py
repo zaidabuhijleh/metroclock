@@ -131,18 +131,18 @@ def draw_rain(grid, offset=0, heavy=False):
     columns = [2, 5, 9, 13]
     if heavy:
         columns.extend([17])
-    starts = [14, 16, 18, 17, 19]
+    starts = [18, 20, 22, 21, 23]
     cycle = 10
     for i, x in enumerate(columns):
         y = starts[i] + (offset % cycle)
         if y < HEIGHT - 1:
-            set_px(grid, x, y, 5)
+            set_px_if_empty(grid, x, y, 5)
             if y + 1 < HEIGHT:
-                set_px(grid, x + 1, y + 1, 11)
+                set_px_if_empty(grid, x + 1, y + 1, 11)
         if heavy and y + 1 < HEIGHT:
-            set_px(grid, x, y + 1, 11)
+            set_px_if_empty(grid, x, y + 1, 11)
             if y + 2 < HEIGHT:
-                set_px(grid, x + 1, y + 2, 5)
+                set_px_if_empty(grid, x + 1, y + 2, 5)
 
 
 def draw_drizzle(grid, offset=0):
@@ -296,7 +296,17 @@ def frame_rain(phase):
     grid = blank()
     draw_cloud(grid, x_offset=-3, y_offset=-2, tint=7, shadow=4)
     draw_cloud(grid, x_offset=2 + (phase % 2), y_offset=4, tint=3, shadow=4)
-    draw_rain(grid, phase, heavy=False)
+
+    drops = [
+        (2, 14), (6, 16), (10, 18), (14, 17),
+        (5, 22), (9, 25), (13, 23),
+    ]
+    cycle = 10
+    for index, (x, y) in enumerate(drops):
+        py = y + ((phase + index) % cycle)
+        set_px_if_empty(grid, x, py, 5)
+        set_px_if_empty(grid, x + 1, py + 1, 11)
+
     return grid
 
 
@@ -304,7 +314,19 @@ def frame_shower_rain(phase):
     grid = blank()
     draw_cloud(grid, x_offset=-3 + (phase % 2), y_offset=-2, tint=7, shadow=4)
     draw_cloud(grid, x_offset=1, y_offset=3, tint=4, shadow=7)
-    draw_rain(grid, phase, heavy=True)
+
+    drops = [
+        (2, 13), (5, 15), (9, 16), (13, 15), (17, 17),
+        (4, 21), (8, 24), (12, 22), (16, 25),
+    ]
+    cycle = 10
+    for index, (x, y) in enumerate(drops):
+        py = y + ((phase + index) % cycle)
+        set_px_if_empty(grid, x, py, 5)
+        set_px_if_empty(grid, x + 1, py + 1, 11)
+        if py + 2 < HEIGHT:
+            set_px_if_empty(grid, x, py + 2, 11)
+
     return grid
 
 
