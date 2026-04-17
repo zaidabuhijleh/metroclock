@@ -431,6 +431,7 @@ SIDE_PLANE = create_side_view_plane()
 ANIMATIONS = {
     "clear_day": build_frames(frame_clear_day, 2),
     "clear_night": build_frames(frame_clear_night, 2),
+    "cloudy": build_frames(frame_overcast, 2),
     "few_clouds_day": build_frames(frame_few_clouds_day, 2),
     "few_clouds_night": build_frames(frame_few_clouds_night, 2),
     "scattered_clouds": build_frames(frame_scattered_clouds, 2),

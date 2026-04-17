@@ -122,22 +122,11 @@ def api_weather_preview():
     allowed_previews = {
         "clear_day",
         "clear_night",
-        "few_clouds_day",
-        "few_clouds_night",
-        "scattered_clouds",
-        "broken_clouds",
-        "overcast",
+        "cloudy",
         "drizzle",
         "rain",
-        "shower_rain",
         "thunderstorm",
         "snow",
-        "mist",
-        "haze",
-        "dust",
-        "squall",
-        "tornado",
-        "smoke",
     }
 
     if preview not in allowed_previews:
