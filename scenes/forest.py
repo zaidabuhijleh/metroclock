@@ -6,16 +6,15 @@ FPS = 6
 
 W, H = 64, 32
 
-SKY        = (  5,  10,  30)
-STAR       = (210, 220, 255)
+SKY        = (  2,   5,  18)
+STAR       = (215, 225, 255)
 STAR_DIM   = ( 90, 100, 145)
-TREE_FILL  = ( 15,  80,  20)
-TREE_DARK  = (  8,  50,  12)
-TREE_SNOW  = (180, 210, 180)
-GROUND     = ( 20,  55,  15)
-GRASS      = ( 50, 120,  30)
-FIREFLY    = (230, 255, 110)
-FIREFLY_DIM= (120, 175,  55)
+TREE_FILL  = (  0, 200,  50)   # bright green — visible at low brightness
+TREE_DARK  = (  0, 130,  30)   # darker green for layer depth
+GROUND     = ( 25,  60,  18)
+GRASS      = ( 55, 135,  35)
+FIREFLY    = (235, 255, 110)
+FIREFLY_DIM= (125, 180,  55)
 
 _rng = random.Random(17)
 _STARS = [(x, y) for x in range(W) for y in range(H - 16)
@@ -33,9 +32,10 @@ _FIREFLIES = [(_rng2.randint(3, W - 4), _rng2.randint(10, H - 9), _rng2.randint(
 
 
 def _draw_tree(draw, tx, ty, hw, layers):
+    # Narrow at tip (top), wide at base (bottom) — correct pine tree shape
     for layer in range(layers):
         y = ty + layer * 3
-        half = max(1, hw - layer)
+        half = max(1, 1 + layer * (hw - 1) // max(1, layers - 1))
         c = TREE_FILL if layer % 2 == 0 else TREE_DARK
         for x in range(tx - half, tx + half + 1):
             if 0 <= x < W and 0 <= y < H:
@@ -77,7 +77,6 @@ def _make_frame(frame):
             drift_y = fy + (((frame + phase) // 2) % 3) - 1
             if 0 <= drift_x < W and 0 <= drift_y < H:
                 draw.point((drift_x, drift_y), fill=c)
-                # 2nd pixel for visibility
                 if drift_x + 1 < W:
                     draw.point((drift_x + 1, drift_y), fill=FIREFLY_DIM)
 
