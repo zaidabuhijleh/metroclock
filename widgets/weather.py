@@ -58,17 +58,12 @@ class WeatherWidget(Widget):
         except Exception:
             pass
 
-    def _measure_text(self, text, font):
+    def _font_metrics(self, text, font):
+        """Returns (width, left_offset) for the given text and font."""
         if hasattr(font, "getbbox"):
             left, _, right, _ = font.getbbox(text)
-            return right - left
-        return int(font.getlength(text))
-
-    def _text_left_offset(self, text, font):
-        if hasattr(font, "getbbox"):
-            left, _, _, _ = font.getbbox(text)
-            return left
-        return 0
+            return right - left, left
+        return int(font.getlength(text)), 0
 
     def _resolve_condition_key(self, weather_data):
         weather = weather_data["weather"][0]
@@ -82,35 +77,31 @@ class WeatherWidget(Widget):
             return "drizzle"
         if "snow" in description or main == "Snow":
             return "snow"
-        if (
-            "rain" in description
-            or main == "Rain"
-            or "freezing rain" in description
-            or "shower rain" in description
-        ):
+        if "rain" in description or "shower" in description or main == "Rain":
             return "rain"
-        if (
-            "smoke" in description
-            or "ash" in description
-            or "sand" in description
-            or "dust" in description
-            or "haze" in description
-            or "fog" in description
-            or "mist" in description
-            or "squall" in description
-            or "tornado" in description
-            or main in {"Smoke", "Dust", "Sand", "Ash", "Haze", "Mist", "Fog", "Squall", "Tornado"}
-        ):
-            return "cloudy"
+        if "tornado" in description or main == "Tornado":
+            return "tornado"
+        if "squall" in description or main == "Squall":
+            return "squall"
+        if "smoke" in description or "ash" in description or main in {"Smoke", "Ash"}:
+            return "smoke"
+        if "dust" in description or "sand" in description or main in {"Dust", "Sand"}:
+            return "dust"
+        if "haze" in description or main == "Haze":
+            return "haze"
+        if "fog" in description or "mist" in description or main in {"Fog", "Mist"}:
+            return "mist"
 
         if icon_code == "01d":
             return "clear_day"
         if icon_code == "01n":
             return "clear_night"
-        if icon_code in {"02d", "02n"}:
-            return "cloudy"
+        if icon_code == "02d":
+            return "few_clouds_day"
+        if icon_code == "02n":
+            return "few_clouds_night"
         if icon_code.startswith("03"):
-            return "cloudy"
+            return "scattered_clouds"
         if icon_code.startswith("04"):
             return "cloudy"
         if icon_code.startswith("10"):
@@ -120,37 +111,51 @@ class WeatherWidget(Widget):
         if icon_code.startswith("13"):
             return "snow"
         if icon_code.startswith("50"):
-            return "cloudy"
+            return "mist"
 
         return "clear_day"
 
     def _format_condition_label(self, condition_key):
         labels = {
-            "clear_day": "Clear",
-            "clear_night": "Clear",
-            "cloudy": "Cloudy",
-            "drizzle": "Drizzle",
-            "rain": "Rain",
-            "thunderstorm": "Storm",
-            "snow": "Snow",
+            "clear_day":        "Clear",
+            "clear_night":      "Clear",
+            "few_clouds_day":   "P. Cloudy",
+            "few_clouds_night": "P. Cloudy",
+            "scattered_clouds": "Cloudy",
+            "cloudy":           "Cloudy",
+            "drizzle":          "Drizzle",
+            "rain":             "Rain",
+            "thunderstorm":     "Storm",
+            "snow":             "Snow",
+            "mist":             "Mist",
+            "haze":             "Haze",
+            "dust":             "Dusty",
+            "squall":           "Squall",
+            "tornado":          "Tornado",
+            "smoke":            "Smoke",
         }
         return labels.get(condition_key, "Weather")
 
-    def _preview_payload(self, preview):
-        previews = {
-            "clear_day": ("Clear", "clear sky", "01d"),
-            "clear_night": ("Clear", "clear sky", "01n"),
-            "cloudy": ("Clouds", "overcast clouds", "04d"),
-            "drizzle": ("Drizzle", "light drizzle", "09d"),
-            "rain": ("Rain", "light rain", "10d"),
-            "thunderstorm": ("Thunderstorm", "thunderstorm", "11d"),
-            "snow": ("Snow", "light snow", "13d"),
+    def _accent_color(self, key):
+        accent_map = {
+            "clear_day":        (255, 196, 72),
+            "clear_night":      (184, 197, 255),
+            "few_clouds_day":   (255, 210, 100),
+            "few_clouds_night": (184, 197, 255),
+            "scattered_clouds": (164, 188, 219),
+            "cloudy":           (164, 188, 219),
+            "drizzle":          (126, 216, 255),
+            "rain":             (82, 174, 255),
+            "thunderstorm":     (255, 245, 140),
+            "snow":             (192, 248, 255),
+            "mist":             (156, 214, 214),
+            "haze":             (255, 210, 100),
+            "dust":             (255, 180, 80),
+            "squall":           (82, 174, 255),
+            "tornado":          (176, 176, 186),
+            "smoke":            (176, 176, 186),
         }
-        main, description, icon_code = previews.get(preview, previews["clear_day"])
-        return {
-            "main": {"temp": 72 if config.WEATHER_UNITS == "imperial" else 22},
-            "weather": [{"main": main, "description": description, "icon": icon_code}],
-        }
+        return accent_map.get(key, self.color_separator)
 
     def _draw_icon(self, draw, key):
         pixels, palette = icons.get_frame(key, self.anim_frame)
@@ -161,25 +166,18 @@ class WeatherWidget(Widget):
             y = index // 21
             draw.point((x, y), fill=palette[color_code])
 
-    def _label_scroll_x(self, label, right_start, visible_width):
-        text_width = self._measure_text(label, self.temp_font)
-        left_offset = self._text_left_offset(label, self.temp_font)
-        start_x = right_start + self.label_left_padding
-        padded_width = max(1, visible_width - self.label_left_padding)
-        if text_width <= visible_width:
-            return start_x + max(0, (padded_width - text_width) // 2) - left_offset
+    def _label_scroll_x(self, label, available_width):
+        """Returns x position relative to the right panel origin."""
+        width, left_off = self._font_metrics(label, self.temp_font)
+        padded = available_width - self.label_left_padding
+        if width <= padded:
+            return self.label_left_padding + max(0, (padded - width) // 2) - left_off
 
-        cycle_start = 1.0
-        pause_end = 1.0
-        scroll_distance = max(0, text_width - padded_width)
-        elapsed = time.time() % (cycle_start + (scroll_distance / self.label_scroll_speed) + pause_end)
-
-        if elapsed < cycle_start:
-            offset = 0
-        else:
-            offset = min(scroll_distance, (elapsed - cycle_start) * self.label_scroll_speed)
-
-        return start_x - left_offset - offset
+        scroll_distance = width - padded
+        cycle = 1.0 + (scroll_distance / self.label_scroll_speed) + 1.0
+        elapsed = time.time() % cycle
+        offset = 0 if elapsed < 1.0 else min(scroll_distance, (elapsed - 1.0) * self.label_scroll_speed)
+        return self.label_left_padding - left_off - int(offset)
 
     def _draw_temp_block(self, draw, temp, label, accent):
         right_start = 23
@@ -187,46 +185,38 @@ class WeatherWidget(Widget):
         degree_sign = "\N{DEGREE SIGN}"
 
         temp_str = str(temp)
-        temp_width = self._measure_text(temp_str, self.temp_font)
-        degree_width = self._measure_text(degree_sign, self.temp_font)
-        total_width = temp_width + degree_width + 1
-        temp_x = right_start + max(0, (right_width - total_width) // 2)
-        temp_y = 2
-        temp_left = self._text_left_offset(temp_str, self.temp_font)
-        degree_left = self._text_left_offset(degree_sign, self.temp_font)
+        temp_w, temp_off = self._font_metrics(temp_str, self.temp_font)
+        deg_w,  deg_off  = self._font_metrics(degree_sign, self.temp_font)
+        total_w = temp_w + deg_w + 1
+        temp_x = right_start + max(0, (right_width - total_w) // 2)
 
-        draw.text((temp_x - temp_left, temp_y), temp_str, font=self.temp_font, fill=self.color_temp)
+        draw.text((temp_x - temp_off, 2), temp_str, font=self.temp_font, fill=self.color_temp)
         draw.text(
-            (temp_x + temp_width + 1 - degree_left, temp_y),
+            (temp_x + temp_w + 1 - deg_off, 2),
             degree_sign,
             font=self.temp_font,
             fill=self.color_degree,
         )
 
-        label_y = 20
-        label_x = self._label_scroll_x(label, right_start, right_width)
-        draw.text((label_x, label_y), label, font=self.temp_font, fill=self.color_label)
-
         draw.line((24, 17, self.width - 3, 17), fill=accent)
 
-    def _accent_color(self, key):
-        accent_map = {
-            "clear_day": (255, 196, 72),
-            "clear_night": (184, 197, 255),
-            "cloudy": (164, 188, 219),
-            "drizzle": (126, 216, 255),
-            "rain": (82, 174, 255),
-            "thunderstorm": (255, 245, 140),
-            "snow": (192, 248, 255),
-        }
-        return accent_map.get(key, self.color_separator)
+        # Label rendered into a clipped sub-image so it can't bleed into the icon area.
+        label_y = 20
+        label_img = Image.new("RGB", (right_width, self.height - label_y), (0, 0, 0))
+        ImageDraw.Draw(label_img).text(
+            (self._label_scroll_x(label, right_width), 0),
+            label,
+            font=self.temp_font,
+            fill=self.color_label,
+        )
+        self.canvas.paste(label_img, (right_start, label_y))
 
     def draw(self):
         self.canvas = Image.new("RGB", (self.width, self.height), (0, 0, 0))
         draw = ImageDraw.Draw(self.canvas)
 
         preview = web_server.get_weather_preview()
-        weather_data = self._preview_payload(preview) if preview else self.data
+        weather_data = web_server.preview_weather_data(preview, config.WEATHER_UNITS) if preview else self.data
 
         if not weather_data:
             return self.canvas
@@ -236,15 +226,7 @@ class WeatherWidget(Widget):
         label = self._format_condition_label(condition_key)
         accent = self._accent_color(condition_key)
 
-        text_layer = Image.new("RGB", (self.width, self.height), (0, 0, 0))
-        text_draw = ImageDraw.Draw(text_layer)
-        self._draw_temp_block(text_draw, temp, label, accent)
-
-        # Keep scrolling text out of the lower-left icon area while preserving
-        # the animation itself above that masked region.
-        text_draw.rectangle((0, 19, 23, self.height), fill=(0, 0, 0))
-
-        self.canvas.paste(text_layer, (0, 0))
+        self._draw_temp_block(draw, temp, label, accent)
         self._draw_icon(draw, condition_key)
         draw.line((21, 2, 21, self.height - 3), fill=self.color_separator)
 

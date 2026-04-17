@@ -34,6 +34,23 @@ def get_weather_preview():
         return _weather_preview
 
 
+def preview_weather_data(preview: str, units: str) -> dict:
+    table = {
+        "clear_day":    ("Clear",        "clear sky",      "01d"),
+        "clear_night":  ("Clear",        "clear sky",      "01n"),
+        "cloudy":       ("Clouds",       "overcast clouds","04d"),
+        "drizzle":      ("Drizzle",      "light drizzle",  "09d"),
+        "rain":         ("Rain",         "light rain",     "10d"),
+        "thunderstorm": ("Thunderstorm", "thunderstorm",   "11d"),
+        "snow":         ("Snow",         "light snow",     "13d"),
+    }
+    main, description, icon_code = table.get(preview, table["clear_day"])
+    return {
+        "main": {"temp": 72 if units == "imperial" else 22},
+        "weather": [{"main": main, "description": description, "icon": icon_code}],
+    }
+
+
 def set_weather_preview(preview):
     with _weather_preview_lock:
         global _weather_preview
