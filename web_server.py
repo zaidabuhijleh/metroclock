@@ -11,6 +11,8 @@ app = Flask(__name__, static_folder="web", static_url_path="")
 
 _mode_lock = threading.Lock()
 _display_mode = None
+_weather_preview_lock = threading.Lock()
+_weather_preview = None
 
 
 def get_display_mode() -> str:
@@ -25,6 +27,34 @@ def set_display_mode(mode: str):
     with _mode_lock:
         global _display_mode
         _display_mode = mode
+
+
+def get_weather_preview():
+    with _weather_preview_lock:
+        return _weather_preview
+
+
+def preview_weather_data(preview: str, units: str) -> dict:
+    table = {
+        "clear_day":    ("Clear",        "clear sky",      "01d"),
+        "clear_night":  ("Clear",        "clear sky",      "01n"),
+        "cloudy":       ("Clouds",       "overcast clouds","04d"),
+        "drizzle":      ("Drizzle",      "light drizzle",  "09d"),
+        "rain":         ("Rain",         "light rain",     "10d"),
+        "thunderstorm": ("Thunderstorm", "thunderstorm",   "11d"),
+        "snow":         ("Snow",         "light snow",     "13d"),
+    }
+    main, description, icon_code = table.get(preview, table["clear_day"])
+    return {
+        "main": {"temp": 72 if units == "imperial" else 22},
+        "weather": [{"main": main, "description": description, "icon": icon_code}],
+    }
+
+
+def set_weather_preview(preview):
+    with _weather_preview_lock:
+        global _weather_preview
+        _weather_preview = preview
 
 
 def _get_ip() -> str:
@@ -65,6 +95,7 @@ def api_status():
     masked["ip"] = _get_ip()
     masked["hostname"] = socket.gethostname()
     masked["display_mode"] = get_display_mode()
+    masked["weather_preview"] = get_weather_preview()
     return jsonify(masked)
 
 
@@ -94,6 +125,32 @@ def api_mode():
         return jsonify({"ok": False, "error": "Invalid mode"}), 400
     set_display_mode(mode)
     return jsonify({"ok": True, "mode": mode})
+
+
+@app.route("/api/weather/preview", methods=["POST"])
+def api_weather_preview():
+    data = request.get_json(force=True) or {}
+    preview = data.get("preview")
+
+    if preview in ("", None, "live"):
+        set_weather_preview(None)
+        return jsonify({"ok": True, "preview": None})
+
+    allowed_previews = {
+        "clear_day",
+        "clear_night",
+        "cloudy",
+        "drizzle",
+        "rain",
+        "thunderstorm",
+        "snow",
+    }
+
+    if preview not in allowed_previews:
+        return jsonify({"ok": False, "error": "Invalid weather preview"}), 400
+
+    set_weather_preview(preview)
+    return jsonify({"ok": True, "preview": preview})
 
 
 @app.route("/api/wifi/scan")
