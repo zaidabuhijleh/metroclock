@@ -29,6 +29,8 @@ OPENWEATHER_API_KEY = ""
 OPENWEATHER_CITY_ID = "4140963" # Washington DC
 WEATHER_UNITS = "metric"
 
+AMBIENT_SCENE_DURATION = 60  # seconds per scene
+
 # Flight Tracking Configuration
 AVIATIONSTACK_API_KEY = ""
 FLIGHT_NUMBER = "AC57"  # Default flight to track

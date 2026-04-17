@@ -162,7 +162,7 @@
 
     .mode-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 10px;
     }
     .mode-btn {
@@ -362,6 +362,9 @@
         </button>
         <button class="mode-btn" data-mode="flight" onclick="switchMode('flight')">
           <span class="icon">✈️</span>Flight
+        </button>
+        <button class="mode-btn" data-mode="ambient" onclick="switchMode('ambient')">
+          <span class="icon">🌌</span>Ambient
         </button>
       </div>
     </div>
