@@ -6,59 +6,84 @@ FPS = 6
 
 W, H = 64, 32
 
-SKY        = (  2,   5,  18)
-STAR       = (215, 225, 255)
-STAR_DIM   = ( 90, 100, 145)
-TREE_FILL  = (  0, 200,  50)   # bright green — visible at low brightness
-TREE_DARK  = (  0, 130,  30)   # darker green for layer depth
-GROUND     = ( 25,  60,  18)
-GRASS      = ( 55, 135,  35)
-FIREFLY    = (235, 255, 110)
-FIREFLY_DIM= (125, 180,  55)
+SKY_TOP      = (255, 112, 48)
+SKY_MID      = (228, 72, 56)
+SKY_BOTTOM   = (70, 18, 34)
+SUN          = (255, 198, 92)
+SUN_GLOW     = (255, 150, 70)
+TREE_FILL    = (36, 150, 64)
+TREE_DARK    = (18, 96, 44)
+TRUNK        = (210, 120, 58)
+BRANCH       = (232, 156, 78)
+GROUND       = (32, 54, 22)
+GRASS        = (72, 132, 44)
+FIREFLY      = (235, 255, 110)
+FIREFLY_DIM  = (125, 180, 55)
 
-_rng = random.Random(17)
-_STARS = [(x, y) for x in range(W) for y in range(H - 16)
-          if _rng.random() < 0.035]
-
-# Pine trees: (tip_x, tip_y, half_base, layers)
 _TREES = [
-    ( 5, 10, 4, 4), (16, 13, 3, 3), (26,  8, 5, 5),
-    (38, 11, 4, 4), (48,  9, 5, 5), (58, 13, 3, 3),
+    (5, 9, 4, 4), (16, 12, 3, 3), (26, 7, 5, 5),
+    (38, 10, 4, 4), (48, 8, 5, 5), (58, 12, 3, 3),
 ]
 
-_rng2 = random.Random(55)
-_FIREFLIES = [(_rng2.randint(3, W - 4), _rng2.randint(10, H - 9), _rng2.randint(0, 5))
-              for _ in range(16)]
+_rng = random.Random(55)
+_FIREFLIES = [(_rng.randint(3, W - 4), _rng.randint(12, H - 8), _rng.randint(0, 5)) for _ in range(10)]
+
+
+def _draw_sky(draw):
+    for y in range(H):
+        if y < 10:
+            t = y / 9
+            color = (
+                int(SKY_TOP[0] * (1 - t) + SKY_MID[0] * t),
+                int(SKY_TOP[1] * (1 - t) + SKY_MID[1] * t),
+                int(SKY_TOP[2] * (1 - t) + SKY_MID[2] * t),
+            )
+        else:
+            t = (y - 10) / max(1, H - 11)
+            color = (
+                int(SKY_MID[0] * (1 - t) + SKY_BOTTOM[0] * t),
+                int(SKY_MID[1] * (1 - t) + SKY_BOTTOM[1] * t),
+                int(SKY_MID[2] * (1 - t) + SKY_BOTTOM[2] * t),
+            )
+        draw.line([(0, y), (W - 1, y)], fill=color)
 
 
 def _draw_tree(draw, tx, ty, hw, layers):
-    # Narrow at tip (top), wide at base (bottom) — correct pine tree shape
     for layer in range(layers):
         y = ty + layer * 3
         half = max(1, 1 + layer * (hw - 1) // max(1, layers - 1))
-        c = TREE_FILL if layer % 2 == 0 else TREE_DARK
+        fill = TREE_FILL if layer % 2 == 0 else TREE_DARK
         for x in range(tx - half, tx + half + 1):
             if 0 <= x < W and 0 <= y < H:
-                draw.point((x, y), fill=c)
+                draw.point((x, y), fill=fill)
             if y + 1 < H and 0 <= x < W:
-                draw.point((x, y + 1), fill=c)
-    # Trunk
-    for dy in range(3):
-        ty2 = ty + layers * 3 + dy
-        if 0 <= ty2 < H:
-            draw.point((tx, ty2), fill=TREE_DARK)
+                draw.point((x, y + 1), fill=fill)
+
+    trunk_top = ty + layers * 3 - 1
+    for dy in range(4):
+        y = trunk_top + dy
+        if 0 <= y < H:
+            draw.point((tx, y), fill=TRUNK)
             if tx + 1 < W:
-                draw.point((tx + 1, ty2), fill=TREE_DARK)
+                draw.point((tx + 1, y), fill=TRUNK)
+
+    branch_y = trunk_top + 1
+    for dx in (-2, -1, 2, 3):
+        bx = tx + dx
+        if 0 <= bx < W and 0 <= branch_y < H:
+            draw.point((bx, branch_y), fill=BRANCH)
 
 
 def _make_frame(frame):
-    img = Image.new("RGB", (W, H), SKY)
+    img = Image.new("RGB", (W, H), SKY_TOP)
     draw = ImageDraw.Draw(img)
     rng = random.Random(frame * 7)
 
-    for sx, sy in _STARS:
-        c = STAR if rng.random() < 0.75 else STAR_DIM
-        draw.point((sx, sy), fill=c)
+    _draw_sky(draw)
+
+    # Low sunset sun peeking between the trees.
+    draw.ellipse([47, 5, 56, 14], fill=SUN)
+    draw.ellipse([45, 7, 58, 16], outline=SUN_GLOW)
 
     draw.rectangle([0, H - 7, W - 1, H - 1], fill=GROUND)
     for x in range(0, W, 3):
@@ -72,15 +97,15 @@ def _make_frame(frame):
         visible = ((frame + phase) % 6) < 3
         if visible:
             bright = ((frame + phase) % 6) < 2
-            c = FIREFLY if bright else FIREFLY_DIM
+            color = FIREFLY if bright else FIREFLY_DIM
             drift_x = fx + ((frame + phase) % 3) - 1
             drift_y = fy + (((frame + phase) // 2) % 3) - 1
             if 0 <= drift_x < W and 0 <= drift_y < H:
-                draw.point((drift_x, drift_y), fill=c)
+                draw.point((drift_x, drift_y), fill=color)
                 if drift_x + 1 < W:
                     draw.point((drift_x + 1, drift_y), fill=FIREFLY_DIM)
 
     return img
 
 
-FRAMES = [_make_frame(f) for f in range(6)]
+FRAMES = [_make_frame(frame) for frame in range(6)]

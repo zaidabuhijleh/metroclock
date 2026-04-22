@@ -6,77 +6,90 @@ FPS = 3
 
 W, H = 64, 32
 
-# Visible dark blue sky so building silhouettes read against it
-SKY        = ( 20,  28,  80)
-MOON       = (248, 242, 200)
-MOON_GREY  = (185, 178, 135)
-# Buildings near-black — clear silhouette against blue sky
-BUILDING_A = (  5,   6,  14)
-BUILDING_B = (  7,   8,  18)
-WIN_WARM   = (255, 215,  90)
-WIN_DIM    = (195, 150,  55)
-WIN_OFF    = (  3,   4,  10)
-STAR_BRIGHT= (235, 235, 255)
-STAR_DIM   = (105, 108, 148)
+SKY_TOP      = (12, 16, 46)
+SKY_BOTTOM   = (30, 16, 34)
+MOON         = (248, 242, 200)
+MOON_SHADOW  = (185, 178, 135)
+BUILDING_A   = (14, 16, 28)
+BUILDING_B   = (20, 22, 36)
+BUILDING_EDGE = (42, 46, 76)
+WIN_WARM     = (255, 215, 90)
+WIN_DIM      = (195, 150, 55)
+WIN_OFF      = (16, 18, 28)
+STAR_BRIGHT  = (235, 235, 255)
+STAR_DIM     = (105, 108, 148)
+GROUND       = (8, 8, 16)
 
 _rng = random.Random(42)
-# Stars only in sky area (above tallest building — ~20 rows from top)
-_STARS = [(x, y) for x in range(W) for y in range(H - 20)
-          if _rng.random() < 0.04]
+_STARS = [(x, y) for x in range(W) for y in range(12) if _rng.random() < 0.035]
 
-# Buildings: (left_x, width, height) — heights varied so skyline reads
 _BUILDINGS = [
-    ( 0,  6, 12), ( 6,  5,  8), (11,  7, 16), (18,  5, 10),
-    (23,  8, 19), (31,  5,  7), (36,  6, 13), (42,  5,  9),
-    (47,  7, 15), (54,  5, 11), (59,  5, 18),
+    (0, 8, 11), (8, 6, 8), (14, 8, 15), (22, 6, 10),
+    (28, 9, 20), (37, 7, 9), (44, 7, 13), (51, 6, 11), (57, 7, 17),
 ]
 
 _rng2 = random.Random(7)
 
+
 def _gen_windows(bx, bw, bh):
-    wins = []
-    for row in range(2, bh - 1, 4):
-        for col in range(1, bw - 1, 3):
-            if _rng2.random() < 0.65:
-                wins.append((bx + col, H - bh + row))
-    return wins
+    windows = []
+    top = H - bh
+    for row in range(top + 2, H - 2, 4):
+        for col in range(bx + 1, bx + bw - 2, 3):
+            if _rng2.random() < 0.72:
+                windows.append((col, row))
+    return windows
+
 
 _ALL_WINDOWS = []
 for bx, bw, bh in _BUILDINGS:
     _ALL_WINDOWS.extend(_gen_windows(bx, bw, bh))
 
 _rng3 = random.Random(99)
-_FLICKER = {w for w in _ALL_WINDOWS if _rng3.random() < 0.18}
+_FLICKER = {window for window in _ALL_WINDOWS if _rng3.random() < 0.2}
+
+
+def _draw_sky(draw):
+    for y in range(H):
+        t = y / max(1, H - 1)
+        color = (
+            int(SKY_TOP[0] * (1 - t) + SKY_BOTTOM[0] * t),
+            int(SKY_TOP[1] * (1 - t) + SKY_BOTTOM[1] * t),
+            int(SKY_TOP[2] * (1 - t) + SKY_BOTTOM[2] * t),
+        )
+        draw.line([(0, y), (W - 1, y)], fill=color)
 
 
 def _make_frame(frame):
-    img = Image.new("RGB", (W, H), SKY)
+    img = Image.new("RGB", (W, H), SKY_TOP)
     draw = ImageDraw.Draw(img)
     rng = random.Random(frame * 17)
 
-    # Stars in sky region
+    _draw_sky(draw)
+
     for sx, sy in _STARS:
-        c = STAR_BRIGHT if rng.random() < 0.75 else STAR_DIM
-        draw.point((sx, sy), fill=c)
+        draw.point((sx, sy), fill=STAR_BRIGHT if rng.random() < 0.75 else STAR_DIM)
 
-    # Moon
-    draw.ellipse([45, 2, 54, 11], fill=MOON)
-    draw.ellipse([48, 2, 55,  9], fill=MOON_GREY)
+    draw.ellipse([46, 2, 55, 11], fill=MOON)
+    draw.ellipse([49, 2, 56, 9], fill=MOON_SHADOW)
 
-    # Buildings as dark silhouettes against the visible blue sky
     for bx, bw, bh in _BUILDINGS:
-        c = BUILDING_A if bx % 2 == 0 else BUILDING_B
-        draw.rectangle([bx, H - bh, bx + bw - 1, H - 1], fill=c)
+        color = BUILDING_A if (bx // 2) % 2 == 0 else BUILDING_B
+        top = H - bh
+        draw.rectangle([bx, top, bx + bw - 1, H - 1], fill=color)
+        draw.line([(bx, top), (bx + bw - 1, top)], fill=BUILDING_EDGE)
+        if bw >= 7:
+            draw.line([(bx + bw - 1, top), (bx + bw - 1, H - 1)], fill=BUILDING_EDGE)
 
-    # Windows — 2×1 for visibility
     for wx, wy in _ALL_WINDOWS:
         if (wx, wy) in _FLICKER:
-            c = WIN_WARM if rng.random() < 0.55 else WIN_OFF
+            color = WIN_WARM if rng.random() < 0.5 else WIN_OFF
         else:
-            c = WIN_WARM if rng.random() < 0.82 else WIN_DIM
-        draw.rectangle([wx, wy, wx + 1, wy], fill=c)
+            color = WIN_WARM if rng.random() < 0.84 else WIN_DIM
+        draw.rectangle([wx, wy, wx + 1, wy], fill=color)
 
+    draw.rectangle([0, H - 2, W - 1, H - 1], fill=GROUND)
     return img
 
 
-FRAMES = [_make_frame(f) for f in range(4)]
+FRAMES = [_make_frame(frame) for frame in range(4)]
