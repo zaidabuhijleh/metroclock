@@ -27,6 +27,7 @@ def main():
     try:
         while True:
             display.clear()
+            display.set_brightness(web_server.get_brightness())
 
             mode = web_server.get_display_mode()
             if mode == "metro":

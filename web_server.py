@@ -15,6 +15,8 @@ _weather_preview_lock = threading.Lock()
 _weather_preview = None
 _ambient_scene_lock = threading.Lock()
 _ambient_scene = None  # None = auto-cycle; scene key string = pinned
+_brightness_lock = threading.Lock()
+_brightness = None
 
 
 def get_display_mode() -> str:
@@ -29,6 +31,20 @@ def set_display_mode(mode: str):
     with _mode_lock:
         global _display_mode
         _display_mode = mode
+
+
+def get_brightness():
+    with _brightness_lock:
+        global _brightness
+        if _brightness is None:
+            _brightness = getattr(config, "MATRIX_BRIGHTNESS", 30)
+        return _brightness
+
+
+def set_brightness(brightness):
+    with _brightness_lock:
+        global _brightness
+        _brightness = max(1, min(100, int(brightness)))
 
 
 def get_weather_preview():
@@ -126,6 +142,8 @@ def api_settings_post():
         changed = config_manager.write_config(data)
         if "DISPLAY_MODE" in changed:
             set_display_mode(changed["DISPLAY_MODE"])
+        if "MATRIX_BRIGHTNESS" in changed:
+            set_brightness(changed["MATRIX_BRIGHTNESS"])
         return jsonify({"ok": True, "changed": list(changed.keys())})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

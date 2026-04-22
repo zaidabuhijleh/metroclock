@@ -24,12 +24,23 @@ class Display:
         # For retro pixel art, 4 bits (16 shades per color) is plenty.
         self.options.pwm_bits = 2
         self.options.pwm_dither_bits = 0
-        self.options.brightness = max(65, min(100, brightness))
+        self.options.brightness = self._clamp_brightness(brightness)
         self.options.drop_privileges = False
         # -------------------------------
 
         self.matrix = RGBMatrix(options=self.options)
         self.canvas = self.matrix.CreateFrameCanvas()
+        self.brightness = self.options.brightness
+
+    def _clamp_brightness(self, brightness):
+        return max(1, min(100, int(brightness)))
+
+    def set_brightness(self, brightness):
+        brightness = self._clamp_brightness(brightness)
+        if brightness == self.brightness:
+            return
+        self.brightness = brightness
+        self.matrix.brightness = brightness
 
     def clear(self):
         self.canvas.Clear()
