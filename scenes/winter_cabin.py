@@ -16,8 +16,8 @@ SNOW = (235, 245, 255)
 SNOW_SHADE = (195, 220, 250)
 TREE = (35, 150, 70)
 TREE_DARK = (20, 105, 52)
-TREE_TRUNK = (170, 105, 55)
-TREE_BRANCH = (210, 150, 95)
+TREE_TRUNK = (205, 120, 50)
+TREE_BRANCH = (245, 185, 95)
 CABIN_WALL = (225, 120, 55)
 CABIN_WALL_SHADE = (190, 92, 40)
 ROOF = (110, 55, 25)
@@ -58,11 +58,6 @@ def _draw_tree(draw, tx, base_y, half):
     if tx + 1 < W:
         draw.line([(tx + 1, trunk_top + 1), (tx + 1, base_y + 1)], fill=TREE_TRUNK)
 
-    # Branches stay visible through the foliage.
-    draw.line([(tx - 3, base_y - 5), (tx + 2, base_y - 6)], fill=TREE_BRANCH)
-    draw.line([(tx - 2, base_y - 3), (tx + 3, base_y - 4)], fill=TREE_BRANCH)
-    draw.line([(tx - 4, base_y - 6), (tx - 1, base_y - 7)], fill=TREE_BRANCH)
-
     for row in range(5):
         y = base_y - row * 2
         spread = max(1, half - row + 1)
@@ -79,6 +74,11 @@ def _draw_tree(draw, tx, base_y, half):
             if cap_y >= 0:
                 draw.point((tx - 1, cap_y), fill=SNOW)
                 draw.point((tx + 1, cap_y), fill=SNOW)
+
+    # Draw branches after foliage so they remain readable on the panel.
+    draw.line([(tx - 3, base_y - 5), (tx + 2, base_y - 6)], fill=TREE_BRANCH)
+    draw.line([(tx - 2, base_y - 3), (tx + 3, base_y - 4)], fill=TREE_BRANCH)
+    draw.line([(tx - 4, base_y - 6), (tx - 1, base_y - 7)], fill=TREE_BRANCH)
 
 
 def _draw_cabin(draw):

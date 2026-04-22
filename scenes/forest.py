@@ -40,25 +40,28 @@ def _draw_tree(draw, tx, base_y, canopy_w):
 
     draw.line([(tx - 3, base_y - 5), (tx + 3, base_y - 6)], fill=BRANCH)
     draw.line([(tx - 2, base_y - 3), (tx + 4, base_y - 4)], fill=BRANCH)
-    draw.line([(tx - 4, base_y - 7), (tx - 1, base_y - 8)], fill=BRANCH)
-    draw.line([(tx + 1, base_y - 8), (tx + 4, base_y - 7)], fill=BRANCH)
+    draw.line([(tx - 4, base_y - 6), (tx - 1, base_y - 7)], fill=BRANCH)
+    draw.line([(tx + 1, base_y - 7), (tx + 4, base_y - 6)], fill=BRANCH)
 
-    top = base_y - 12
+    # Rounded layered canopy: keeps tree readable without turning into a solid block.
     half = canopy_w // 2
-    for y in range(top, base_y - 3):
-        dy = y - (top + 4)
-        for x in range(tx - half - 2, tx + half + 3):
+    profile = [half - 1, half, half + 1, half + 1, half, half - 1]
+    top = base_y - 11
+    for row, spread in enumerate(profile):
+        y = top + row
+        if y >= base_y - 3:
+            break
+        spread = max(2, spread)
+        for x in range(tx - spread, tx + spread + 1):
             if not (0 <= x < W):
                 continue
-            dx = x - tx
-            shape = (dx * dx) + (dy * dy * 2)
-            rim = abs(dx) * 2 + abs(dy)
-            if shape < (half + 3) * (half + 3) * 2 and rim < canopy_w + 10:
-                # carve out tiny gaps to avoid square-looking canopies
-                if (x + y + tx) % 11 == 0:
-                    continue
-                color = LEAF if (x + y) % 2 == 0 else LEAF_DARK
-                draw.point((x, y), fill=color)
+            # trim hard corners so the canopy reads rounder on the panel
+            if abs(x - tx) == spread and row in (0, len(profile) - 1):
+                continue
+            if row >= 2 and (x + y + tx) % 13 == 0:
+                continue
+            color = LEAF if (x + y) % 2 == 0 else LEAF_DARK
+            draw.point((x, y), fill=color)
 
 
 def _draw_ground(draw, frame):
