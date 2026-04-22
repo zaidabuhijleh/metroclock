@@ -24,7 +24,7 @@ class Display:
         # For retro pixel art, 4 bits (16 shades per color) is plenty.
         self.options.pwm_bits = 2
         self.options.pwm_dither_bits = 0
-        self.options.brightness = 100
+        self.options.brightness = brightness
         self.options.drop_privileges = False
         # -------------------------------
 
