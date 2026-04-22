@@ -10,23 +10,15 @@ class Display:
         self.options.parallel = 1
         self.options.hardware_mapping = config.MATRIX_MAPPING
         
-        # --- PI ZERO 2 W FLICKER FIX ---
-        
-        # 1. SLOWDOWN: Keep this high for stability
         self.options.gpio_slowdown = 4
 
-        # 2. SOFTWARE MODE: Uses the CPU to drive the matrix
-        # Since you locked the CPU to "performance" mode, this will be smooth.
+
         self.options.disable_hardware_pulsing = True
-        
-        # 3. COLOR DEPTH: Reduced to 4 bits (The Critical Fix)
-        # Drops the CPU load significantly. 
-        # For retro pixel art, 4 bits (16 shades per color) is plenty.
-        self.options.pwm_bits = 2
+
+        self.options.pwm_bits = 3
         self.options.pwm_dither_bits = 0
         self.options.brightness = self._clamp_brightness(brightness)
         self.options.drop_privileges = False
-        # -------------------------------
 
         self.matrix = RGBMatrix(options=self.options)
         self.canvas = self.matrix.CreateFrameCanvas()
@@ -46,7 +38,6 @@ class Display:
         self.canvas.Clear()
 
     def draw_image(self, image):
-        # Ensure image fits
         if image.width != self.options.cols or image.height != self.options.rows:
             image = image.resize((self.options.cols, self.options.rows))
         self.matrix.SetImage(image)
