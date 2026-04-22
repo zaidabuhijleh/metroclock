@@ -16,6 +16,8 @@ SNOW = (235, 245, 255)
 SNOW_SHADE = (195, 220, 250)
 TREE = (35, 150, 70)
 TREE_DARK = (20, 105, 52)
+TREE_TRUNK = (170, 105, 55)
+TREE_BRANCH = (210, 150, 95)
 CABIN_WALL = (225, 120, 55)
 CABIN_WALL_SHADE = (190, 92, 40)
 ROOF = (110, 55, 25)
@@ -51,12 +53,32 @@ def _draw_mountains(draw):
 
 
 def _draw_tree(draw, tx, base_y, half):
-    for row in range(4):
+    trunk_top = base_y - 7
+    draw.line([(tx, trunk_top), (tx, base_y + 1)], fill=TREE_TRUNK)
+    if tx + 1 < W:
+        draw.line([(tx + 1, trunk_top + 1), (tx + 1, base_y + 1)], fill=TREE_TRUNK)
+
+    # Branches stay visible through the foliage.
+    draw.line([(tx - 3, base_y - 5), (tx + 2, base_y - 6)], fill=TREE_BRANCH)
+    draw.line([(tx - 2, base_y - 3), (tx + 3, base_y - 4)], fill=TREE_BRANCH)
+    draw.line([(tx - 4, base_y - 6), (tx - 1, base_y - 7)], fill=TREE_BRANCH)
+
+    for row in range(5):
         y = base_y - row * 2
-        spread = max(1, half - row)
-        color = TREE if row % 2 == 0 else TREE_DARK
-        draw.line([(tx - spread, y), (tx + spread, y)], fill=color)
-    draw.line([(tx, base_y + 1), (tx, base_y + 2)], fill=ROOF)
+        spread = max(1, half - row + 1)
+        for x in range(tx - spread, tx + spread + 1):
+            if 0 <= x < W and y >= 0:
+                # Keep tiny cutouts so branch structure reads better.
+                if row > 1 and (x + y + tx) % 9 == 0:
+                    continue
+                color = TREE if (x + y) % 2 == 0 else TREE_DARK
+                draw.point((x, y), fill=color)
+
+        if row <= 2:
+            cap_y = y - 1
+            if cap_y >= 0:
+                draw.point((tx - 1, cap_y), fill=SNOW)
+                draw.point((tx + 1, cap_y), fill=SNOW)
 
 
 def _draw_cabin(draw):
