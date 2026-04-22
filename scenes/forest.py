@@ -6,15 +6,15 @@ FPS = 6
 
 W, H = 64, 32
 
-SKY_TOP      = (255, 112, 48)
-SKY_MID      = (228, 72, 56)
-SKY_BOTTOM   = (70, 18, 34)
-SUN          = (255, 198, 92)
-SUN_GLOW     = (255, 150, 70)
-TREE_FILL    = (36, 150, 64)
-TREE_DARK    = (18, 96, 44)
-TRUNK        = (210, 120, 58)
-BRANCH       = (232, 156, 78)
+SKY_TOP      = (22, 34, 82)
+SKY_MID      = (128, 58, 86)
+SKY_BOTTOM   = (245, 132, 54)
+SUN          = (255, 214, 104)
+SUN_GLOW     = (255, 166, 74)
+TREE_FILL    = (18, 118, 52)
+TREE_DARK    = (8, 70, 34)
+TRUNK        = (255, 168, 76)
+BRANCH       = (255, 210, 116)
 GROUND       = (32, 54, 22)
 GRASS        = (72, 132, 44)
 FIREFLY      = (235, 255, 110)
@@ -31,15 +31,15 @@ _FIREFLIES = [(_rng.randint(3, W - 4), _rng.randint(12, H - 8), _rng.randint(0, 
 
 def _draw_sky(draw):
     for y in range(H):
-        if y < 10:
-            t = y / 9
+        if y < 14:
+            t = y / 13
             color = (
                 int(SKY_TOP[0] * (1 - t) + SKY_MID[0] * t),
                 int(SKY_TOP[1] * (1 - t) + SKY_MID[1] * t),
                 int(SKY_TOP[2] * (1 - t) + SKY_MID[2] * t),
             )
         else:
-            t = (y - 10) / max(1, H - 11)
+            t = (y - 14) / max(1, H - 15)
             color = (
                 int(SKY_MID[0] * (1 - t) + SKY_BOTTOM[0] * t),
                 int(SKY_MID[1] * (1 - t) + SKY_BOTTOM[1] * t),
@@ -68,10 +68,12 @@ def _draw_tree(draw, tx, ty, hw, layers):
                 draw.point((tx + 1, y), fill=TRUNK)
 
     branch_y = trunk_top + 1
-    for dx in (-2, -1, 2, 3):
+    for dx in (-3, -2, -1, 2, 3, 4):
         bx = tx + dx
         if 0 <= bx < W and 0 <= branch_y < H:
             draw.point((bx, branch_y), fill=BRANCH)
+            if abs(dx) <= 3 and branch_y - 1 >= 0:
+                draw.point((bx, branch_y - 1), fill=TRUNK)
 
 
 def _make_frame(frame):
@@ -82,8 +84,8 @@ def _make_frame(frame):
     _draw_sky(draw)
 
     # Low sunset sun peeking between the trees.
-    draw.ellipse([47, 5, 56, 14], fill=SUN)
-    draw.ellipse([45, 7, 58, 16], outline=SUN_GLOW)
+    draw.ellipse([47, 9, 57, 19], fill=SUN)
+    draw.ellipse([45, 11, 59, 21], outline=SUN_GLOW)
 
     draw.rectangle([0, H - 7, W - 1, H - 1], fill=GROUND)
     for x in range(0, W, 3):

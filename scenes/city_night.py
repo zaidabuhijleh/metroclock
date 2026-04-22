@@ -6,13 +6,13 @@ FPS = 3
 
 W, H = 64, 32
 
-SKY_TOP      = (12, 16, 46)
-SKY_BOTTOM   = (30, 16, 34)
+SKY_TOP      = (6, 10, 30)
+SKY_BOTTOM   = (16, 20, 46)
 MOON         = (248, 242, 200)
 MOON_SHADOW  = (185, 178, 135)
-BUILDING_A   = (14, 16, 28)
-BUILDING_B   = (20, 22, 36)
-BUILDING_EDGE = (42, 46, 76)
+BUILDING_A   = (34, 40, 62)
+BUILDING_B   = (46, 52, 78)
+BUILDING_EDGE = (82, 92, 125)
 WIN_WARM     = (255, 215, 90)
 WIN_DIM      = (195, 150, 55)
 WIN_OFF      = (16, 18, 28)
@@ -21,11 +21,11 @@ STAR_DIM     = (105, 108, 148)
 GROUND       = (8, 8, 16)
 
 _rng = random.Random(42)
-_STARS = [(x, y) for x in range(W) for y in range(12) if _rng.random() < 0.035]
+_STARS = [(x, y) for x in range(W) for y in range(10) if _rng.random() < 0.025]
 
 _BUILDINGS = [
-    (0, 8, 11), (8, 6, 8), (14, 8, 15), (22, 6, 10),
-    (28, 9, 20), (37, 7, 9), (44, 7, 13), (51, 6, 11), (57, 7, 17),
+    (0, 8, 10), (8, 7, 15), (15, 7, 8), (22, 8, 18),
+    (30, 7, 12), (37, 8, 16), (45, 6, 10), (51, 8, 14), (59, 5, 19),
 ]
 
 _rng2 = random.Random(7)
@@ -73,13 +73,14 @@ def _make_frame(frame):
     draw.ellipse([46, 2, 55, 11], fill=MOON)
     draw.ellipse([49, 2, 56, 9], fill=MOON_SHADOW)
 
+    # Draw the skyline as readable blocks before adding windows.
     for bx, bw, bh in _BUILDINGS:
         color = BUILDING_A if (bx // 2) % 2 == 0 else BUILDING_B
         top = H - bh
         draw.rectangle([bx, top, bx + bw - 1, H - 1], fill=color)
         draw.line([(bx, top), (bx + bw - 1, top)], fill=BUILDING_EDGE)
-        if bw >= 7:
-            draw.line([(bx + bw - 1, top), (bx + bw - 1, H - 1)], fill=BUILDING_EDGE)
+        draw.line([(bx, top), (bx, H - 1)], fill=(20, 24, 42))
+        draw.line([(bx + bw - 1, top), (bx + bw - 1, H - 1)], fill=BUILDING_EDGE)
 
     for wx, wy in _ALL_WINDOWS:
         if (wx, wy) in _FLICKER:

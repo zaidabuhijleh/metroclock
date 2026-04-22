@@ -16,8 +16,8 @@ TREE_DARK   = (0, 120, 30)
 TREE_SNOW   = (205, 220, 250)
 CABIN_WALL  = (200, 125, 65)
 CABIN_SHADE = (170, 100, 52)
-CABIN_ROOF  = (98, 58, 30)
-ROOF_EDGE   = (210, 220, 248)
+CABIN_ROOF  = (150, 74, 34)
+ROOF_EDGE   = (245, 248, 255)
 ROOF_SNOW   = (225, 236, 255)
 WIN_WARM    = (255, 205, 80)
 WIN_GLOW    = (255, 165, 40)
@@ -47,17 +47,20 @@ def _draw_cabin(draw):
     draw.rectangle([22, 18, 44, 26], fill=CABIN_WALL)
     draw.rectangle([33, 18, 44, 26], fill=CABIN_SHADE)
 
-    # Roof with stronger outline and brighter snow cap so it doesn't disappear.
+    # Roof with clear snow-capped sloped edges. Avoid a floating top line.
     for i in range(9):
         x0, x1 = 20 + i, 46 - i
         y = 17 - i
         draw.line([(x0, y), (x1, y)], fill=CABIN_ROOF)
-        draw.point((x0, y), fill=ROOF_EDGE)
+        draw.point((x0, y), fill=ROOF_SNOW)
         draw.point((x1, y), fill=ROOF_EDGE)
-        for snow_x in range(x0 + 1, min(x0 + 4, x1 + 1)):
-            draw.point((snow_x, y), fill=ROOF_SNOW)
+        if i % 2 == 0 and x0 + 1 <= x1:
+            draw.point((x0 + 1, y), fill=ROOF_SNOW)
+        if i >= 5:
+            draw.point((x1 - 1, y), fill=ROOF_EDGE)
 
-    draw.line([(21, 9), (46, 9)], fill=ROOF_EDGE)
+    # Dark eaves separate the roof from the wall.
+    draw.line([(19, 18), (47, 18)], fill=(78, 42, 24))
     draw.rectangle([27, 20, 33, 24], fill=WIN_WARM)
     draw.rectangle([29, 21, 31, 23], fill=WIN_GLOW)
     draw.rectangle([37, 21, 41, 26], fill=CABIN_ROOF)
