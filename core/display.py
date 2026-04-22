@@ -17,15 +17,15 @@ class Display:
 
         self.options.pwm_bits = 3
         self.options.pwm_dither_bits = 0
-        self.options.brightness = self._clamp_brightness(brightness)
+        self.options.brightness = 100
         self.options.drop_privileges = False
 
         self.matrix = RGBMatrix(options=self.options)
         self.canvas = self.matrix.CreateFrameCanvas()
-        self.brightness = self.options.brightness
+        self.brightness = 100
 
     def _clamp_brightness(self, brightness):
-        return max(1, min(100, int(brightness)))
+        return 100
 
     def set_brightness(self, brightness):
         brightness = self._clamp_brightness(brightness)

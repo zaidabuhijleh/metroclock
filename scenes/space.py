@@ -1,124 +1,94 @@
-import random
 from PIL import Image, ImageDraw
 
-NAME = "Space"
-FPS = 8
+NAME = "Coral Reef"
+FPS = 6
 
 W, H = 64, 32
 
-NEBULA_COLS = [
-    (100,  40, 140),  # purple
-    ( 40,  70, 160),  # blue
-    (140,  35,  70),  # magenta-red
-    ( 35, 110, 110),  # teal
-]
-PLANET_BODY   = (120,  85, 220)
-PLANET_DARK   = ( 70,  50, 155)
-PLANET_RING   = (180, 150, 235)
-PLANET_SHADOW = ( 40,  25,  85)
-STAR_BRIGHT   = (255, 255, 255)
-STAR_MED      = (190, 200, 230)
-STAR_DIM      = (100, 110, 145)
-SHOOT_HEAD    = (255, 255, 220)
-SHOOT_TAIL    = (200, 200, 160)
-
-_rng = random.Random(5)
-
-_STARS = []
-for _ in range(70):
-    x = _rng.randint(0, W - 1)
-    y = _rng.randint(0, H - 1)
-    b = _rng.choice([STAR_BRIGHT, STAR_BRIGHT, STAR_MED, STAR_DIM])
-    _STARS.append((x, y, b))
-
-# Nebula patches (x, y, radius, color_index)
-_NEBULA = [
-    ( 6, 24, 7, 0),
-    ( 4, 27, 5, 2),
-    (10, 25, 4, 3),
-    (55,  5, 5, 1),
-    (58,  8, 3, 0),
-]
-
-TOTAL_FRAMES = 64
+WATER_TOP = (70, 190, 255)
+WATER_MID = (35, 145, 230)
+WATER_BOT = (15, 95, 185)
+SAND = (230, 200, 120)
+SAND_SHADE = (200, 165, 95)
+CORAL_A = (255, 125, 120)
+CORAL_B = (255, 180, 85)
+CORAL_C = (190, 115, 255)
+SEAWEED = (55, 200, 95)
+BUBBLE = (220, 250, 255)
+FISH_Y = (255, 240, 100)
+FISH_O = (255, 165, 70)
+FISH_P = (255, 130, 210)
 
 
-def _draw_nebula(draw):
-    for nx, ny, nr, ci in _NEBULA:
-        c = NEBULA_COLS[ci]
-        for dy in range(-nr, nr + 1):
-            for dx in range(-nr, nr + 1):
-                if dx * dx + dy * dy <= nr * nr:
-                    px, py = nx + dx, ny + dy
-                    if 0 <= px < W and 0 <= py < H:
-                        dist = (dx * dx + dy * dy) ** 0.5
-                        t = max(0.0, 1.0 - dist / nr) * 0.75
-                        fc = tuple(int(c[i] * t) for i in range(3))
-                        # Blend with existing pixel
-                        draw.point((px, py), fill=fc)
+def _lerp(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-def _draw_planet(draw, frame):
-    px = (W + 14) - (frame // 3 % (W + 24))
-    py = 10
-    r = 7
-
-    if px + r < 0 or px - r >= W:
-        return
-
-    for dy in range(-r, r + 1):
-        for dx in range(-r, r + 1):
-            if dx * dx + dy * dy <= r * r:
-                x, y = px + dx, py + dy
-                if 0 <= x < W and 0 <= y < H:
-                    if dx > 3:
-                        c = PLANET_SHADOW
-                    elif dx > 0:
-                        c = PLANET_DARK
-                    else:
-                        c = PLANET_BODY
-                    draw.point((x, y), fill=c)
-
-    # Ring — two rows wide
-    for dx in range(-r - 4, r + 5):
-        x = px + dx
-        if 0 <= x < W:
-            if abs(dx) > r - 1:
-                draw.point((x, py - 1), fill=PLANET_RING)
-                draw.point((x, py + 1), fill=PLANET_RING)
-            draw.point((x, py + 2), fill=PLANET_RING)
+def _draw_water(draw):
+    for y in range(0, 24):
+        if y < 9:
+            c = _lerp(WATER_TOP, WATER_MID, y / 8)
+        else:
+            c = _lerp(WATER_MID, WATER_BOT, (y - 9) / 14)
+        draw.line([(0, y), (W - 1, y)], fill=c)
 
 
-def _draw_shooting_star(draw, frame):
-    cycle = frame % TOTAL_FRAMES
-    if cycle > 20:
-        return
-    hx = W - 1 - cycle * 3
-    hy = cycle
-    for tail in range(6):
-        tx, ty = hx + tail, hy - tail
-        if 0 <= tx < W and 0 <= ty < H:
-            c = SHOOT_HEAD if tail < 2 else SHOOT_TAIL
-            draw.point((tx, ty), fill=c)
-            if ty + 1 < H and tail < 3:
-                draw.point((tx, ty + 1), fill=SHOOT_TAIL)
+def _draw_floor(draw):
+    draw.rectangle([0, 24, W - 1, H - 1], fill=SAND)
+    for x in range(0, W, 4):
+        draw.point((x, 24 + (x % 2)), fill=SAND_SHADE)
+
+    # Coral blocks
+    draw.rectangle([4, 20, 10, 27], fill=CORAL_A)
+    draw.rectangle([14, 22, 20, 28], fill=CORAL_B)
+    draw.rectangle([24, 19, 30, 27], fill=CORAL_C)
+    draw.rectangle([42, 21, 49, 29], fill=CORAL_A)
+    draw.rectangle([53, 20, 60, 28], fill=CORAL_B)
+
+    # Seaweed strands
+    for sx in [8, 18, 27, 46, 56]:
+        draw.line([(sx, 24), (sx + 1, 16)], fill=SEAWEED)
+        draw.line([(sx + 1, 24), (sx + 2, 17)], fill=SEAWEED)
+
+
+def _draw_fish(draw, frame):
+    fish = [
+        (8 + (frame * 2) % 70, 8, FISH_Y),
+        (28 + (frame * 2) % 70, 13, FISH_O),
+        (48 + (frame * 2) % 70, 6, FISH_P),
+    ]
+    for fx, fy, color in fish:
+        x = fx % (W + 10) - 5
+        if -4 <= x <= W - 1:
+            draw.point((x, fy), fill=color)
+            if x - 1 >= 0:
+                draw.point((x - 1, fy), fill=color)
+            if x + 1 < W:
+                draw.point((x + 1, fy), fill=color)
+            if x - 2 >= 0:
+                draw.point((x - 2, fy - 1), fill=color)
+                draw.point((x - 2, fy + 1), fill=color)
+
+
+def _draw_bubbles(draw, frame):
+    cols = [6, 16, 29, 45, 57]
+    for i, x in enumerate(cols):
+        y = 23 - ((frame + i * 2) % 16)
+        if 2 <= y <= 23:
+            draw.point((x, y), fill=BUBBLE)
+            if y - 1 >= 0 and (frame + i) % 2 == 0:
+                draw.point((x + 1, y - 1), fill=BUBBLE)
 
 
 def _make_frame(frame):
     img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
 
-    _draw_nebula(draw)
-
-    rng = random.Random(frame * 3)
-    for sx, sy, base_c in _STARS:
-        c = base_c if rng.random() < 0.88 else STAR_DIM
-        draw.point((sx, sy), fill=c)
-
-    _draw_planet(draw, frame)
-    _draw_shooting_star(draw, frame)
-
+    _draw_water(draw)
+    _draw_floor(draw)
+    _draw_fish(draw, frame)
+    _draw_bubbles(draw, frame)
     return img
 
 
-FRAMES = [_make_frame(f) for f in range(TOTAL_FRAMES)]
+FRAMES = [_make_frame(f) for f in range(6)]

@@ -1,111 +1,119 @@
 import random
 from PIL import Image, ImageDraw
 
-NAME = "Winter Cabin"
-FPS = 5
+NAME = "Alpine Cabin"
+FPS = 4
 
 W, H = 64, 32
 
-BLACK = (0, 0, 0)
-SKY = (0, 0, 85)
-STAR = (255, 255, 255)
-STAR_DIM = (0, 0, 170)
-SNOW = (170, 255, 255)
-SNOW_BRIGHT = (255, 255, 255)
-SNOW_DIM = (85, 170, 255)
-TREE = (0, 170, 0)
-TREE_DARK = (0, 85, 0)
-CABIN = (255, 85, 0)
-CABIN_DARK = (170, 0, 0)
-ROOF = (85, 0, 0)
-ROOF_SNOW = (255, 255, 255)
-WINDOW = (255, 255, 85)
-WINDOW_HOT = (255, 170, 0)
-SMOKE = (170, 170, 255)
+SKY_TOP = (90, 175, 255)
+SKY_BOT = (190, 230, 255)
+SUN = (255, 225, 120)
+SUN_GLOW = (255, 245, 170)
+MOUNTAIN_BACK = (180, 210, 245)
+MOUNTAIN_FRONT = (140, 185, 235)
+SNOW = (235, 245, 255)
+SNOW_SHADE = (195, 220, 250)
+TREE = (35, 150, 70)
+TREE_DARK = (20, 105, 52)
+CABIN_WALL = (225, 120, 55)
+CABIN_WALL_SHADE = (190, 92, 40)
+ROOF = (110, 55, 25)
+ROOF_HILITE = (250, 250, 255)
+WINDOW = (255, 225, 120)
+WINDOW_HOT = (255, 170, 50)
+SMOKE = (170, 185, 210)
 
-_rng = random.Random(33)
-_FLAKES = [(_rng.randint(0, W - 1), _rng.randint(0, H - 9)) for _ in range(24)]
-_STARS = [(x, y) for x in range(W) for y in range(10) if _rng.random() < 0.035]
+_rng = random.Random(11)
+_SPARKLES = [(_rng.randint(0, W - 1), _rng.randint(18, H - 1)) for _ in range(20)]
+
+
+def _lerp(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def _draw_sky(draw):
+    for y in range(0, 18):
+        c = _lerp(SKY_TOP, SKY_BOT, y / 17)
+        draw.line([(0, y), (W - 1, y)], fill=c)
+
+
+def _draw_mountains(draw):
+    # Back ridge
+    ridge = [(0, 18), (8, 13), (15, 16), (24, 11), (34, 15), (43, 10), (52, 14), (63, 12), (63, 20), (0, 20)]
+    draw.polygon(ridge, fill=MOUNTAIN_BACK)
+    # Front ridge
+    front = [(0, 21), (9, 17), (18, 20), (27, 16), (38, 19), (49, 15), (63, 18), (63, 24), (0, 24)]
+    draw.polygon(front, fill=MOUNTAIN_FRONT)
+    for x in range(0, W, 5):
+        y = 20 + (x % 3)
+        draw.point((x, y), fill=SNOW)
 
 
 def _draw_tree(draw, tx, base_y, half):
     for row in range(4):
-        y = base_y - row * 3
+        y = base_y - row * 2
         spread = max(1, half - row)
         color = TREE if row % 2 == 0 else TREE_DARK
         draw.line([(tx - spread, y), (tx + spread, y)], fill=color)
-        draw.line([(tx - max(1, spread - 1), y - 1), (tx + max(1, spread - 1), y - 1)], fill=color)
-    draw.line([(tx, base_y + 1), (tx, base_y + 3)], fill=CABIN_DARK)
+    draw.line([(tx, base_y + 1), (tx, base_y + 2)], fill=ROOF)
 
 
 def _draw_cabin(draw):
-    # Cabin body.
-    draw.rectangle([22, 18, 45, 26], fill=CABIN)
-    draw.rectangle([36, 18, 45, 26], fill=CABIN_DARK)
+    # Body
+    draw.rectangle([23, 19, 45, 28], fill=CABIN_WALL)
+    draw.rectangle([35, 19, 45, 28], fill=CABIN_WALL_SHADE)
 
-    # Dark roof mass first, then bright snow slopes on top.
-    roof_rows = [
-        (32, 8, 32),
-        (29, 10, 35),
-        (26, 12, 38),
-        (23, 14, 41),
-        (20, 16, 46),
-    ]
-    for _, y, _ in roof_rows:
-        draw.line([(20, y + 1), (46, y + 1)], fill=ROOF)
-    for _, y, _ in roof_rows:
-        left = 32 - (y - 8) * 2
-        right = 32 + (y - 8) * 2
-        left = max(19, left)
-        right = min(47, right)
-        draw.line([(left, y), (right, y)], fill=ROOF)
-        draw.point((left, y), fill=ROOF_SNOW)
-        draw.point((left + 1, y), fill=ROOF_SNOW)
-        draw.point((right, y), fill=ROOF_SNOW)
+    # Roof with strong snow edge for readability.
+    draw.polygon([(20, 19), (32, 10), (48, 19)], fill=ROOF)
+    draw.line([(20, 19), (32, 10)], fill=ROOF_HILITE)
+    draw.line([(21, 19), (33, 10)], fill=ROOF_HILITE)
+    draw.line([(32, 10), (48, 19)], fill=(200, 220, 245))
+    draw.line([(21, 20), (47, 20)], fill=(75, 35, 15))
 
-    # Bright eave line and warm window make roof/body separation obvious.
-    draw.line([(19, 17), (47, 17)], fill=ROOF_SNOW)
-    draw.line([(20, 18), (46, 18)], fill=ROOF)
-    draw.rectangle([27, 20, 33, 24], fill=WINDOW)
-    draw.rectangle([29, 21, 31, 23], fill=WINDOW_HOT)
-    draw.rectangle([38, 21, 42, 26], fill=ROOF)
-    draw.rectangle([39, 9, 41, 16], fill=ROOF)
+    # Door and window
+    draw.rectangle([37, 22, 41, 28], fill=ROOF)
+    draw.rectangle([27, 21, 33, 25], fill=WINDOW)
+    draw.rectangle([29, 22, 31, 24], fill=WINDOW_HOT)
+
+    # Chimney
+    draw.rectangle([39, 12, 41, 18], fill=ROOF)
+
+
+def _draw_snow_ground(draw, frame):
+    draw.rectangle([0, 24, W - 1, H - 1], fill=SNOW)
+    for x in range(0, W, 4):
+        bump = (x + frame) % 3
+        draw.point((x, 23 - bump), fill=SNOW_SHADE)
+
+    for sx, sy in _SPARKLES:
+        if (sx + sy + frame) % 4 == 0:
+            draw.point((sx, sy), fill=SNOW)
 
 
 def _make_frame(frame):
-    img = Image.new("RGB", (W, H), BLACK)
+    img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
-    rng = random.Random(frame * 11)
 
-    for y in range(0, 12, 3):
-        draw.line([(0, y), (W - 1, y)], fill=SKY)
+    _draw_sky(draw)
+    draw.ellipse([5, 3, 15, 13], fill=SUN)
+    draw.ellipse([7, 5, 13, 11], fill=SUN_GLOW)
 
-    for sx, sy in _STARS:
-        draw.point((sx, sy), fill=STAR if rng.random() < 0.75 else STAR_DIM)
-
-    draw.rectangle([0, 26, W - 1, H - 1], fill=SNOW)
-    for x in range(0, W, 4):
-        draw.point((x, 25 - rng.randint(0, 2)), fill=SNOW_BRIGHT)
-
-    for tree in [(3, 24, 4), (12, 25, 3), (51, 24, 5), (60, 25, 4)]:
-        _draw_tree(draw, *tree)
-
+    _draw_mountains(draw)
+    _draw_tree(draw, 7, 24, 4)
+    _draw_tree(draw, 15, 25, 3)
+    _draw_tree(draw, 51, 24, 4)
+    _draw_tree(draw, 58, 25, 3)
     _draw_cabin(draw)
-
-    for dx in range(8):
-        draw.point((27 + dx, 27), fill=WINDOW_HOT)
+    _draw_snow_ground(draw, frame)
 
     smoke_x = 40 + (frame % 2)
-    for dy in range(5):
-        sy = 8 - dy - (frame % 3)
-        if 0 <= sy < H:
-            draw.point((smoke_x + (dy % 2), sy), fill=SMOKE)
-
-    for fx, fy in _FLAKES:
-        y = (fy + frame * 2) % (H - 7)
-        draw.point((fx, y), fill=SNOW_BRIGHT if rng.random() < 0.75 else SNOW_DIM)
+    for i in range(4):
+        y = 11 - i - (frame % 2)
+        if y >= 0:
+            draw.point((smoke_x + (i % 2), y), fill=SMOKE)
 
     return img
 
 
-FRAMES = [_make_frame(frame) for frame in range(4)]
+FRAMES = [_make_frame(f) for f in range(4)]

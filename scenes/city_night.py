@@ -1,93 +1,80 @@
-import random
 from PIL import Image, ImageDraw
 
-NAME = "City Night"
-FPS = 3
+NAME = "City Day"
+FPS = 4
 
 W, H = 64, 32
 
-BLACK = (0, 0, 0)
-SKY_BLUE = (0, 0, 85)
-BUILDING_FILL = (0, 0, 85)
-BUILDING_EDGE = (0, 170, 255)
-BUILDING_TOP = (170, 255, 255)
-WIN_WARM = (255, 170, 0)
-WIN_BRIGHT = (255, 255, 85)
-WIN_OFF = (0, 0, 0)
-MOON = (255, 255, 170)
-STAR = (255, 255, 255)
-STAR_DIM = (0, 0, 170)
+SKY_TOP = (70, 170, 255)
+SKY_BOT = (165, 225, 255)
+SUN_OUTER = (255, 210, 90)
+SUN_INNER = (255, 245, 150)
+CLOUD = (240, 250, 255)
+BUILDING_A = (80, 140, 220)
+BUILDING_B = (120, 175, 235)
+BUILDING_C = (95, 160, 245)
+WINDOW = (220, 245, 255)
+WINDOW_DIM = (170, 210, 245)
+ROAD = (130, 130, 150)
+ROAD_STRIPE = (240, 240, 220)
 
 _BUILDINGS = [
-    (0, 7, 11), (7, 6, 15), (13, 8, 9), (21, 7, 18),
-    (28, 8, 13), (36, 7, 16), (43, 6, 10), (49, 8, 14), (57, 7, 19),
+    (0, 7, 10), (7, 8, 15), (15, 7, 11), (22, 9, 18),
+    (31, 7, 13), (38, 8, 16), (46, 7, 12), (53, 11, 20),
 ]
 
-_rng = random.Random(42)
-_STARS = [(x, y) for x in range(W) for y in range(10) if _rng.random() < 0.025]
 
-_rng2 = random.Random(7)
-
-
-def _windows_for_building(bx, bw, bh):
-    top = H - bh
-    windows = []
-    for y in range(top + 3, H - 3, 4):
-        for x in range(bx + 2, bx + bw - 2, 3):
-            if _rng2.random() < 0.72:
-                windows.append((x, y))
-    return windows
+def _lerp(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-_WINDOWS = []
-for building in _BUILDINGS:
-    _WINDOWS.extend(_windows_for_building(*building))
-
-_rng3 = random.Random(99)
-_FLICKER = {window for window in _WINDOWS if _rng3.random() < 0.22}
+def _draw_sky(draw):
+    for y in range(0, 20):
+        c = _lerp(SKY_TOP, SKY_BOT, y / 19)
+        draw.line([(0, y), (W - 1, y)], fill=c)
 
 
-def _draw_building(draw, bx, bw, bh):
-    top = H - bh
-    draw.rectangle([bx, top, bx + bw - 1, H - 1], fill=BUILDING_FILL)
-    draw.line([(bx, top), (bx + bw - 1, top)], fill=BUILDING_TOP)
-    draw.line([(bx, top), (bx, H - 1)], fill=BUILDING_EDGE)
-    draw.line([(bx + bw - 1, top), (bx + bw - 1, H - 1)], fill=BUILDING_EDGE)
+def _draw_cloud(draw, x, y, w):
+    draw.ellipse([x, y, x + w, y + 4], fill=CLOUD)
+    draw.ellipse([x + 2, y - 2, x + w - 2, y + 3], fill=CLOUD)
 
-    # A few antenna/spire details make the blocks read as buildings.
-    if bh >= 15:
-        mid = bx + bw // 2
-        draw.line([(mid, max(0, top - 3)), (mid, top - 1)], fill=BUILDING_TOP)
-        draw.point((mid, max(0, top - 4)), fill=STAR)
+
+def _draw_buildings(draw):
+    colors = [BUILDING_A, BUILDING_B, BUILDING_C]
+    for i, (bx, bw, bh) in enumerate(_BUILDINGS):
+        top = H - 4 - bh
+        fill = colors[i % len(colors)]
+        draw.rectangle([bx, top, bx + bw - 1, H - 5], fill=fill)
+        draw.line([(bx, top), (bx + bw - 1, top)], fill=(210, 240, 255))
+        for wy in range(top + 2, H - 7, 3):
+            for wx in range(bx + 1, bx + bw - 1, 3):
+                color = WINDOW if (wx + wy) % 2 == 0 else WINDOW_DIM
+                draw.point((wx, wy), fill=color)
+                if wx + 1 < bx + bw - 1:
+                    draw.point((wx + 1, wy), fill=color)
+
+
+def _draw_road(draw, frame):
+    draw.rectangle([0, H - 4, W - 1, H - 1], fill=ROAD)
+    shift = (frame * 3) % 10
+    for x in range(-10, W + 10, 10):
+        draw.rectangle([x + shift, H - 3, x + shift + 4, H - 2], fill=ROAD_STRIPE)
 
 
 def _make_frame(frame):
-    img = Image.new("RGB", (W, H), BLACK)
+    img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
-    rng = random.Random(frame * 17)
 
-    # Sparse sky pixels are safer than a dim full-screen fill on this panel.
-    for y in range(0, 12, 3):
-        draw.line([(0, y), (W - 1, y)], fill=SKY_BLUE)
+    _draw_sky(draw)
+    draw.ellipse([48, 2, 60, 14], fill=SUN_OUTER)
+    draw.ellipse([51, 5, 57, 11], fill=SUN_INNER)
 
-    for sx, sy in _STARS:
-        draw.point((sx, sy), fill=STAR if rng.random() < 0.7 else STAR_DIM)
+    _draw_cloud(draw, 4 + (frame % 3), 5, 10)
+    _draw_cloud(draw, 22 + ((frame + 1) % 3), 3, 12)
 
-    draw.ellipse([47, 2, 55, 10], fill=MOON)
-    draw.ellipse([50, 2, 56, 8], fill=BLACK)
-
-    for building in _BUILDINGS:
-        _draw_building(draw, *building)
-
-    for wx, wy in _WINDOWS:
-        if (wx, wy) in _FLICKER and rng.random() < 0.45:
-            color = WIN_OFF
-        else:
-            color = WIN_BRIGHT if rng.random() < 0.45 else WIN_WARM
-        draw.rectangle([wx, wy, wx + 1, wy], fill=color)
-
-    draw.line([(0, H - 1), (W - 1, H - 1)], fill=BUILDING_EDGE)
+    _draw_buildings(draw)
+    _draw_road(draw, frame)
     return img
 
 
-FRAMES = [_make_frame(frame) for frame in range(4)]
+FRAMES = [_make_frame(f) for f in range(4)]

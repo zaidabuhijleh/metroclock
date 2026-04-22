@@ -1,100 +1,89 @@
-import random
 from PIL import Image, ImageDraw
 
-NAME = "Forest"
-FPS = 6
+NAME = "Sunset Trail"
+FPS = 5
 
 W, H = 64, 32
 
-BLACK = (0, 0, 0)
-NIGHT_BLUE = (0, 0, 85)
-PURPLE = (85, 0, 85)
-SUN = (255, 170, 0)
-SUN_CORE = (255, 255, 85)
-TREE = (0, 170, 0)
-TREE_DARK = (0, 85, 0)
-TRUNK = (255, 170, 0)
-BRANCH = (255, 255, 85)
-GROUND = (0, 85, 0)
-GRASS = (85, 170, 0)
-FIREFLY = (255, 255, 85)
-FIREFLY_DIM = (170, 170, 0)
+SKY_TOP = (80, 140, 255)
+SKY_MID = (255, 160, 90)
+SKY_BOT = (255, 210, 130)
+SUN = (255, 210, 90)
+SUN_CORE = (255, 245, 150)
+HILL_BACK = (110, 190, 105)
+HILL_FRONT = (75, 150, 70)
+TRUNK = (205, 120, 50)
+BRANCH = (245, 185, 95)
+LEAF = (35, 165, 65)
+LEAF_DARK = (20, 120, 45)
+PATH = (220, 180, 110)
+PATH_EDGE = (175, 130, 72)
+FLOWER_A = (255, 120, 180)
+FLOWER_B = (255, 255, 130)
 
-_TREES = [
-    (5, 22, 5, 4), (16, 24, 4, 3), (26, 22, 6, 5),
-    (38, 23, 5, 4), (49, 22, 6, 5), (59, 24, 4, 3),
-]
 
-_rng = random.Random(55)
-_FIREFLIES = [(_rng.randint(3, W - 4), _rng.randint(13, H - 8), _rng.randint(0, 5)) for _ in range(8)]
+def _lerp(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
 def _draw_sky(draw):
-    # Sparse sunset bands read better than a solid red/orange wash through the diffuser.
-    for y in range(0, 13, 3):
-        draw.line([(0, y), (W - 1, y)], fill=NIGHT_BLUE)
-    for y in range(13, 22, 3):
-        draw.line([(0, y), (W - 1, y)], fill=PURPLE)
-    draw.line([(0, 22), (W - 1, 22)], fill=SUN)
-    draw.line([(0, 23), (W - 1, 23)], fill=SUN)
+    for y in range(0, 12):
+        draw.line([(0, y), (W - 1, y)], fill=_lerp(SKY_TOP, SKY_MID, y / 11))
+    for y in range(12, 22):
+        draw.line([(0, y), (W - 1, y)], fill=_lerp(SKY_MID, SKY_BOT, (y - 12) / 9))
 
 
-def _draw_tree(draw, tx, base_y, half_base, layers):
-    # Draw trunk/branches first, then leave bright highlights visible through foliage gaps.
-    draw.line([(tx, base_y - layers * 3), (tx, base_y + 2)], fill=TRUNK)
+def _draw_tree(draw, tx, base_y, canopy_w):
+    draw.line([(tx, base_y - 8), (tx, base_y + 1)], fill=TRUNK)
     if tx + 1 < W:
-        draw.line([(tx + 1, base_y - layers * 3 + 2), (tx + 1, base_y + 2)], fill=TRUNK)
+        draw.line([(tx + 1, base_y - 7), (tx + 1, base_y + 1)], fill=TRUNK)
 
-    for by in (base_y - 8, base_y - 5, base_y - 2):
-        draw.line([(tx - 3, by), (tx + 3, by - 1)], fill=BRANCH)
-        draw.line([(tx - 2, by - 2), (tx + 4, by)], fill=BRANCH)
+    draw.line([(tx - 3, base_y - 5), (tx + 3, base_y - 6)], fill=BRANCH)
+    draw.line([(tx - 2, base_y - 3), (tx + 4, base_y - 4)], fill=BRANCH)
 
-    for layer in range(layers):
-        y = base_y - (layers - layer) * 3
-        half = max(1, 1 + layer * (half_base - 1) // max(1, layers - 1))
-        color = TREE if layer % 2 == 0 else TREE_DARK
-        for x in range(tx - half, tx + half + 1):
+    left = tx - canopy_w // 2
+    right = tx + canopy_w // 2
+    top = base_y - 12
+    for y in range(top, base_y - 4):
+        for x in range(left, right + 1):
             if 0 <= x < W:
+                color = LEAF if (x + y) % 2 == 0 else LEAF_DARK
                 draw.point((x, y), fill=color)
-                if y + 1 < H:
-                    draw.point((x, y + 1), fill=color)
-        # Repaint small branch tips over the foliage so the scene reads as trees.
-        if layer >= 1:
-            draw.point((tx - half, y + 1), fill=BRANCH)
-            draw.point((tx + half, y + 1), fill=BRANCH)
+
+
+def _draw_ground(draw, frame):
+    back = [(0, 20), (8, 18), (16, 19), (25, 17), (35, 19), (46, 18), (55, 19), (63, 18), (63, 32), (0, 32)]
+    draw.polygon(back, fill=HILL_BACK)
+    front = [(0, 24), (10, 22), (20, 24), (30, 21), (40, 24), (50, 22), (63, 24), (63, 32), (0, 32)]
+    draw.polygon(front, fill=HILL_FRONT)
+
+    path = [(24, 32), (30, 25), (36, 32)]
+    draw.polygon(path, fill=PATH)
+    draw.line([(30, 25), (24, 32)], fill=PATH_EDGE)
+    draw.line([(30, 25), (36, 32)], fill=PATH_EDGE)
+
+    # Tiny flower twinkle.
+    flowers = [(6, 23), (12, 25), (46, 24), (54, 23), (58, 25)]
+    for i, (fx, fy) in enumerate(flowers):
+        color = FLOWER_A if (frame + i) % 2 == 0 else FLOWER_B
+        draw.point((fx, fy), fill=color)
 
 
 def _make_frame(frame):
-    img = Image.new("RGB", (W, H), BLACK)
+    img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
-    rng = random.Random(frame * 7)
 
     _draw_sky(draw)
+    draw.ellipse([47, 5, 58, 16], fill=SUN)
+    draw.ellipse([50, 8, 55, 13], fill=SUN_CORE)
 
-    draw.ellipse([47, 10, 57, 20], fill=SUN)
-    draw.ellipse([50, 12, 55, 17], fill=SUN_CORE)
-
-    draw.rectangle([0, H - 6, W - 1, H - 1], fill=GROUND)
-    for x in range(0, W, 3):
-        h = rng.randint(1, 3)
-        draw.line([(x, H - 6), (x, H - 6 - h)], fill=GRASS)
-
-    for tree in _TREES:
-        _draw_tree(draw, *tree)
-
-    for fx, fy, phase in _FIREFLIES:
-        visible = ((frame + phase) % 6) < 3
-        if visible:
-            bright = ((frame + phase) % 6) < 2
-            color = FIREFLY if bright else FIREFLY_DIM
-            drift_x = fx + ((frame + phase) % 3) - 1
-            drift_y = fy + (((frame + phase) // 2) % 3) - 1
-            if 0 <= drift_x < W and 0 <= drift_y < H:
-                draw.point((drift_x, drift_y), fill=color)
-                if drift_x + 1 < W:
-                    draw.point((drift_x + 1, drift_y), fill=FIREFLY_DIM)
-
+    _draw_ground(draw, frame)
+    _draw_tree(draw, 8, 24, 7)
+    _draw_tree(draw, 17, 25, 6)
+    _draw_tree(draw, 48, 24, 8)
+    _draw_tree(draw, 57, 25, 6)
+    _draw_tree(draw, 32, 23, 10)
     return img
 
 
-FRAMES = [_make_frame(frame) for frame in range(6)]
+FRAMES = [_make_frame(f) for f in range(5)]
