@@ -189,7 +189,16 @@ def api_weather_preview():
 def api_ambient_scene():
     data = request.get_json(force=True) or {}
     scene = data.get("scene")
-    allowed = {"beach", "city_night", "forest", "winter_cabin", "space"}
+    aliases = {
+        "city_night": "city_day",
+        "forest": "sunset_trail",
+        "winter_cabin": "alpine_cabin",
+        "space": "coral_reef",
+    }
+    if scene in aliases:
+        scene = aliases[scene]
+
+    allowed = {"beach", "city_day", "sunset_trail", "alpine_cabin", "coral_reef", "lofi_cat"}
     if scene in ("", None, "auto"):
         set_ambient_scene(None)
         return jsonify({"ok": True, "scene": None})

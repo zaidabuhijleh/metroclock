@@ -1,3 +1,3 @@
-from scenes import beach, city_night, forest, winter_cabin, space
+from scenes import beach, city_day, sunset_trail, alpine_cabin, coral_reef, lofi_cat
 
-SCENES = [beach, city_night, forest, winter_cabin, space]
+SCENES = [beach, city_day, sunset_trail, alpine_cabin, coral_reef, lofi_cat]
