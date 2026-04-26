@@ -15,7 +15,7 @@ class Display:
 
         self.options.disable_hardware_pulsing = True
 
-        self.options.pwm_bits = 4
+        self.options.pwm_bits = 5
         self.options.pwm_dither_bits = 0
         self.options.brightness = 100
         self.options.drop_privileges = False
