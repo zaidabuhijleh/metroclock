@@ -24,8 +24,12 @@ ROOF_HILITE = (250, 250, 255)
 WINDOW = (255, 225, 120)
 WINDOW_HOT = (255, 170, 50)
 SMOKE = (170, 185, 210)
+SMOKE_HI = (222, 234, 248)
+SMOKE_SHADE = (142, 160, 190)
 
 _SMOKE_SWAY = [0, 1, 2, 1, 0, -1]
+_SMOKE_RISE = [0, 1, 3, 5, 7, 9]
+_SMOKE_SIZE = [1, 2, 2, 3, 2, 1]
 
 
 def _lerp(a, b, t):
@@ -105,13 +109,56 @@ def _draw_ground(draw, frame):
                 draw.point((x + 1, y), fill=SNOW_SHADE)
 
 
-def _draw_smoke(draw, frame):
-    sway = _SMOKE_SWAY[frame % N]
-    for i in range(4):
-        x = 40 + sway + (i % 2)
-        y = 11 - i - (1 if frame % 2 == 0 else 0)
+def _draw_smoke_puff(draw, cx, cy, size):
+    if size == 1:
+        pts = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]
+    elif size == 2:
+        pts = [
+            (0, 0), (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (1, -1), (-1, 1), (1, 1),
+            (-2, 0), (2, 0), (0, -2),
+        ]
+    else:
+        pts = [
+            (0, 0), (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (1, -1), (-1, 1), (1, 1),
+            (-2, 0), (2, 0), (0, -2),
+            (-2, -1), (2, -1), (-2, 1), (2, 1),
+            (-1, -2), (1, -2), (0, -3),
+        ]
+
+    for dx, dy in pts:
+        x = cx + dx
+        y = cy + dy
         if 0 <= x < W and 0 <= y < H:
-            draw.point((x, y), fill=SMOKE)
+            if dx <= 0 and dy <= 0:
+                c = SMOKE_HI
+            elif dx >= 1 and dy >= 1:
+                c = SMOKE_SHADE
+            else:
+                c = SMOKE
+            draw.point((x, y), fill=c)
+
+
+def _draw_smoke(draw, frame):
+    phase = frame % N
+
+    # Three cartoon puffs, offset in phase so smoke is always visible.
+    for offset in (0, 2, 4):
+        t = (phase + offset) % N
+        sway = _SMOKE_SWAY[t]
+        rise = _SMOKE_RISE[t]
+        size = _SMOKE_SIZE[t]
+
+        cx = 40 + sway + (offset // 2)
+        cy = 12 - rise
+        _draw_smoke_puff(draw, cx, cy, size)
+
+        # Little connector from chimney to puff.
+        tail_y = min(H - 1, cy + size + 1)
+        tail_x = cx - 1 if offset == 0 else cx
+        if 0 <= tail_x < W and 0 <= tail_y < H:
+            draw.point((tail_x, tail_y), fill=SMOKE_SHADE)
 
 
 def _make_frame(frame):

@@ -20,8 +20,8 @@ CASE_SHADE = (86, 55, 34)
 
 # Window
 WIN_FRAME = (155, 140, 122)
-WIN_SKY = (16, 20, 50)
-WIN_SKY_B = (26, 32, 68)
+WIN_SKY = (0, 0, 0)
+WIN_SKY_B = (0, 0, 0)
 MOON = (228, 218, 172)
 
 # Fireplace
@@ -45,7 +45,6 @@ CAT_BELLY = (202, 182, 158)
 CAT_FACE = (188, 168, 144)
 CAT_NOSE = (238, 142, 142)
 EYE_C = (72, 158, 112)
-CAT_OUTLINE = (86, 70, 56)
 
 # Floating notes
 NOTE_C = (255, 200, 105)
@@ -83,19 +82,50 @@ def _draw_bookcase(draw):
     for y in [8, 13, 17, 21]:
         draw.line([(1, y), (14, y)], fill=SHELF_EDGE)
 
-    shelves = [
-        # (x, width, height, color)
-        [(1, 1, 3, (180, 72, 64)), (3, 1, 4, (90, 130, 190)), (5, 2, 5, (190, 165, 78)), (8, 2, 3, (78, 152, 95)), (11, 1, 4, (170, 106, 190)), (13, 1, 2, (210, 135, 82))],
-        [(1, 2, 4, (205, 92, 78)), (4, 1, 5, (92, 122, 195)), (6, 1, 3, (200, 170, 70)), (8, 2, 4, (72, 148, 88)), (11, 1, 5, (174, 108, 186)), (13, 1, 3, (212, 150, 88))],
-        [(1, 1, 3, (166, 85, 60)), (3, 2, 2, (88, 136, 175)), (6, 1, 4, (200, 162, 78)), (8, 1, 3, (88, 140, 90)), (10, 2, 5, (130, 90, 168)), (13, 1, 4, (195, 126, 88))],
+    # Packed shelves: no horizontal gaps, mixed 1px/2px widths,
+    # and heights constrained so books never collide with shelf planks.
+    rows = [
+        {
+            "top": 8,
+            "max_h": 3,
+            "books": [
+                (1, 3, (188, 74, 68)), (2, 2, (88, 134, 194)), (1, 3, (196, 170, 82)),
+                (2, 2, (82, 156, 96)), (1, 3, (170, 110, 194)), (2, 2, (212, 138, 84)),
+                (1, 3, (90, 162, 172)), (2, 2, (204, 96, 142)), (1, 3, (104, 178, 214)),
+                (1, 2, (156, 130, 90)),
+            ],
+        },
+        {
+            "top": 13,
+            "max_h": 4,
+            "books": [
+                (2, 4, (214, 98, 84)), (1, 3, (102, 150, 206)), (2, 2, (180, 152, 72)),
+                (1, 4, (96, 166, 108)), (2, 3, (196, 122, 202)), (1, 2, (224, 156, 94)),
+                (2, 4, (84, 146, 188)), (1, 3, (214, 122, 72)), (2, 2, (126, 170, 108)),
+            ],
+        },
+        {
+            "top": 17,
+            "max_h": 3,
+            "books": [
+                (1, 2, (96, 146, 198)), (1, 3, (206, 152, 74)), (2, 2, (86, 160, 108)),
+                (1, 3, (188, 108, 196)), (2, 2, (220, 146, 88)), (1, 3, (92, 164, 176)),
+                (2, 2, (198, 98, 136)), (1, 3, (108, 178, 214)), (1, 2, (176, 134, 96)),
+                (2, 3, (120, 158, 90)),
+            ],
+        },
     ]
-    shelf_tops = [8, 13, 17]
-    for idx, books in enumerate(shelves):
-        top = shelf_tops[idx]
-        for bx, bw, bh, color in books:
-            y1 = top - bh
-            draw.rectangle([bx, y1, bx + bw - 1, top - 1], fill=color)
-            draw.point((bx, y1), fill=_lerp(color, (255, 255, 255), 0.2))
+
+    for row in rows:
+        top = row["top"]
+        max_h = row["max_h"]
+        x = 1
+        for bw, bh, color in row["books"]:
+            h = min(max_h, max(1, bh))
+            y1 = top - h
+            draw.rectangle([x, y1, x + bw - 1, top - 1], fill=color)
+            draw.point((x, y1), fill=_lerp(color, (255, 255, 255), 0.2))
+            x += bw
 
 
 def _draw_window(draw, frame):
@@ -208,17 +238,6 @@ def _draw_cat(draw, frame):
     pts = tails[frame % N]
     draw.line(pts, fill=CAT_FUR, width=1)
     draw.line([(x, y + 1) for (x, y) in pts if y + 1 < H], fill=CAT_SHADOW, width=1)
-
-    # Explicit outline so the silhouette survives panel bloom.
-    for p in [
-        (26, 27), (27, 25), (30, 24), (34, 24), (39, 24), (43, 24), (46, 25), (47, 27),
-        (52, 24), (51, 20), (46, 20), (42, 22), (41, 26), (51, 29), (46, 30), (39, 30),
-        (31, 30), (27, 29), (22, 23), (21, 20)
-    ]:
-        x, y = p
-        if 0 <= x < W and 0 <= y < H:
-            draw.point((x, y), fill=CAT_OUTLINE)
-
 
 def _draw_notes(draw, frame):
     for i, (nx, base_y) in enumerate([(32, 16), (36, 14)]):
