@@ -37,14 +37,15 @@ FIRE_3 = (200, 55, 18)
 EMBER = (90, 30, 10)
 GLOW_FIRE = (255, 140, 40)
 
-# Cat
-CAT_FUR = (198, 182, 156)
-CAT_DARK = (138, 118, 94)
-CAT_SHADOW = (160, 140, 116)
-CAT_BELLY = (232, 218, 198)
-CAT_FACE = (222, 208, 182)
+# Cat (panel-tuned: reduced bloom, stronger contrast)
+CAT_FUR = (170, 150, 126)
+CAT_DARK = (116, 96, 74)
+CAT_SHADOW = (136, 116, 94)
+CAT_BELLY = (202, 182, 158)
+CAT_FACE = (188, 168, 144)
 CAT_NOSE = (238, 142, 142)
 EYE_C = (72, 158, 112)
+CAT_OUTLINE = (86, 70, 56)
 
 # Floating notes
 NOTE_C = (255, 200, 105)
@@ -207,6 +208,16 @@ def _draw_cat(draw, frame):
     pts = tails[frame % N]
     draw.line(pts, fill=CAT_FUR, width=1)
     draw.line([(x, y + 1) for (x, y) in pts if y + 1 < H], fill=CAT_SHADOW, width=1)
+
+    # Explicit outline so the silhouette survives panel bloom.
+    for p in [
+        (26, 27), (27, 25), (30, 24), (34, 24), (39, 24), (43, 24), (46, 25), (47, 27),
+        (52, 24), (51, 20), (46, 20), (42, 22), (41, 26), (51, 29), (46, 30), (39, 30),
+        (31, 30), (27, 29), (22, 23), (21, 20)
+    ]:
+        x, y = p
+        if 0 <= x < W and 0 <= y < H:
+            draw.point((x, y), fill=CAT_OUTLINE)
 
 
 def _draw_notes(draw, frame):
