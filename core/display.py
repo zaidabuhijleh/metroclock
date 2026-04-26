@@ -2,27 +2,27 @@ from rgbmatrix import RGBMatrix, RGBMatrixOptions
 import config
 
 class Display:
-    def __init__(self, width, height, slowdown, brightness):
+    def __init__(self, width, height, slowdown, brightness, pwm_bits=None):
         self.options = RGBMatrixOptions()
         self.options.rows = height
         self.options.cols = width
         self.options.chain_length = 1
         self.options.parallel = 1
         self.options.hardware_mapping = config.MATRIX_MAPPING
-        
-        self.options.gpio_slowdown = 4
+        self.options.gpio_slowdown = slowdown
 
 
         self.options.disable_hardware_pulsing = True
-
-        self.options.pwm_bits = 5
+        if pwm_bits is None:
+            pwm_bits = getattr(config, "MATRIX_PWM_BITS", 3)
+        self.options.pwm_bits = max(1, min(11, int(pwm_bits)))
         self.options.pwm_dither_bits = 0
-        self.options.brightness = 100
+        self.options.brightness = max(1, min(100, int(brightness)))
         self.options.drop_privileges = False
 
         self.matrix = RGBMatrix(options=self.options)
         self.canvas = self.matrix.CreateFrameCanvas()
-        self.brightness = 100
+        self.brightness = self.options.brightness
 
     def _clamp_brightness(self, brightness):
         return 100
