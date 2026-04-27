@@ -16,19 +16,19 @@ class AmbientWidget(Widget):
         self._frame_index = 0
         self._last_frame_time = time.time()
         self._scene_start_time = time.time()
-        self._pinned_key = None
+        self._pinned_index = None
 
     def _resolve_scene_index(self):
         pinned = web_server.get_ambient_scene()
         if pinned and pinned in _SCENE_KEYS:
             idx = _SCENE_KEYS.index(pinned)
-            if idx != self._pinned_key:
+            if idx != self._pinned_index:
                 # Scene was just pinned or changed — reset frame
-                self._pinned_key = idx
+                self._pinned_index = idx
                 self._frame_index = 0
                 self._last_frame_time = time.time()
             return idx
-        self._pinned_key = None
+        self._pinned_index = None
         return self._scene_index % len(SCENES)
 
     def _scene(self):
