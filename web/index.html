@@ -466,10 +466,18 @@
     <div class="card">
       <div class="card-title">View Mode</div>
       <div class="toggle-row">
-        <button class="unit-btn" data-sports-view="all_live" onclick="setSportsView('all_live')">All Live Games</button>
+        <button class="unit-btn" data-sports-view="all_live" onclick="setSportsView('all_live')">All Teams</button>
         <button class="unit-btn" data-sports-view="favorites" onclick="setSportsView('favorites')">Favorite Teams</button>
       </div>
-      <p class="hint">All Live cycles every game on the slate. Favorites only shows games involving the teams you pick below.</p>
+      <p class="hint">All Teams cycles the whole slate. Favorites only shows games involving the teams you pick below.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Live Focus</div>
+      <div class="toggle-row">
+        <button class="unit-btn" data-sports-live-focus="on" onclick="setSportsLiveFocus(true)">On</button>
+        <button class="unit-btn" data-sports-live-focus="off" onclick="setSportsLiveFocus(false)">Off</button>
+      </div>
+      <p class="hint">When On: if any selected game is live, Sports mode rotates only live games. Pregame games return automatically when nothing is live.</p>
     </div>
     <div class="card">
       <div class="card-title">Favorite Teams (NBA)</div>
@@ -708,6 +716,7 @@ let selectedStation = null;
 let selectedUnit = "metric";
 let selectedTeams = new Set();
 let selectedSportsView = "all_live";
+let selectedSportsLiveFocus = true;
 
 // ── Tabs ───────────────────────────────────────────────────────────────────
 document.querySelectorAll(".tab-btn").forEach(btn => {
@@ -768,6 +777,8 @@ async function init() {
     // Sports
     selectedSportsView = data.SPORTS_VIEW_MODE === "favorites" ? "favorites" : "all_live";
     setActiveSportsView(selectedSportsView);
+    selectedSportsLiveFocus = data.SPORTS_LIVE_FOCUS !== false;
+    setActiveSportsLiveFocus(selectedSportsLiveFocus);
     selectedTeams = new Set(
       String(data.SPORTS_FAVORITE_TEAMS || "")
         .split(",")
@@ -985,6 +996,18 @@ function setSportsView(view) {
   setActiveSportsView(view);
 }
 
+function setActiveSportsLiveFocus(enabled) {
+  document.querySelectorAll("[data-sports-live-focus]").forEach(b => {
+    const shouldBeActive = enabled ? b.dataset.sportsLiveFocus === "on" : b.dataset.sportsLiveFocus === "off";
+    b.classList.toggle("active", shouldBeActive);
+  });
+}
+
+function setSportsLiveFocus(enabled) {
+  selectedSportsLiveFocus = !!enabled;
+  setActiveSportsLiveFocus(selectedSportsLiveFocus);
+}
+
 async function saveSports() {
   const dateRaw = document.getElementById("sports-test-date").value.trim();
   if (dateRaw && !/^\d{8}$/.test(dateRaw)) {
@@ -993,6 +1016,7 @@ async function saveSports() {
   }
   const payload = {
     SPORTS_VIEW_MODE: selectedSportsView,
+    SPORTS_LIVE_FOCUS: selectedSportsLiveFocus,
     SPORTS_FAVORITE_TEAMS: Array.from(selectedTeams).join(","),
     SPORTS_TEST_DATE: dateRaw,
   };

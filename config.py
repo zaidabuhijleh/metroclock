@@ -43,9 +43,10 @@ FLIGHT_NUMBER = "AC57"  # Default flight to track
 FLIGHT_UPDATE_INTERVAL = 1800
 
 # --- SPORTS ---
-SPORTS_VIEW_MODE = "all_live"   # "all_live" or "favorites"
+SPORTS_VIEW_MODE = "all_live"   # "all_live" (all teams) or "favorites"
 SPORTS_FAVORITE_TEAMS = ""      # CSV of NBA abbreviations, e.g. "LAL,BOS"
 SPORTS_TEST_DATE = ""           # YYYYMMDD to pin a date for testing; empty = today
+SPORTS_LIVE_FOCUS = True        # If True: when any chosen game is live, rotate only live games
 
 # --- COLORS ---
 COLOR_WHITE = (255, 255, 255)

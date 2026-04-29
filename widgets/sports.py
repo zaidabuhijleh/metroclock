@@ -11,19 +11,16 @@ from core.widget import Widget
 
 
 class SportsWidget(Widget):
-    """NBA scoreboard, score-hero layout with team-colored side bars.
+    """NBA scoreboard with a team-first, high-legibility layout.
 
-    Layout (64x32):
-      cols 0-1   : away color bar, full height
-      cols 62-63 : home color bar, full height
-      y 0-5      : away/home abbreviations + possession arrow (4x6 font)
-      y 7-16     : score, centered, 6x10 font (the hero)
-      y 19-24    : period + clock or final/tipoff text (4x6 font)
-      y 27-28    : timeout dots, 7 per side (live games only)
+    64x32 layout:
+      y 0-5   : game status (Q/clock/final)
+      y 7-16  : away row (small color bar + team + score)
+      y 18-27 : home row (small color bar + team + score)
+      y 28-31 : timeout summary + optional game index
     """
 
     SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
-
     BAR_WIDTH = 2
 
     def __init__(self, width, height):
@@ -39,12 +36,10 @@ class SportsWidget(Widget):
         self.placeholder_reason = "loading"
 
         self.color_text = (244, 246, 252)
-        self.color_dim = (140, 150, 168)
-        self.color_loser = (96, 104, 122)
-        self.color_dash = (90, 102, 124)
-        self.color_possession = (255, 168, 56)
-        self.color_timeout_on = (220, 224, 232)
-        self.color_timeout_off = (40, 46, 58)
+        self.color_dim = (146, 156, 176)
+        self.color_loser = (98, 108, 126)
+        self.color_possession = (255, 176, 72)
+        self.color_cycle = (84, 96, 118)
 
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
@@ -63,7 +58,7 @@ class SportsWidget(Widget):
         importlib.reload(config)
 
         test_date = self._get_test_date()
-        fetch_key = test_date or "live"
+        fetch_key = test_date or "today"
         if fetch_key != self.last_fetch_key or now - self.last_fetch >= self.fetch_interval:
             self._fetch_games(test_date)
             self.last_fetch = now
@@ -77,35 +72,48 @@ class SportsWidget(Widget):
 
     def _get_test_date(self):
         raw = str(getattr(config, "SPORTS_TEST_DATE", "") or "").strip()
-        if re.fullmatch(r"\d{8}", raw):
-            return raw
-        return ""
+        return raw if re.fullmatch(r"\d{8}", raw) else ""
 
     def _get_view_mode(self):
-        return str(getattr(config, "SPORTS_VIEW_MODE", "all_live") or "all_live").lower()
+        value = str(getattr(config, "SPORTS_VIEW_MODE", "all_live") or "all_live").lower()
+        if value in {"favorites", "all_live", "all_teams"}:
+            return value
+        return "all_live"
+
+    def _get_live_focus(self):
+        return bool(getattr(config, "SPORTS_LIVE_FOCUS", True))
 
     def _get_favorites(self):
         raw = str(getattr(config, "SPORTS_FAVORITE_TEAMS", "") or "")
-        return {a.strip().upper() for a in raw.split(",") if a.strip()}
+        return {abbr.strip().upper() for abbr in raw.split(",") if abbr.strip()}
 
     def _apply_view_filter(self):
         previous_id = self.games[self.current_game_index].get("id") if self.games else None
+        view_mode = self._get_view_mode()
 
-        if self._get_view_mode() == "favorites":
+        if view_mode == "favorites":
             favorites = self._get_favorites()
             if favorites:
-                filtered = [
+                base_games = [
                     g for g in self.all_games
                     if g["away"]["abbr"] in favorites or g["home"]["abbr"] in favorites
                 ]
-                self.games = filtered
-                self.placeholder_reason = "no fav games" if not filtered else None
+                self.placeholder_reason = "no fav games" if not base_games else None
             else:
-                self.games = []
+                base_games = []
                 self.placeholder_reason = "pick a team"
         else:
-            self.games = list(self.all_games)
-            self.placeholder_reason = None if self.games else "no games"
+            base_games = list(self.all_games)
+            self.placeholder_reason = "no games" if not base_games else None
+
+        if self._get_live_focus():
+            live_games = [g for g in base_games if g.get("state") == "in"]
+            self.games = live_games if live_games else base_games
+        else:
+            self.games = base_games
+
+        if not self.games and self.placeholder_reason is None:
+            self.placeholder_reason = "no games"
 
         if previous_id:
             for idx, game in enumerate(self.games):
@@ -125,123 +133,71 @@ class SportsWidget(Widget):
             return self.canvas
 
         game = self.games[self.current_game_index]
-        self._draw_team_bars(draw, game)
-        self._draw_abbrev_row(draw, game)
-        self._draw_score_row(draw, game)
         self._draw_status_row(draw, game)
-        self._draw_timeouts_row(draw, game)
+        self._draw_team_row(draw, game, "away", 7)
+        self._draw_team_row(draw, game, "home", 18)
+        self._draw_timeout_row(draw, game)
         return self.canvas
 
     def _draw_placeholder(self, draw):
-        text = "NBA"
-        tw = int(self.font_tall.getlength(text))
-        draw.text(((self.width - tw) // 2, 5), text, font=self.font_tall, fill=self.color_text)
-        sub = self.placeholder_reason or "no games"
-        sub = self._fit_text(sub, self.width - 4, self.font_small)
+        label = "NBA"
+        lw = int(self.font_tall.getlength(label))
+        draw.text(((self.width - lw) // 2, 5), label, font=self.font_tall, fill=self.color_text)
+        sub = self._fit_text(self.placeholder_reason or "no games", self.width - 4, self.font_small)
         sw = int(self.font_small.getlength(sub))
         draw.text(((self.width - sw) // 2, 19), sub, font=self.font_small, fill=self.color_dim)
 
-    def _draw_team_bars(self, draw, game):
-        away_color = game["away"]["color"]
-        home_color = game["home"]["color"]
-        draw.rectangle((0, 0, self.BAR_WIDTH - 1, self.height - 1), fill=away_color)
-        draw.rectangle((self.width - self.BAR_WIDTH, 0, self.width - 1, self.height - 1), fill=home_color)
+    def _draw_status_row(self, draw, game):
+        status = self._fit_text(self._status_text(game), self.width - 4, self.font_small)
+        sw = int(self.font_small.getlength(status))
+        draw.text(((self.width - sw) // 2, 0), status, font=self.font_small, fill=self.color_dim)
 
-    def _draw_abbrev_row(self, draw, game):
-        away_abbr = game["away"]["abbr"]
-        home_abbr = game["home"]["abbr"]
-        possession = game["possession"]
+    def _draw_team_row(self, draw, game, side, y):
+        team = game[side]
+        other = game["home"] if side == "away" else game["away"]
 
-        y = 0
-        ax = self.BAR_WIDTH + 2
-        draw.text((ax, y), away_abbr, font=self.font_small, fill=self.color_text)
-        aw = int(self.font_small.getlength(away_abbr))
+        draw.rectangle((0, y + 1, self.BAR_WIDTH - 1, y + 8), fill=team["color"])
 
-        hw = int(self.font_small.getlength(home_abbr))
-        hx = self.width - self.BAR_WIDTH - 2 - hw
-        draw.text((hx, y), home_abbr, font=self.font_small, fill=self.color_text)
+        team_color, score_color = self._team_row_colors(game, team, other)
+        team_x = self.BAR_WIDTH + 2
+        draw.text((team_x, y), team["abbr"], font=self.font_tall, fill=team_color)
+        team_w = int(self.font_tall.getlength(team["abbr"]))
 
-        if possession == "away":
-            self._draw_possession_arrow(draw, ax + aw + 2, 1, "right")
-        elif possession == "home":
-            self._draw_possession_arrow(draw, hx - 5, 1, "left")
+        if game.get("possession") == side:
+            self._draw_possession_arrow(draw, team_x + team_w + 2, y + 2)
 
-    def _draw_possession_arrow(self, draw, x, y, direction):
-        if direction == "right":
-            draw.polygon([(x, y), (x, y + 4), (x + 2, y + 2)], fill=self.color_possession)
-        else:
-            draw.polygon([(x + 2, y), (x + 2, y + 4), (x, y + 2)], fill=self.color_possession)
+        score = str(team["score"])
+        score_w = int(self.font_tall.getlength(score))
+        draw.text((self.width - score_w - 1, y), score, font=self.font_tall, fill=score_color)
 
-    def _draw_score_row(self, draw, game):
-        away_score = str(game["away"]["score"])
-        home_score = str(game["home"]["score"])
+    def _team_row_colors(self, game, team, other):
+        if game.get("state") != "post":
+            return self.color_text, self.color_text
 
-        away_w = int(self.font_tall.getlength(away_score))
-        home_w = int(self.font_tall.getlength(home_score))
-        dash_w = 5
-        gap = 3
-        total_w = away_w + gap + dash_w + gap + home_w
-
-        y = 7
-        x_start = (self.width - total_w) // 2
-
-        away_color, home_color = self._score_colors(game)
-
-        x = x_start
-        draw.text((x, y), away_score, font=self.font_tall, fill=away_color)
-        x += away_w + gap
-        dash_y = y + 5
-        draw.line((x, dash_y, x + dash_w - 1, dash_y), fill=self.color_dash)
-        x += dash_w + gap
-        draw.text((x, y), home_score, font=self.font_tall, fill=home_color)
-
-    def _score_colors(self, game):
-        # Only dim the loser at FINAL — during live games both teams stay bright.
-        if game.get("state") == "post":
-            a, h = game["away"]["score"], game["home"]["score"]
-            if a > h:
-                return self.color_text, self.color_loser
-            if h > a:
-                return self.color_loser, self.color_text
+        if team["score"] > other["score"]:
+            return self.color_text, self.color_text
+        if team["score"] < other["score"]:
+            return self.color_loser, self.color_loser
         return self.color_text, self.color_text
 
-    def _draw_status_row(self, draw, game):
-        text = self._status_text(game)
-        max_w = self.width - 2 * self.BAR_WIDTH - 4
-        text = self._fit_text(text, max_w, self.font_small)
-        tw = int(self.font_small.getlength(text))
-        x = (self.width - tw) // 2
-        draw.text((x, 19), text, font=self.font_small, fill=self.color_dim)
+    def _draw_possession_arrow(self, draw, x, y):
+        draw.polygon([(x, y), (x, y + 4), (x + 2, y + 2)], fill=self.color_possession)
 
-    def _draw_timeouts_row(self, draw, game):
-        if game.get("state") != "in":
-            return
-
+    def _draw_timeout_row(self, draw, game):
         away_to = game["away"].get("timeouts")
         home_to = game["home"].get("timeouts")
-        if away_to is None and home_to is None:
-            return
 
-        y = 27
-        spacing = 3  # 2px dot + 1px gap
-        block_w = 7 * spacing - 1  # last gap not counted = 20
+        if away_to is not None or home_to is not None:
+            a = "-" if away_to is None else str(max(0, min(7, away_to)))
+            h = "-" if home_to is None else str(max(0, min(7, home_to)))
+            text = f"TO {a}-{h}"
+            tw = int(self.font_small.getlength(text))
+            draw.text(((self.width - tw) // 2, 28), text, font=self.font_small, fill=self.color_dim)
 
-        if away_to is not None:
-            ax = self.BAR_WIDTH + 2
-            self._draw_dot_row(draw, ax, y, away_to, spacing)
-
-        if home_to is not None:
-            hx = self.width - self.BAR_WIDTH - 2 - block_w
-            self._draw_dot_row(draw, hx, y, home_to, spacing)
-
-    def _draw_dot_row(self, draw, x_start, y, count, spacing):
-        for i in range(7):
-            color = self.color_timeout_on if i < count else self.color_timeout_off
-            x = x_start + i * spacing
-            draw.point((x, y), fill=color)
-            draw.point((x + 1, y), fill=color)
-            draw.point((x, y + 1), fill=color)
-            draw.point((x + 1, y + 1), fill=color)
+        if len(self.games) > 1:
+            cycle = f"{self.current_game_index + 1}/{len(self.games)}"
+            cw = int(self.font_small.getlength(cycle))
+            draw.text((self.width - cw - 1, 28), cycle, font=self.font_small, fill=self.color_cycle)
 
     # ----------------------------------------------------------------- fetching
 
@@ -269,6 +225,7 @@ class SportsWidget(Widget):
         competitions = event.get("competitions") or []
         if not competitions:
             return None
+
         competition = competitions[0]
         competitors = competition.get("competitors") or []
         if len(competitors) < 2:
@@ -302,7 +259,12 @@ class SportsWidget(Widget):
 
     def _parse_team(self, competitor, default_color):
         team = competitor.get("team") or {}
-        abbr = (team.get("abbreviation") or team.get("shortDisplayName") or team.get("displayName") or "---").upper()
+        abbr = (
+            team.get("abbreviation")
+            or team.get("shortDisplayName")
+            or team.get("displayName")
+            or "---"
+        ).upper()
         abbr = "".join(ch for ch in abbr if ch.isalnum())[:3] or "---"
         return {
             "abbr": abbr,
@@ -336,23 +298,25 @@ class SportsWidget(Widget):
                 return side
 
         situation = competition.get("situation") or {}
-        raw_possession = situation.get("possession") or situation.get("teamInPossession")
-        if isinstance(raw_possession, dict):
-            raw_possession = raw_possession.get("id") or raw_possession.get("teamId")
-        if raw_possession is None:
+        raw = situation.get("possession") or situation.get("teamInPossession")
+        if isinstance(raw, dict):
+            raw = raw.get("id") or raw.get("teamId")
+        if raw is None:
             return None
 
-        raw_str = str(raw_possession).lower()
+        raw_str = str(raw).lower()
         if raw_str in {"home", "away"}:
             return raw_str
 
         home_ids = {str(home.get("id", "")), str((home.get("team") or {}).get("id", ""))}
         away_ids = {str(away.get("id", "")), str((away.get("team") or {}).get("id", ""))}
-        if str(raw_possession) in home_ids:
+        if str(raw) in home_ids:
             return "home"
-        if str(raw_possession) in away_ids:
+        if str(raw) in away_ids:
             return "away"
         return None
+
+    # ----------------------------------------------------------------- helpers
 
     def _status_text(self, game):
         state = game.get("state")
@@ -409,7 +373,7 @@ class SportsWidget(Widget):
             b = int(raw[4:6], 16)
         except ValueError:
             return fallback
-        # Bump very dark team colors so the side bars don't disappear on black.
+
         if (r + g + b) < 150:
             r = min(255, r + 60)
             g = min(255, g + 60)
