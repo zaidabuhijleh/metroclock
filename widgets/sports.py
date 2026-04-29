@@ -14,10 +14,9 @@ class SportsWidget(Widget):
     """NBA scoreboard with a team-first, high-legibility layout.
 
     64x32 layout:
-      y 0-5   : game status (Q/clock/final)
-      y 7-16  : away row (small color bar + team + score)
-      y 18-27 : home row (small color bar + team + score)
-      y 28-31 : timeout summary + optional game index
+      y 0-9   : game status (Q/clock/final) in larger text
+      y 11-20 : away row (small color bar + team + score)
+      y 22-31 : home row (small color bar + team + score)
     """
 
     SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
@@ -34,12 +33,12 @@ class SportsWidget(Widget):
         self.fetch_interval = 20
         self.rotate_interval = 8
         self.placeholder_reason = "loading"
+        self.possession_cache = {}
 
         self.color_text = (244, 246, 252)
-        self.color_dim = (146, 156, 176)
+        self.color_dim = (196, 208, 230)
         self.color_loser = (98, 108, 126)
         self.color_possession = (255, 176, 72)
-        self.color_cycle = (84, 96, 118)
 
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
@@ -134,9 +133,8 @@ class SportsWidget(Widget):
 
         game = self.games[self.current_game_index]
         self._draw_status_row(draw, game)
-        self._draw_team_row(draw, game, "away", 7)
-        self._draw_team_row(draw, game, "home", 18)
-        self._draw_timeout_row(draw, game)
+        self._draw_team_row(draw, game, "away", 11)
+        self._draw_team_row(draw, game, "home", 22)
         return self.canvas
 
     def _draw_placeholder(self, draw):
@@ -148,9 +146,9 @@ class SportsWidget(Widget):
         draw.text(((self.width - sw) // 2, 19), sub, font=self.font_small, fill=self.color_dim)
 
     def _draw_status_row(self, draw, game):
-        status = self._fit_text(self._status_text(game), self.width - 4, self.font_small)
-        sw = int(self.font_small.getlength(status))
-        draw.text(((self.width - sw) // 2, 0), status, font=self.font_small, fill=self.color_dim)
+        status = self._fit_text(self._status_text(game), self.width - 2, self.font_tall)
+        sw = int(self.font_tall.getlength(status))
+        draw.text(((self.width - sw) // 2, 0), status, font=self.font_tall, fill=self.color_dim)
 
     def _draw_team_row(self, draw, game, side, y):
         team = game[side]
@@ -181,23 +179,8 @@ class SportsWidget(Widget):
         return self.color_text, self.color_text
 
     def _draw_possession_arrow(self, draw, x, y):
-        draw.polygon([(x, y), (x, y + 4), (x + 2, y + 2)], fill=self.color_possession)
-
-    def _draw_timeout_row(self, draw, game):
-        away_to = game["away"].get("timeouts")
-        home_to = game["home"].get("timeouts")
-
-        if away_to is not None or home_to is not None:
-            a = "-" if away_to is None else str(max(0, min(7, away_to)))
-            h = "-" if home_to is None else str(max(0, min(7, home_to)))
-            text = f"TO {a}-{h}"
-            tw = int(self.font_small.getlength(text))
-            draw.text(((self.width - tw) // 2, 28), text, font=self.font_small, fill=self.color_dim)
-
-        if len(self.games) > 1:
-            cycle = f"{self.current_game_index + 1}/{len(self.games)}"
-            cw = int(self.font_small.getlength(cycle))
-            draw.text((self.width - cw - 1, 28), cycle, font=self.font_small, fill=self.color_cycle)
+        # Larger 4x6 triangle so possession remains visible at viewing distance.
+        draw.polygon([(x, y), (x, y + 6), (x + 3, y + 3)], fill=self.color_possession)
 
     # ----------------------------------------------------------------- fetching
 
@@ -290,31 +273,65 @@ class SportsWidget(Widget):
         return None
 
     def _detect_possession(self, competition, home, away):
+        home_abbr = str((home.get("team") or {}).get("abbreviation") or "").upper()
+        away_abbr = str((away.get("team") or {}).get("abbreviation") or "").upper()
+
         for side, team in (("home", home), ("away", away)):
-            raw = team.get("possession")
+            raw = (
+                team.get("possession")
+                or team.get("isPossession")
+                or team.get("hasPossession")
+                or team.get("onOffense")
+                or (team.get("team") or {}).get("possession")
+            )
             if isinstance(raw, bool) and raw:
                 return side
             if str(raw).lower() in {"true", "1", "yes"}:
                 return side
 
         situation = competition.get("situation") or {}
-        raw = situation.get("possession") or situation.get("teamInPossession")
+        raw = (
+            situation.get("possession")
+            or situation.get("teamInPossession")
+            or situation.get("onOffense")
+        )
         if isinstance(raw, dict):
-            raw = raw.get("id") or raw.get("teamId")
+            raw = (
+                raw.get("id")
+                or raw.get("teamId")
+                or raw.get("abbreviation")
+                or raw.get("homeAway")
+            )
         if raw is None:
-            return None
+            last_play = situation.get("lastPlay")
+            if isinstance(last_play, dict):
+                last_team = last_play.get("team")
+                if isinstance(last_team, dict):
+                    raw = last_team.get("id") or last_team.get("abbreviation") or last_team.get("teamId")
+
+        if raw is None:
+            return self.possession_cache.get(str(competition.get("id", "")))
 
         raw_str = str(raw).lower()
         if raw_str in {"home", "away"}:
+            self.possession_cache[str(competition.get("id", ""))] = raw_str
             return raw_str
+        if raw_str == home_abbr.lower():
+            self.possession_cache[str(competition.get("id", ""))] = "home"
+            return "home"
+        if raw_str == away_abbr.lower():
+            self.possession_cache[str(competition.get("id", ""))] = "away"
+            return "away"
 
         home_ids = {str(home.get("id", "")), str((home.get("team") or {}).get("id", ""))}
         away_ids = {str(away.get("id", "")), str((away.get("team") or {}).get("id", ""))}
         if str(raw) in home_ids:
+            self.possession_cache[str(competition.get("id", ""))] = "home"
             return "home"
         if str(raw) in away_ids:
+            self.possession_cache[str(competition.get("id", ""))] = "away"
             return "away"
-        return None
+        return self.possession_cache.get(str(competition.get("id", "")))
 
     # ----------------------------------------------------------------- helpers
 
