@@ -26,6 +26,19 @@ BITMAP_LETTERS = {
     "L": [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 4), (2, 4)],
 }
 
+BITMAP_DIGITS = {
+    "0": [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (3, 2), (0, 3), (3, 3), (1, 4), (2, 4)],
+    "1": [(1, 0), (2, 0), (2, 1), (2, 2), (2, 3), (1, 4), (2, 4), (3, 4)],
+    "2": [(1, 0), (2, 0), (3, 0), (0, 1), (3, 1), (2, 2), (1, 3), (0, 4), (1, 4), (2, 4), (3, 4)],
+    "3": [(0, 0), (1, 0), (2, 0), (2, 1), (1, 2), (2, 2), (2, 3), (0, 4), (1, 4), (2, 4)],
+    "4": [(0, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2), (2, 2), (2, 3), (2, 4)],
+    "5": [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (0, 2), (1, 2), (2, 2), (3, 3), (0, 4), (1, 4), (2, 4)],
+    "6": [(1, 0), (2, 0), (3, 0), (0, 1), (0, 2), (1, 2), (2, 2), (0, 3), (3, 3), (1, 4), (2, 4)],
+    "7": [(0, 0), (1, 0), (2, 0), (3, 0), (3, 1), (2, 2), (2, 3), (1, 4)],
+    "8": [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2), (0, 3), (3, 3), (1, 4), (2, 4)],
+    "9": [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2), (3, 2), (3, 3), (0, 4), (1, 4), (2, 4)],
+}
+
 
 class MetroWidget(Widget):
     def __init__(self, width, height):
@@ -76,8 +89,9 @@ class MetroWidget(Widget):
             self._metro_system(),
             str(getattr(config, "WMATA_STATION_CODE", "") or "").strip().upper(),
             str(getattr(config, "WMATA_API_KEY", "") or "").strip(),
-            str(getattr(config, "NYC_MTA_FEED_URL", "") or "").strip(),
+            tuple(self._nyc_feed_urls()),
             tuple(sorted(self._nyc_stop_ids())),
+            self._arrival_window(),
         )
 
     def _invalidate_cached_rows(self, now):
@@ -120,11 +134,18 @@ class MetroWidget(Widget):
             if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
                 continue
 
+            mins = self._normalize_wmata_mins(train.get("Min"))
+            if mins == "--":
+                continue
+            mins_int = int(mins)
+            if not self._is_in_arrival_window(mins_int):
+                continue
+
             valid.append(
                 {
                     "Line": line[:2],
                     "Destination": dest,
-                    "Min": self._normalize_wmata_mins(train.get("Min")),
+                    "Min": mins,
                 }
             )
 
@@ -135,58 +156,61 @@ class MetroWidget(Widget):
             print("NYC API Error: missing gtfs-realtime-bindings")
             return
 
-        feed_url = str(getattr(config, "NYC_MTA_FEED_URL", "") or "").strip()
+        feed_urls = self._nyc_feed_urls()
         stop_ids = self._nyc_stop_ids()
-        if not feed_url or not stop_ids:
+        if not feed_urls or not stop_ids:
             self._replace_trains([], time.time())
-            return
-
-        try:
-            response = requests.get(feed_url, timeout=6)
-            if response.status_code != 200:
-                print(f"NYC API Error: status {response.status_code}")
-                return
-
-            feed = gtfs_realtime_pb2.FeedMessage()
-            feed.ParseFromString(response.content)
-        except Exception as exc:
-            print(f"NYC API Error: {exc}")
             return
 
         now_ts = int(time.time())
         arrivals = []
 
-        for entity in feed.entity:
-            if not entity.HasField("trip_update"):
-                continue
-
-            trip_update = entity.trip_update
-            route = self._normalize_nyc_route_id(getattr(trip_update.trip, "route_id", ""))
-            if not route:
-                continue
-
-            trip_id = str(getattr(trip_update.trip, "trip_id", "") or "")
-            for stop_update in trip_update.stop_time_update:
-                stop_id = str(getattr(stop_update, "stop_id", "") or "").upper()
-                if stop_id not in stop_ids:
+        for feed_url in feed_urls:
+            try:
+                response = requests.get(feed_url, timeout=6)
+                if response.status_code != 200:
+                    print(f"NYC API Error: status {response.status_code} for {feed_url}")
                     continue
 
-                eta_minutes = self._gtfs_eta_minutes(stop_update, now_ts)
-                if eta_minutes is None:
+                feed = gtfs_realtime_pb2.FeedMessage()
+                feed.ParseFromString(response.content)
+            except Exception as exc:
+                print(f"NYC API Error for {feed_url}: {exc}")
+                continue
+
+            for entity in feed.entity:
+                if not entity.HasField("trip_update"):
                     continue
 
-                arrivals.append(
-                    {
-                        "line": route,
-                        "destination": self._nyc_direction_label(stop_id),
-                        "mins": str(eta_minutes),
-                        "eta": eta_minutes,
-                        "trip_id": trip_id,
-                        "stop_id": stop_id,
-                    }
-                )
-                # Only keep the first prediction for this stop on this trip.
-                break
+                trip_update = entity.trip_update
+                route = self._normalize_nyc_route_id(getattr(trip_update.trip, "route_id", ""))
+                if not route:
+                    continue
+
+                trip_id = str(getattr(trip_update.trip, "trip_id", "") or "")
+                for stop_update in trip_update.stop_time_update:
+                    stop_id = str(getattr(stop_update, "stop_id", "") or "").upper()
+                    if stop_id not in stop_ids:
+                        continue
+
+                    eta_minutes = self._gtfs_eta_minutes(stop_update, now_ts)
+                    if eta_minutes is None:
+                        continue
+                    if not self._is_in_arrival_window(eta_minutes):
+                        continue
+
+                    arrivals.append(
+                        {
+                            "line": route,
+                            "destination": self._nyc_display_label(route, stop_id),
+                            "mins": str(eta_minutes),
+                            "eta": eta_minutes,
+                            "trip_id": trip_id,
+                            "stop_id": stop_id,
+                        }
+                    )
+                    # Only keep the first prediction for this stop on this trip.
+                    break
 
         arrivals.sort(key=lambda item: (item["eta"], item["line"], item["destination"]))
         deduped = self._dedupe_nyc_arrivals(arrivals)
@@ -222,9 +246,41 @@ class MetroWidget(Widget):
         match = re.search(r"\d+", text)
         return match.group(0) if match else "--"
 
+    def _arrival_window(self):
+        min_minutes = self._safe_int(getattr(config, "METRO_MIN_ARRIVAL_MINUTES", 0), 0)
+        max_minutes = self._safe_int(getattr(config, "METRO_MAX_ARRIVAL_MINUTES", 20), 20)
+
+        min_minutes = max(0, min_minutes)
+        max_minutes = max(0, max_minutes)
+        if min_minutes > max_minutes:
+            min_minutes, max_minutes = max_minutes, min_minutes
+        return min_minutes, max_minutes
+
+    def _is_in_arrival_window(self, minutes):
+        min_minutes, max_minutes = self._arrival_window()
+        return min_minutes <= int(minutes) <= max_minutes
+
+    def _safe_int(self, value, fallback):
+        try:
+            return int(value)
+        except Exception:
+            return fallback
+
     def _nyc_stop_ids(self):
         raw = str(getattr(config, "NYC_STOP_IDS", "") or "")
         return {part.strip().upper() for part in raw.split(",") if part.strip()}
+
+    def _nyc_feed_urls(self):
+        raw = str(getattr(config, "NYC_MTA_FEED_URL", "") or "").replace("\n", ",")
+        urls = []
+        seen = set()
+        for part in raw.split(","):
+            url = part.strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+        return tuple(urls)
 
     def _normalize_nyc_route_id(self, route_id):
         route = str(route_id or "").strip().upper()
@@ -238,6 +294,9 @@ class MetroWidget(Widget):
         if stop_id.endswith("S"):
             return "Downtown"
         return "Train"
+
+    def _nyc_display_label(self, route, stop_id):
+        return f"{route} {self._nyc_direction_label(stop_id)}"
 
     def _gtfs_eta_minutes(self, stop_update, now_ts):
         arrival = getattr(stop_update, "arrival", None)
@@ -376,6 +435,21 @@ class MetroWidget(Widget):
             return NYC_LINE_COLORS.get(line) or NYC_LINE_COLORS.get(line[:1], config.COLOR_GREY)
         return WMATA_LINE_COLORS.get(line, config.COLOR_GREY)
 
+    def _draw_bitmap_glyph(self, draw, x, y, pixels):
+        min_x = min(px for px, _ in pixels)
+        max_x = max(px for px, _ in pixels)
+        min_y = min(py for _, py in pixels)
+        max_y = max(py for _, py in pixels)
+
+        glyph_w = (max_x - min_x) + 1
+        glyph_h = (max_y - min_y) + 1
+
+        start_x = x + ((9 - glyph_w) // 2) - min_x
+        start_y = y + ((9 - glyph_h) // 2) - min_y
+
+        for px, py in pixels:
+            draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
+
     def _draw_octagon(self, draw, x, y, color, text):
         """Draw a 9x9 octagon with either bitmap letter or tiny fallback glyph."""
         points = [
@@ -393,10 +467,13 @@ class MetroWidget(Widget):
         glyph = (text or "?").upper()
         letter_pixels = BITMAP_LETTERS.get(glyph)
         if letter_pixels:
-            start_x = x + 3
-            start_y = y + 2
-            for px, py in letter_pixels:
-                draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
+            self._draw_bitmap_glyph(draw, x, y, letter_pixels)
+            return
+
+        # NYC numeric routes render cleaner with a dedicated bitmap than the tiny fallback font.
+        digit_pixels = BITMAP_DIGITS.get(glyph)
+        if digit_pixels:
+            self._draw_bitmap_glyph(draw, x, y, digit_pixels)
             return
 
         # Fallback for numeric/other route IDs not covered by bitmap map.

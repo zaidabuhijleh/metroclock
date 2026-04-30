@@ -35,6 +35,8 @@ STATION_SHORT_NAMES = {
 # Feed docs: https://www.mta.info/developers
 NYC_MTA_FEED_URL = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
 NYC_STOP_IDS = "127N,127S"  # CSV; example is Times Sq-42 St (1/2/3)
+METRO_MIN_ARRIVAL_MINUTES = 0
+METRO_MAX_ARRIVAL_MINUTES = 20
 
 # --- WEATHER ---
 OPENWEATHER_API_KEY = "" 

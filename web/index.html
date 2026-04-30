@@ -119,7 +119,7 @@
       color: var(--text-dim);
       margin-bottom: 6px;
     }
-    input[type="text"], input[type="password"], select {
+    input[type="text"], input[type="password"], input[type="number"], select {
       width: 100%;
       background: var(--bg);
       border: 1px solid var(--border);
@@ -186,6 +186,9 @@
       display: flex;
       gap: 8px;
       margin-bottom: 14px;
+    }
+    .toggle-row input {
+      margin-bottom: 0;
     }
     .unit-btn {
       flex: 1;
@@ -419,11 +422,20 @@
       <input type="text" id="nyc-station-search" placeholder="Search stations..." oninput="filterNYCStations(this.value)" />
       <div class="station-list" id="nyc-station-list"></div>
       <input type="hidden" id="nyc-station-id" />
-      <label>MTA Feed URL (auto-filled)</label>
-      <input type="text" id="nyc-feed-url" placeholder="https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs" />
+      <label>MTA Feed URL(s) (auto-filled)</label>
+      <input type="text" id="nyc-feed-url" placeholder="Comma-separated feed URLs" />
       <label>Stop IDs (CSV, auto-filled)</label>
       <input type="text" id="nyc-stop-ids" placeholder="e.g. 127N,127S" />
-      <p class="hint">Pick a station from the list to auto-fill stop IDs and feed URL. MTA says API keys are no longer required for these feeds.</p>
+      <p class="hint">Pick a station from the list to auto-fill stop IDs and all required feed URLs. MTA says API keys are no longer required for these feeds.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Arrival Filter (Minutes)</div>
+      <label>Show trains from this many minutes out</label>
+      <div class="toggle-row">
+        <input type="number" id="metro-min-minutes" min="0" max="240" step="1" placeholder="0" />
+        <input type="number" id="metro-max-minutes" min="0" max="240" step="1" placeholder="20" />
+      </div>
+      <p class="hint">Only trains within this inclusive range are shown. Default is 0 to 20 minutes.</p>
     </div>
     <button class="btn btn-primary" onclick="saveMetro()">Save</button>
   </div>
@@ -797,6 +809,10 @@ async function init() {
     document.getElementById("nyc-feed-url").value = data.NYC_MTA_FEED_URL || "";
     document.getElementById("nyc-stop-ids").value = data.NYC_STOP_IDS || "";
     syncNYCSelectionFromStopIds(data.NYC_STOP_IDS || "");
+    const metroMin = Number.isFinite(Number(data.METRO_MIN_ARRIVAL_MINUTES)) ? Number(data.METRO_MIN_ARRIVAL_MINUTES) : 0;
+    const metroMax = Number.isFinite(Number(data.METRO_MAX_ARRIVAL_MINUTES)) ? Number(data.METRO_MAX_ARRIVAL_MINUTES) : 20;
+    document.getElementById("metro-min-minutes").value = String(metroMin);
+    document.getElementById("metro-max-minutes").value = String(metroMax);
 
     // Weather
     if (data.OPENWEATHER_CITY_ID) {
@@ -963,7 +979,7 @@ function selectNYCStation(stationId, scroll = true) {
 
   const feeds = Array.isArray(station.feed_urls) ? station.feed_urls : [];
   if (feeds.length) {
-    document.getElementById("nyc-feed-url").value = feeds[0];
+    document.getElementById("nyc-feed-url").value = feeds.join(",");
   }
 
   filterNYCStations(document.getElementById("nyc-station-search").value);
@@ -1052,8 +1068,28 @@ async function saveSettings(payload) {
 }
 
 async function saveMetro() {
+  const minInput = document.getElementById("metro-min-minutes").value.trim();
+  const maxInput = document.getElementById("metro-max-minutes").value.trim();
+  const minMinutes = minInput === "" ? 0 : Number.parseInt(minInput, 10);
+  const maxMinutes = maxInput === "" ? 20 : Number.parseInt(maxInput, 10);
+
+  if (!Number.isInteger(minMinutes) || !Number.isInteger(maxMinutes)) {
+    toast("Arrival filter must use whole numbers", "error");
+    return;
+  }
+  if (minMinutes < 0 || maxMinutes < 0) {
+    toast("Arrival filter cannot be negative", "error");
+    return;
+  }
+  if (minMinutes > maxMinutes) {
+    toast("Arrival filter min must be <= max", "error");
+    return;
+  }
+
   const payload = {
-    METRO_SYSTEM: selectedMetroSystem
+    METRO_SYSTEM: selectedMetroSystem,
+    METRO_MIN_ARRIVAL_MINUTES: minMinutes,
+    METRO_MAX_ARRIVAL_MINUTES: maxMinutes
   };
 
   if (selectedMetroSystem === "wmata") {
