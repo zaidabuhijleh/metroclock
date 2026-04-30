@@ -1,4 +1,6 @@
 import importlib
+import json
+import os
 import re
 import time
 
@@ -61,6 +63,8 @@ class MetroWidget(Widget):
             self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
         except Exception:
             self.font_small = ImageFont.load_default()
+
+        self._nyc_stop_name_map = self._load_nyc_stop_name_map()
 
     def update(self):
         """Fetch arrival data from configured metro system."""
@@ -202,7 +206,7 @@ class MetroWidget(Widget):
                     arrivals.append(
                         {
                             "line": route,
-                            "destination": self._nyc_display_label(route, stop_id),
+                            "destination": self._nyc_destination_name(route, trip_update, stop_id),
                             "mins": str(eta_minutes),
                             "eta": eta_minutes,
                             "trip_id": trip_id,
@@ -266,6 +270,39 @@ class MetroWidget(Widget):
         except Exception:
             return fallback
 
+    def _load_nyc_stop_name_map(self):
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web", "nyc_stations.json"))
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                stations = json.load(f)
+        except Exception:
+            return {}
+
+        mapping = {}
+        if not isinstance(stations, list):
+            return mapping
+
+        for station in stations:
+            if not isinstance(station, dict):
+                continue
+
+            name = str(station.get("name", "") or "").strip()
+            if not name:
+                continue
+
+            stop_ids = station.get("stop_ids", [])
+            if not isinstance(stop_ids, list):
+                continue
+
+            for raw_stop_id in stop_ids:
+                stop_id = str(raw_stop_id or "").strip().upper()
+                if not stop_id:
+                    continue
+                mapping[stop_id] = name
+                mapping[self._strip_nyc_stop_id(stop_id)] = name
+
+        return mapping
+
     def _nyc_stop_ids(self):
         raw = str(getattr(config, "NYC_STOP_IDS", "") or "")
         return {part.strip().upper() for part in raw.split(",") if part.strip()}
@@ -295,8 +332,32 @@ class MetroWidget(Widget):
             return "Downtown"
         return "Train"
 
-    def _nyc_display_label(self, route, stop_id):
-        return f"{route} {self._nyc_direction_label(stop_id)}"
+    def _strip_nyc_stop_id(self, stop_id):
+        value = str(stop_id or "").strip().upper()
+        if value.endswith("N") or value.endswith("S"):
+            return value[:-1]
+        return value
+
+    def _nyc_terminal_stop_id(self, trip_update):
+        for stop_update in reversed(trip_update.stop_time_update):
+            stop_id = str(getattr(stop_update, "stop_id", "") or "").strip().upper()
+            if stop_id:
+                return stop_id
+        return ""
+
+    def _nyc_destination_name(self, route, trip_update, current_stop_id):
+        terminal_stop_id = self._nyc_terminal_stop_id(trip_update)
+        if terminal_stop_id:
+            terminal_name = self._nyc_stop_name_map.get(terminal_stop_id)
+            if not terminal_name:
+                terminal_name = self._nyc_stop_name_map.get(self._strip_nyc_stop_id(terminal_stop_id))
+            if terminal_name:
+                return terminal_name
+
+        direction = self._nyc_direction_label(current_stop_id)
+        if direction == "Train":
+            return route
+        return f"{route} {direction}"
 
     def _gtfs_eta_minutes(self, stop_update, now_ts):
         arrival = getattr(stop_update, "arrival", None)
@@ -467,7 +528,11 @@ class MetroWidget(Widget):
         glyph = (text or "?").upper()
         letter_pixels = BITMAP_LETTERS.get(glyph)
         if letter_pixels:
-            self._draw_bitmap_glyph(draw, x, y, letter_pixels)
+            # Keep letter placement identical to the original WMATA-style badges.
+            start_x = x + 3
+            start_y = y + 2
+            for px, py in letter_pixels:
+                draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
             return
 
         # NYC numeric routes render cleaner with a dedicated bitmap than the tiny fallback font.
