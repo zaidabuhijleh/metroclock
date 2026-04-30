@@ -5,8 +5,15 @@ import importlib
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.py")
 
 EDITABLE_FIELDS = {
+    "METRO_SYSTEM",
     "WMATA_API_KEY",
     "WMATA_STATION_CODE",
+    "WMATA_LINE_FILTER",
+    "NYC_MTA_FEED_URL",
+    "NYC_STOP_IDS",
+    "NYC_LINE_FILTER",
+    "METRO_MIN_ARRIVAL_MINUTES",
+    "METRO_MAX_ARRIVAL_MINUTES",
     "OPENWEATHER_API_KEY",
     "OPENWEATHER_CITY_ID",
     "WEATHER_UNITS",

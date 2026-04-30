@@ -1,112 +1,494 @@
+import importlib
+import json
+import os
+import re
 import time
+
 import requests
-from PIL import Image, ImageDraw, ImageFont
-from core.widget import Widget
+from PIL import ImageDraw, ImageFont
+
 import config
+from core.widget import Widget
+from widgets.metrolines import NYC_LINE_COLORS, WMATA_LINE_COLORS
+
+try:
+    from google.transit import gtfs_realtime_pb2
+except Exception:
+    gtfs_realtime_pb2 = None
+
 
 # --- PIXEL PERFECT LETTER MAPS ---
 BITMAP_LETTERS = {
-    'R': [(0,0), (1,0), (2,0), (0,1), (2,1), (0,2), (1,2), (0,3), (2,3), (0,4), (2,4)],
-    'B': [(0,0), (1,0), (0,1), (2,1), (0,2), (1,2), (0,3), (2,3), (0,4), (1,4)],
-    'O': [(1,0), (0,1), (2,1), (0,2), (2,2), (0,3), (2,3), (1,4)],
-    'S': [(1,0), (2,0), (0,1), (1,2), (2,3), (0,4), (1,4)],
-    'G': [(1,0), (2,0), (0,1), (0,2), (2,2), (0,3), (2,3), (1,4), (2,4)],
-    'Y': [(0,0), (2,0), (0,1), (2,1), (1,2), (1,3), (1,4)],
-    # Fallback
-    'L': [(0,0), (0,1), (0,2), (0,3), (0,4), (1,4), (2,4)] 
+    "A": [(1, 0), (0, 1), (2, 1), (0, 2), (1, 2), (2, 2), (0, 3), (2, 3), (0, 4), (2, 4)],
+    "B": [(0, 0), (1, 0), (0, 1), (2, 1), (0, 2), (1, 2), (0, 3), (2, 3), (0, 4), (1, 4)],
+    "C": [(1, 0), (2, 0), (0, 1), (0, 2), (0, 3), (1, 4), (2, 4)],
+    "D": [(0, 0), (1, 0), (0, 1), (2, 1), (0, 2), (2, 2), (0, 3), (2, 3), (0, 4), (1, 4)],
+    "E": [(0, 0), (1, 0), (2, 0), (0, 1), (0, 2), (1, 2), (0, 3), (0, 4), (1, 4), (2, 4)],
+    "F": [(0, 0), (1, 0), (2, 0), (0, 1), (0, 2), (1, 2), (0, 3), (0, 4)],
+    "G": [(1, 0), (2, 0), (0, 1), (0, 2), (2, 2), (0, 3), (2, 3), (1, 4), (2, 4)],
+    "J": [(0, 0), (1, 0), (2, 0), (2, 1), (2, 2), (2, 3), (0, 4), (1, 4)],
+    "L": [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 4), (2, 4)],
+    "M": [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (2, 2), (0, 3), (2, 3), (0, 4), (2, 4)],
+    "N": [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (0, 3), (2, 3), (0, 4), (2, 4)],
+    "O": [(1, 0), (0, 1), (2, 1), (0, 2), (2, 2), (0, 3), (2, 3), (1, 4)],
+    "Q": [(1, 0), (0, 1), (2, 1), (0, 2), (2, 2), (0, 3), (2, 3), (1, 4), (2, 4)],
+    "R": [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2), (0, 3), (2, 3), (0, 4), (2, 4)],
+    "S": [(1, 0), (2, 0), (0, 1), (1, 2), (2, 3), (0, 4), (1, 4)],
+    "W": [(0, 0), (2, 0), (0, 1), (2, 1), (0, 2), (2, 2), (0, 3), (1, 3), (2, 3), (1, 4)],
+    "Y": [(0, 0), (2, 0), (0, 1), (2, 1), (1, 2), (1, 3), (1, 4)],
+    "Z": [(0, 0), (1, 0), (2, 0), (2, 1), (1, 2), (0, 3), (0, 4), (1, 4), (2, 4)],
 }
+
+BITMAP_DIGITS = {
+    "0": [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (3, 2), (0, 3), (3, 3), (1, 4), (2, 4)],
+    "1": [(1, 0), (2, 0), (2, 1), (2, 2), (2, 3), (1, 4), (2, 4), (3, 4)],
+    "2": [(1, 0), (2, 0), (3, 0), (0, 1), (3, 1), (2, 2), (1, 3), (0, 4), (1, 4), (2, 4), (3, 4)],
+    "3": [(0, 0), (1, 0), (2, 0), (2, 1), (1, 2), (2, 2), (2, 3), (0, 4), (1, 4), (2, 4)],
+    "4": [(0, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2), (2, 2), (2, 3), (2, 4)],
+    "5": [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (0, 2), (1, 2), (2, 2), (3, 3), (0, 4), (1, 4), (2, 4)],
+    "6": [(1, 0), (2, 0), (3, 0), (0, 1), (0, 2), (1, 2), (2, 2), (0, 3), (3, 3), (1, 4), (2, 4)],
+    "7": [(0, 0), (1, 0), (2, 0), (3, 0), (3, 1), (2, 2), (2, 3), (1, 4)],
+    "8": [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2), (0, 3), (3, 3), (1, 4), (2, 4)],
+    "9": [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2), (3, 2), (3, 3), (0, 4), (1, 4), (2, 4)],
+}
+
 
 class MetroWidget(Widget):
     def __init__(self, width, height):
         super().__init__(width, height)
         self.trains = []
         self.scroll_index = 0
-        self.last_fetch = 0
-        
-        # Animation State
+        self.last_fetch = 0.0
+        self._config_signature = None
+
+        # Animation state
         self.page_start_time = time.time()
         self.scroll_speed = 20
-        
-        # Load Fonts
+
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
-        except:
+        except Exception:
             self.font_tall = ImageFont.load_default()
 
+        try:
+            self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
+        except Exception:
+            self.font_small = ImageFont.load_default()
+
+        self._nyc_stop_name_map = self._load_nyc_stop_name_map()
+
     def update(self):
-        """Fetch API Data"""
+        """Fetch arrival data from configured metro system."""
         now = time.time()
-        if now - self.last_fetch > 30: 
-            headers = {'api_key': config.WMATA_API_KEY}
+        importlib.reload(config)
+
+        signature = self._current_config_signature()
+        if signature != self._config_signature:
+            self._config_signature = signature
+            self._invalidate_cached_rows(now)
+            self.last_fetch = 0.0
+
+        if now - self.last_fetch <= 30:
+            return
+
+        system = self._metro_system()
+        if system == "nyc":
+            self._fetch_nyc()
+        else:
+            self._fetch_wmata()
+
+        self.last_fetch = now
+
+    def _current_config_signature(self):
+        return (
+            self._metro_system(),
+            str(getattr(config, "WMATA_STATION_CODE", "") or "").strip().upper(),
+            str(getattr(config, "WMATA_API_KEY", "") or "").strip(),
+            tuple(sorted(self._wmata_line_filter())),
+            tuple(self._nyc_feed_urls()),
+            tuple(sorted(self._nyc_stop_ids())),
+            tuple(sorted(self._nyc_line_filter())),
+            self._arrival_window(),
+        )
+
+    def _invalidate_cached_rows(self, now):
+        self.trains = []
+        self.scroll_index = 0
+        self.page_start_time = now
+
+    def _metro_system(self):
+        value = str(getattr(config, "METRO_SYSTEM", "wmata") or "wmata").strip().lower()
+        return "nyc" if value == "nyc" else "wmata"
+
+    def _fetch_wmata(self):
+        headers = {}
+        key = str(getattr(config, "WMATA_API_KEY", "") or "").strip()
+        if key:
+            headers["api_key"] = key
+
+        station_code = str(getattr(config, "WMATA_STATION_CODE", "") or "").strip()
+        if not station_code:
+            self._replace_trains([], time.time())
+            return
+
+        try:
+            url = f"https://api.wmata.com/StationPrediction.svc/json/GetPrediction/{station_code}"
+            resp = requests.get(url, headers=headers, timeout=6)
+            data = resp.json()
+        except Exception as exc:
+            print(f"WMATA API Error: {exc}")
+            return
+
+        if "Trains" not in data:
+            return
+
+        valid = []
+        for train in data.get("Trains", []):
+            line = str(train.get("Line", "") or "").strip().upper()
+            dest = str(train.get("Destination", "") or "").strip()
+            if not line or line == "--":
+                continue
+            line = line[:2]
+            if not self._is_wmata_line_enabled(line):
+                continue
+            if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
+                continue
+
+            mins = self._normalize_wmata_mins(train.get("Min"))
+            if mins == "--":
+                continue
+            mins_int = int(mins)
+            if not self._is_in_arrival_window(mins_int):
+                continue
+
+            valid.append(
+                {
+                    "Line": line,
+                    "Destination": dest,
+                    "Min": mins,
+                }
+            )
+
+        self._replace_trains(valid, time.time())
+
+    def _fetch_nyc(self):
+        if gtfs_realtime_pb2 is None:
+            print("NYC API Error: missing gtfs-realtime-bindings")
+            return
+
+        feed_urls = self._nyc_feed_urls()
+        stop_ids = self._nyc_stop_ids()
+        if not feed_urls or not stop_ids:
+            self._replace_trains([], time.time())
+            return
+
+        now_ts = int(time.time())
+        arrivals = []
+
+        for feed_url in feed_urls:
             try:
-                url = f"https://api.wmata.com/StationPrediction.svc/json/GetPrediction/{config.WMATA_STATION_CODE}"
-                resp = requests.get(url, headers=headers, timeout=5)
-                data = resp.json()
-                
-                if 'Trains' in data:
-                    previous_len = len(self.trains)
-                    valid = []
-                    for t in data['Trains']:
-                        line = t.get('Line', '--').strip()
-                        dest = t.get('Destination', '').strip()
-                        if not line or line == "--": continue
-                        if dest in ["No Passenger", "Train", ""] or "ssenge" in dest: continue
-                        valid.append(t)
-                    self.trains = valid
-                    if not self.trains:
-                        self.scroll_index = 0
-                    else:
-                        self.scroll_index %= len(self.trains)
-                    if len(self.trains) != previous_len:
-                        self.page_start_time = now
-                self.last_fetch = now
-            except Exception as e:
-                print(f"API Error: {e}")
+                response = requests.get(feed_url, timeout=6)
+                if response.status_code != 200:
+                    print(f"NYC API Error: status {response.status_code} for {feed_url}")
+                    continue
+
+                feed = gtfs_realtime_pb2.FeedMessage()
+                feed.ParseFromString(response.content)
+            except Exception as exc:
+                print(f"NYC API Error for {feed_url}: {exc}")
+                continue
+
+            for entity in feed.entity:
+                if not entity.HasField("trip_update"):
+                    continue
+
+                trip_update = entity.trip_update
+                route = self._normalize_nyc_route_id(getattr(trip_update.trip, "route_id", ""))
+                if not route:
+                    continue
+                if not self._is_nyc_line_enabled(route):
+                    continue
+
+                trip_id = str(getattr(trip_update.trip, "trip_id", "") or "")
+                for stop_update in trip_update.stop_time_update:
+                    stop_id = str(getattr(stop_update, "stop_id", "") or "").upper()
+                    if stop_id not in stop_ids:
+                        continue
+
+                    eta_minutes = self._gtfs_eta_minutes(stop_update, now_ts)
+                    if eta_minutes is None:
+                        continue
+                    if not self._is_in_arrival_window(eta_minutes):
+                        continue
+
+                    arrivals.append(
+                        {
+                            "line": route,
+                            "destination": self._nyc_destination_name(route, trip_update, stop_id),
+                            "mins": str(eta_minutes),
+                            "eta": eta_minutes,
+                            "trip_id": trip_id,
+                            "stop_id": stop_id,
+                        }
+                    )
+                    # Only keep the first prediction for this stop on this trip.
+                    break
+
+        arrivals.sort(key=lambda item: (item["eta"], item["line"], item["destination"]))
+        deduped = self._dedupe_nyc_arrivals(arrivals)
+
+        trains = [
+            {
+                "Line": row["line"],
+                "Destination": row["destination"],
+                "Min": row["mins"],
+            }
+            for row in deduped
+        ]
+        self._replace_trains(trains, time.time())
+
+    def _replace_trains(self, trains, now):
+        previous_trains = self.trains
+        self.trains = trains
+
+        if not self.trains:
+            self.scroll_index = 0
+        else:
+            self.scroll_index %= len(self.trains)
+
+        if self.trains != previous_trains:
+            self.page_start_time = now
+
+    def _normalize_wmata_mins(self, raw):
+        text = str(raw or "").strip().upper()
+        if text in {"BRD", "ARR"}:
+            return "0"
+        if not text:
+            return "--"
+        match = re.search(r"\d+", text)
+        return match.group(0) if match else "--"
+
+    def _arrival_window(self):
+        min_minutes = self._safe_int(getattr(config, "METRO_MIN_ARRIVAL_MINUTES", 0), 0)
+        max_minutes = self._safe_int(getattr(config, "METRO_MAX_ARRIVAL_MINUTES", 20), 20)
+
+        min_minutes = max(0, min_minutes)
+        max_minutes = max(0, max_minutes)
+        if min_minutes > max_minutes:
+            min_minutes, max_minutes = max_minutes, min_minutes
+        return min_minutes, max_minutes
+
+    def _is_in_arrival_window(self, minutes):
+        min_minutes, max_minutes = self._arrival_window()
+        return min_minutes <= int(minutes) <= max_minutes
+
+    def _safe_int(self, value, fallback):
+        try:
+            return int(value)
+        except Exception:
+            return fallback
+
+    def _parse_line_filter(self, raw):
+        lines = set()
+        for part in str(raw or "").split(","):
+            token = self._normalize_nyc_route_id(part)
+            if token:
+                lines.add(token)
+        return lines
+
+    def _wmata_line_filter(self):
+        return self._parse_line_filter(getattr(config, "WMATA_LINE_FILTER", ""))
+
+    def _nyc_line_filter(self):
+        return self._parse_line_filter(getattr(config, "NYC_LINE_FILTER", ""))
+
+    def _is_wmata_line_enabled(self, line):
+        selected = self._wmata_line_filter()
+        if not selected:
+            return True
+        return str(line or "").strip().upper() in selected
+
+    def _is_nyc_line_enabled(self, route):
+        selected = self._nyc_line_filter()
+        if not selected:
+            return True
+
+        normalized_route = self._normalize_nyc_route_id(route)
+        if normalized_route in selected:
+            return True
+
+        # Allow generic "S" filter to include shuttle feed variants like GS/FS.
+        if normalized_route in {"GS", "FS"} and "S" in selected:
+            return True
+
+        return False
+
+    def _load_nyc_stop_name_map(self):
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web", "nyc_stations.json"))
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                stations = json.load(f)
+        except Exception:
+            return {}
+
+        mapping = {}
+        if not isinstance(stations, list):
+            return mapping
+
+        for station in stations:
+            if not isinstance(station, dict):
+                continue
+
+            name = str(station.get("name", "") or "").strip()
+            if not name:
+                continue
+
+            stop_ids = station.get("stop_ids", [])
+            if not isinstance(stop_ids, list):
+                continue
+
+            for raw_stop_id in stop_ids:
+                stop_id = str(raw_stop_id or "").strip().upper()
+                if not stop_id:
+                    continue
+                mapping[stop_id] = name
+                mapping[self._strip_nyc_stop_id(stop_id)] = name
+
+        return mapping
+
+    def _nyc_stop_ids(self):
+        raw = str(getattr(config, "NYC_STOP_IDS", "") or "")
+        return {part.strip().upper() for part in raw.split(",") if part.strip()}
+
+    def _nyc_feed_urls(self):
+        raw = str(getattr(config, "NYC_MTA_FEED_URL", "") or "").replace("\n", ",")
+        urls = []
+        seen = set()
+        for part in raw.split(","):
+            url = part.strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+        return tuple(urls)
+
+    def _normalize_nyc_route_id(self, route_id):
+        route = str(route_id or "").strip().upper()
+        if route == "7X":
+            return "7"
+        return route[:2]
+
+    def _nyc_direction_label(self, stop_id):
+        if stop_id.endswith("N"):
+            return "Uptown"
+        if stop_id.endswith("S"):
+            return "Downtown"
+        return "Train"
+
+    def _strip_nyc_stop_id(self, stop_id):
+        value = str(stop_id or "").strip().upper()
+        if value.endswith("N") or value.endswith("S"):
+            return value[:-1]
+        return value
+
+    def _nyc_terminal_stop_id(self, trip_update):
+        for stop_update in reversed(trip_update.stop_time_update):
+            stop_id = str(getattr(stop_update, "stop_id", "") or "").strip().upper()
+            if stop_id:
+                return stop_id
+        return ""
+
+    def _nyc_destination_name(self, route, trip_update, current_stop_id):
+        terminal_stop_id = self._nyc_terminal_stop_id(trip_update)
+        if terminal_stop_id:
+            terminal_name = self._nyc_stop_name_map.get(terminal_stop_id)
+            if not terminal_name:
+                terminal_name = self._nyc_stop_name_map.get(self._strip_nyc_stop_id(terminal_stop_id))
+            if terminal_name:
+                return terminal_name
+
+        direction = self._nyc_direction_label(current_stop_id)
+        if direction == "Train":
+            return route
+        return f"{route} {direction}"
+
+    def _gtfs_eta_minutes(self, stop_update, now_ts):
+        arrival = getattr(stop_update, "arrival", None)
+        departure = getattr(stop_update, "departure", None)
+
+        eta_ts = None
+        if arrival and getattr(arrival, "time", 0):
+            eta_ts = int(arrival.time)
+        elif departure and getattr(departure, "time", 0):
+            eta_ts = int(departure.time)
+
+        if eta_ts is None:
+            return None
+
+        delta = eta_ts - now_ts
+        if delta < -30:
+            return None
+        return max(0, int(round(delta / 60.0)))
+
+    def _dedupe_nyc_arrivals(self, rows):
+        # Keep unique trip/stop predictions first, then cap by arrival order.
+        seen = set()
+        output = []
+        for row in rows:
+            key = (row["trip_id"], row["stop_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            output.append(row)
+        return output
 
     def draw(self):
         draw = ImageDraw.Draw(self.canvas)
-        draw.rectangle((0,0, self.width, self.height), fill=(0,0,0))
+        draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
         if not self.trains:
+            label = "NO TRAINS"
+            if self._metro_system() == "nyc":
+                label = "NYC NO DATA"
+            draw.text((1, 12), label, font=self.font_small, fill=config.COLOR_GREY)
             return self.canvas
 
         # Trains list can shrink between fetches; keep index in range.
         self.scroll_index %= len(self.trains)
 
-        # --- DETERMINE WHICH TRAINS TO SHOW ---
+        # Determine which trains to show.
         t1 = self.trains[self.scroll_index]
         t2 = self.trains[(self.scroll_index + 1) % len(self.trains)] if len(self.trains) > 1 else None
-        
-        current_pair = [t1]
-        if t2: current_pair.append(t2)
 
-        # --- CALCULATE PAGE DURATION ---
+        current_pair = [t1]
+        if t2:
+            current_pair.append(t2)
+
+        # Calculate page duration.
         longest_scroll_time = 0
-        
-        TEXT_START_X = 13 
-        
+        text_start_x = 13
+
         for train in current_pair:
-            eta_width = self.font_tall.getlength(train['Min'])
-            visible_width = (64 - eta_width - 3) - TEXT_START_X 
-            dest = train['Destination']
+            eta_width = self.font_tall.getlength(train["Min"])
+            visible_width = (64 - eta_width - 3) - text_start_x
+            dest = train["Destination"]
             text_width = self.font_tall.getlength(dest)
 
             if text_width > visible_width:
-                # Snap to last word logic
-                last_space = dest.rfind(' ')
+                last_space = dest.rfind(" ")
                 if last_space != -1:
-                    prefix_width = self.font_tall.getlength(dest[:last_space + 1])
+                    prefix_width = self.font_tall.getlength(dest[: last_space + 1])
                     scroll_dist = prefix_width
                 else:
                     scroll_dist = text_width - visible_width
-                
+
                 time_needed = scroll_dist / self.scroll_speed
                 if time_needed > longest_scroll_time:
                     longest_scroll_time = time_needed
 
         page_duration = max(4.0, 1.0 + longest_scroll_time + 2.0)
 
-        # --- HANDLE CYCLING ---
+        # Handle cycling.
         now = time.time()
         time_on_page = now - self.page_start_time
 
@@ -114,31 +496,27 @@ class MetroWidget(Widget):
             if len(self.trains) > 2:
                 self.scroll_index = (self.scroll_index + 1) % len(self.trains)
             self.page_start_time = now
-            time_on_page = 0 
+            time_on_page = 0
 
-        # --- DRAW ROWS ---
+        # Draw rows.
         for i, train in enumerate(current_pair):
             row_y = i * 16
-            line = train['Line']
-            dest = train['Destination']
-            mins = train['Min']
-            line_color = config.LINE_COLORS.get(line, config.COLOR_GREY)
+            line = str(train.get("Line", "--")).upper()
+            dest = train.get("Destination", "")
+            mins = train.get("Min", "--")
+            line_color = self._line_color(line)
 
-            # --- DYNAMIC MASK CALCULATION ---
             eta_width = self.font_tall.getlength(mins)
             mask_x_start = 64 - eta_width - 3
-            
-            # Recalculate space based on new TEXT_START_X
-            visible_space = mask_x_start - TEXT_START_X
+            visible_space = mask_x_start - text_start_x
 
-            # --- SCROLLING TEXT ---
             text_width = self.font_tall.getlength(dest)
-            x_pos = TEXT_START_X
-            
+            x_pos = text_start_x
+
             if text_width > visible_space:
-                last_space = dest.rfind(' ')
+                last_space = dest.rfind(" ")
                 if last_space != -1:
-                    max_offset = self.font_tall.getlength(dest[:last_space + 1])
+                    max_offset = self.font_tall.getlength(dest[: last_space + 1])
                 else:
                     max_offset = text_width - visible_space
 
@@ -147,39 +525,84 @@ class MetroWidget(Widget):
                 else:
                     active_scroll_time = time_on_page - 1.0
                     offset = active_scroll_time * self.scroll_speed
-                    if offset > max_offset: 
+                    if offset > max_offset:
                         offset = max_offset
-                
-                x_pos = TEXT_START_X - offset
-            
+
+                x_pos = text_start_x - offset
+
             draw.text((x_pos, row_y + 3), dest, font=self.font_tall, fill=config.COLOR_BLUE)
 
-            # --- MASKS ---
-            draw.rectangle((0, row_y, 12, row_y + 16), fill=(0,0,0)) 
-            draw.rectangle((mask_x_start, row_y, 64, row_y + 16), fill=(0,0,0)) # Right
+            # Masks.
+            draw.rectangle((0, row_y, 12, row_y + 16), fill=(0, 0, 0))
+            draw.rectangle((mask_x_start, row_y, 64, row_y + 16), fill=(0, 0, 0))
 
-            # --- ICONS & TIME ---
-            self._draw_octagon(draw, 2, row_y + 3, line_color, line[0])
-
-            # Time (Right)
+            # Icons and time.
+            self._draw_octagon(draw, 2, row_y + 3, line_color, line[:1] or "?")
             time_x = 64 - eta_width - 1
             draw.text((time_x, row_y + 3), mins, font=self.font_tall, fill=config.COLOR_WHITE)
 
         return self.canvas
 
+    def _line_color(self, line):
+        line = str(line or "").upper()
+        if self._metro_system() == "nyc":
+            return NYC_LINE_COLORS.get(line) or NYC_LINE_COLORS.get(line[:1], config.COLOR_GREY)
+        return WMATA_LINE_COLORS.get(line, config.COLOR_GREY)
+
+    def _draw_bitmap_glyph(self, draw, x, y, pixels):
+        min_x = min(px for px, _ in pixels)
+        max_x = max(px for px, _ in pixels)
+        min_y = min(py for _, py in pixels)
+        max_y = max(py for _, py in pixels)
+
+        glyph_w = (max_x - min_x) + 1
+        glyph_h = (max_y - min_y) + 1
+
+        start_x = x + ((9 - glyph_w) // 2) - min_x
+        start_y = y + ((9 - glyph_h) // 2) - min_y
+
+        for px, py in pixels:
+            draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
+
     def _draw_octagon(self, draw, x, y, color, text):
-        """Draws a 9x9 Octagon with Pixel-Perfect Letter"""
+        """Draw a 9x9 octagon with either bitmap letter or tiny fallback glyph."""
         points = [
-            (x + 2, y), (x + 6, y),          
-            (x + 8, y + 2), (x + 8, y + 6),  
-            (x + 6, y + 8), (x + 2, y + 8),  
-            (x, y + 6), (x, y + 2)           
+            (x + 2, y),
+            (x + 6, y),
+            (x + 8, y + 2),
+            (x + 8, y + 6),
+            (x + 6, y + 8),
+            (x + 2, y + 8),
+            (x, y + 6),
+            (x, y + 2),
         ]
         draw.polygon(points, outline=color, fill=color)
-        
-        letter_pixels = BITMAP_LETTERS.get(text, [])
-        # Center 3x5 letter in 9x9 box
-        start_x = x + 3
-        start_y = y + 2
-        for (px, py) in letter_pixels:
-            draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
+
+        glyph = (text or "?").upper()
+        letter_pixels = BITMAP_LETTERS.get(glyph)
+        if letter_pixels:
+            # Keep letter placement identical to the original WMATA-style badges.
+            start_x = x + 3
+            start_y = y + 2
+            for px, py in letter_pixels:
+                draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
+            return
+
+        # NYC numeric routes render cleaner with a dedicated bitmap than the tiny fallback font.
+        digit_pixels = BITMAP_DIGITS.get(glyph)
+        if digit_pixels:
+            self._draw_bitmap_glyph(draw, x, y, digit_pixels)
+            return
+
+        # Fallback for numeric/other route IDs not covered by bitmap map.
+        if hasattr(self.font_small, "getbbox"):
+            left, top, right, bottom = self.font_small.getbbox(glyph)
+            tw = right - left
+            th = bottom - top
+            tx = x + max(0, (9 - tw) // 2) - left
+            ty = y + max(0, (9 - th) // 2) - top
+        else:
+            tw = int(self.font_small.getlength(glyph))
+            tx = x + max(1, (9 - tw) // 2)
+            ty = y + 1
+        draw.text((tx, ty), glyph, font=self.font_small, fill=(255, 255, 255))
