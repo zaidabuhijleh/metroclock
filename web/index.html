@@ -1053,11 +1053,23 @@ async function saveSettings(payload) {
 
 async function saveMetro() {
   const payload = {
-    METRO_SYSTEM: selectedMetroSystem,
-    NYC_MTA_FEED_URL: document.getElementById("nyc-feed-url").value.trim(),
-    NYC_STOP_IDS: document.getElementById("nyc-stop-ids").value.trim()
+    METRO_SYSTEM: selectedMetroSystem
   };
-  if (selectedStation) payload.WMATA_STATION_CODE = selectedStation;
+
+  if (selectedMetroSystem === "wmata") {
+    if (selectedStation) payload.WMATA_STATION_CODE = selectedStation;
+  } else {
+    const nycFeedUrl = document.getElementById("nyc-feed-url").value.trim();
+    const nycStopIds = document.getElementById("nyc-stop-ids").value.trim();
+
+    if (!nycFeedUrl || !nycStopIds) {
+      toast("Pick an NYC station first so feed + stop IDs are set", "error");
+      return;
+    }
+
+    payload.NYC_MTA_FEED_URL = nycFeedUrl;
+    payload.NYC_STOP_IDS = nycStopIds;
+  }
 
   const wmataKey = document.getElementById("wmata-api-key").value.trim();
   if (wmataKey) payload.WMATA_API_KEY = wmataKey;

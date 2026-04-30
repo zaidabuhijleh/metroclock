@@ -274,6 +274,10 @@ class MetroWidget(Widget):
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
         if not self.trains:
+            label = "NO TRAINS"
+            if self._metro_system() == "nyc":
+                label = "NYC NO DATA"
+            draw.text((1, 12), label, font=self.font_small, fill=config.COLOR_GREY)
             return self.canvas
 
         # Trains list can shrink between fetches; keep index in range.
