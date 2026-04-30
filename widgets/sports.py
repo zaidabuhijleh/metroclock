@@ -30,7 +30,8 @@ class SportsWidget(Widget):
         self.last_fetch = 0.0
         self.last_fetch_key = None
         self.last_rotate = time.time()
-        self.fetch_interval = 20
+        self.live_fetch_interval = 2
+        self.idle_fetch_interval = 20
         self.rotate_interval = 8
         self.placeholder_reason = "loading"
         self.possession_cache = {}
@@ -58,7 +59,8 @@ class SportsWidget(Widget):
 
         test_date = self._get_test_date()
         fetch_key = test_date or "today"
-        if fetch_key != self.last_fetch_key or now - self.last_fetch >= self.fetch_interval:
+        poll_interval = self._current_fetch_interval()
+        if fetch_key != self.last_fetch_key or now - self.last_fetch >= poll_interval:
             self._fetch_games(test_date)
             self.last_fetch = now
             self.last_fetch_key = fetch_key
@@ -68,6 +70,13 @@ class SportsWidget(Widget):
         if len(self.games) > 1 and now - self.last_rotate >= self.rotate_interval:
             self.current_game_index = (self.current_game_index + 1) % len(self.games)
             self.last_rotate = now
+
+    def _current_fetch_interval(self):
+        # ESPN scoreboard returns the whole slate in one response,
+        # so faster polling is still a single request, not one per game.
+        watched_games = self.games if self.games else self.all_games
+        has_live = any(g.get("state") == "in" for g in watched_games)
+        return self.live_fetch_interval if has_live else self.idle_fetch_interval
 
     def _get_test_date(self):
         raw = str(getattr(config, "SPORTS_TEST_DATE", "") or "").strip()
@@ -146,9 +155,52 @@ class SportsWidget(Widget):
         draw.text(((self.width - sw) // 2, 19), sub, font=self.font_small, fill=self.color_dim)
 
     def _draw_status_row(self, draw, game):
+        if self._draw_live_status_row(draw, game):
+            return
+
         status = self._fit_text(self._status_text(game), self.width - 2, self.font_tall)
         sw = int(self.font_tall.getlength(status))
         draw.text(((self.width - sw) // 2, 0), status, font=self.font_tall, fill=self.color_dim)
+
+    def _draw_live_status_row(self, draw, game):
+        # Custom render for live clock so ':' uses 1px dots instead of the font glyph.
+        if game.get("state") != "in":
+            return False
+
+        detail = str(game.get("detail", "")).upper()
+        if "HALFTIME" in detail or "END OF" in detail:
+            return False
+
+        clock = str(game.get("clock") or "")
+        if ":" not in clock:
+            return False
+        mins, secs = clock.split(":", 1)
+        if not mins or not secs:
+            return False
+
+        period_text = f"{self._period_label(game.get('period', 0))} "
+        period_w = int(self.font_tall.getlength(period_text))
+        mins_w = int(self.font_tall.getlength(mins))
+        secs_w = int(self.font_tall.getlength(secs))
+
+        gap_left = 0
+        gap_right = 1
+        total_w = period_w + mins_w + gap_left + 1 + gap_right + secs_w
+        x = max(0, (self.width - total_w) // 2)
+        y = 0
+
+        draw.text((x, y), period_text, font=self.font_tall, fill=self.color_dim)
+        x += period_w
+
+        draw.text((x, y), mins, font=self.font_tall, fill=self.color_dim)
+        x += mins_w + gap_left
+
+        draw.point((x, y + 3), fill=self.color_dim)
+        draw.point((x, y + 7), fill=self.color_dim)
+        x += 1 + gap_right
+
+        draw.text((x, y), secs, font=self.font_tall, fill=self.color_dim)
+        return True
 
     def _draw_team_row(self, draw, game, side, y):
         team = game[side]
@@ -179,8 +231,8 @@ class SportsWidget(Widget):
         return self.color_text, self.color_text
 
     def _draw_possession_arrow(self, draw, x, y):
-        # Larger 4x6 triangle so possession remains visible at viewing distance.
-        draw.polygon([(x, y), (x, y + 6), (x + 3, y + 3)], fill=self.color_possession)
+        # Larger 4x6 triangle; points LEFT so it points back toward the team label.
+        draw.polygon([(x + 3, y), (x + 3, y + 6), (x, y + 3)], fill=self.color_possession)
 
     # ----------------------------------------------------------------- fetching
 
