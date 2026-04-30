@@ -33,6 +33,7 @@ class MetroWidget(Widget):
         self.trains = []
         self.scroll_index = 0
         self.last_fetch = 0.0
+        self._config_signature = None
 
         # Animation state
         self.page_start_time = time.time()
@@ -53,6 +54,12 @@ class MetroWidget(Widget):
         now = time.time()
         importlib.reload(config)
 
+        signature = self._current_config_signature()
+        if signature != self._config_signature:
+            self._config_signature = signature
+            self._invalidate_cached_rows(now)
+            self.last_fetch = 0.0
+
         if now - self.last_fetch <= 30:
             return
 
@@ -63,6 +70,20 @@ class MetroWidget(Widget):
             self._fetch_wmata()
 
         self.last_fetch = now
+
+    def _current_config_signature(self):
+        return (
+            self._metro_system(),
+            str(getattr(config, "WMATA_STATION_CODE", "") or "").strip().upper(),
+            str(getattr(config, "WMATA_API_KEY", "") or "").strip(),
+            str(getattr(config, "NYC_MTA_FEED_URL", "") or "").strip(),
+            tuple(sorted(self._nyc_stop_ids())),
+        )
+
+    def _invalidate_cached_rows(self, now):
+        self.trains = []
+        self.scroll_index = 0
+        self.page_start_time = now
 
     def _metro_system(self):
         value = str(getattr(config, "METRO_SYSTEM", "wmata") or "wmata").strip().lower()
@@ -181,7 +202,7 @@ class MetroWidget(Widget):
         self._replace_trains(trains, time.time())
 
     def _replace_trains(self, trains, now):
-        previous_len = len(self.trains)
+        previous_trains = self.trains
         self.trains = trains
 
         if not self.trains:
@@ -189,7 +210,7 @@ class MetroWidget(Widget):
         else:
             self.scroll_index %= len(self.trains)
 
-        if len(self.trains) != previous_len:
+        if self.trains != previous_trains:
             self.page_start_time = now
 
     def _normalize_wmata_mins(self, raw):
@@ -375,6 +396,14 @@ class MetroWidget(Widget):
             return
 
         # Fallback for numeric/other route IDs not covered by bitmap map.
-        tw = int(self.font_small.getlength(glyph))
-        tx = x + max(1, (9 - tw) // 2)
-        draw.text((tx, y + 1), glyph, font=self.font_small, fill=(255, 255, 255))
+        if hasattr(self.font_small, "getbbox"):
+            left, top, right, bottom = self.font_small.getbbox(glyph)
+            tw = right - left
+            th = bottom - top
+            tx = x + max(0, (9 - tw) // 2) - left
+            ty = y + max(0, (9 - th) // 2) - top
+        else:
+            tw = int(self.font_small.getlength(glyph))
+            tx = x + max(1, (9 - tw) // 2)
+            ty = y + 1
+        draw.text((tx, ty), glyph, font=self.font_small, fill=(255, 255, 255))
