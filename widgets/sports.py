@@ -40,6 +40,7 @@ class SportsWidget(Widget):
         self.halftime_categories = [
             ("points", "PTS"),
             ("rebounds", "REB"),
+            ("threes_made", "3PM"),
             ("assists", "AST"),
             ("steals", "STL"),
             ("blocks", "BLK"),
@@ -250,10 +251,6 @@ class SportsWidget(Widget):
         label = self._fit_text(label, self.width - 2, self.font_small)
         label_w = int(self.font_small.getlength(label))
         draw.text(((self.width - label_w) // 2, 11), label, font=self.font_small, fill=self.color_dim)
-
-        phase = f"{leader_rank + 1}/2"
-        phase_w = int(self.font_small.getlength(phase))
-        draw.text((self.width - phase_w - 1, 11), phase, font=self.font_small, fill=self.color_dim)
 
         self._draw_halftime_team_row(game["away"], card["away"], leader_rank, 18, draw)
         self._draw_halftime_team_row(game["home"], card["home"], leader_rank, 25, draw)
@@ -564,7 +561,8 @@ class SportsWidget(Widget):
         return (text + "...") if text else ""
 
     def _normalize_leader_category(self, raw):
-        name = str(raw or "").strip().lower()
+        name = re.sub(r"[^a-z0-9]+", " ", str(raw or "").strip().lower())
+        name = re.sub(r"\s+", " ", name).strip()
         if not name:
             return ""
         aliases = {
@@ -572,6 +570,8 @@ class SportsWidget(Widget):
             "point": "points",
             "points": "points",
             "reb": "rebounds",
+            "total reb": "rebounds",
+            "total rebounds": "rebounds",
             "rebound": "rebounds",
             "rebounds": "rebounds",
             "ast": "assists",
@@ -585,8 +585,29 @@ class SportsWidget(Widget):
             "blocks": "blocks",
             "rtg": "rating",
             "rating": "rating",
+            "3pm": "threes_made",
+            "3 pt made": "threes_made",
+            "3 point made": "threes_made",
+            "3 point field goals made": "threes_made",
+            "3 point field goal made": "threes_made",
+            "three point made": "threes_made",
+            "three points made": "threes_made",
+            "three point field goals made": "threes_made",
+            "three point field goal made": "threes_made",
+            "threes made": "threes_made",
         }
-        return aliases.get(name, name)
+        if name in aliases:
+            return aliases[name]
+
+        if "rebound" in name:
+            return "rebounds"
+
+        if "3" in name and "made" in name:
+            return "threes_made"
+        if "three" in name and "made" in name:
+            return "threes_made"
+
+        return name
 
     def _display_player_name(self, name):
         cleaned = re.sub(r"[^A-Za-z\\-\\' ]", " ", str(name or ""))
