@@ -33,7 +33,8 @@ class SportsWidget(Widget):
         self.live_fetch_interval = 2
         self.idle_fetch_interval = 20
         self.rotate_interval = 8
-        self.halftime_cycle_interval = 4
+        self.halftime_cycle_interval = 10
+        self.halftime_leader_cycle_interval = 5
         self.placeholder_reason = "loading"
         self.possession_cache = {}
         self.halftime_categories = [
@@ -239,7 +240,10 @@ class SportsWidget(Widget):
 
         self._draw_status_row(draw, game)
 
-        card_index = int(time.time() / self.halftime_cycle_interval) % len(cards)
+        now = time.time()
+        card_index = int(now / self.halftime_cycle_interval) % len(cards)
+        leader_rank = int((now % self.halftime_cycle_interval) / self.halftime_leader_cycle_interval)
+        leader_rank = min(leader_rank, 1)
         card = cards[card_index]
 
         label = f"{card['label']} LEADERS"
@@ -247,23 +251,40 @@ class SportsWidget(Widget):
         label_w = int(self.font_small.getlength(label))
         draw.text(((self.width - label_w) // 2, 11), label, font=self.font_small, fill=self.color_dim)
 
-        self._draw_halftime_team_row(game["away"], card["away"], 18, draw)
-        self._draw_halftime_team_row(game["home"], card["home"], 25, draw)
+        phase = f"{leader_rank + 1}/2"
+        phase_w = int(self.font_small.getlength(phase))
+        draw.text((self.width - phase_w - 1, 11), phase, font=self.font_small, fill=self.color_dim)
+
+        self._draw_halftime_team_row(game["away"], card["away"], leader_rank, 18, draw)
+        self._draw_halftime_team_row(game["home"], card["home"], leader_rank, 25, draw)
         return True
 
-    def _draw_halftime_team_row(self, team, leaders, y, draw):
+    def _draw_halftime_team_row(self, team, leaders, rank_index, y, draw):
         draw.rectangle((0, y, self.BAR_WIDTH - 1, y + 5), fill=team["color"])
 
-        parts = [team["abbr"]]
+        leader = None
         if leaders:
-            for leader in leaders[:2]:
-                parts.append(f"{leader['tag']}{leader['val']}")
-        else:
-            parts.append("--")
+            leader = leaders[rank_index] if rank_index < len(leaders) else leaders[-1]
 
-        text = " ".join(parts)
-        text = self._fit_text(text, self.width - self.BAR_WIDTH - 3, self.font_small)
-        draw.text((self.BAR_WIDTH + 2, y), text, font=self.font_small, fill=self.color_text)
+        team_x = self.BAR_WIDTH + 2
+        draw.text((team_x, y), team["abbr"], font=self.font_small, fill=self.color_text)
+        team_w = int(self.font_small.getlength(team["abbr"]))
+
+        if not leader:
+            draw.text((team_x + team_w + 2, y), "--", font=self.font_small, fill=self.color_dim)
+            return
+
+        val = leader.get("val", "--")
+        val_w = int(self.font_small.getlength(val))
+        val_x = self.width - val_w - 1
+        draw.text((val_x, y), val, font=self.font_small, fill=self.color_text)
+
+        name = leader.get("name") or "PLAYER"
+        name_max_w = max(0, val_x - (team_x + team_w + 3))
+        if name_max_w <= 0:
+            return
+        name = self._fit_text(name, name_max_w, self.font_small)
+        draw.text((team_x + team_w + 2, y), name, font=self.font_small, fill=self.color_text)
 
     def _build_halftime_cards(self, game):
         away_leaders = game["away"].get("leaders", {})
@@ -403,15 +424,15 @@ class SportsWidget(Widget):
             entries = []
             for item in (leader_group.get("leaders") or [])[:2]:
                 athlete = item.get("athlete") or {}
-                tag = self._short_player_tag(
+                name = self._display_player_name(
                     athlete.get("shortName")
                     or athlete.get("displayName")
                     or athlete.get("fullName")
                     or ""
                 )
                 val = self._short_leader_value(item.get("displayValue") or item.get("value"))
-                if tag or val:
-                    entries.append({"tag": tag or "?", "val": val or "--"})
+                if name or val:
+                    entries.append({"name": name or "PLAYER", "val": val or "--"})
 
             if entries:
                 output[cat_key] = entries
@@ -567,13 +588,13 @@ class SportsWidget(Widget):
         }
         return aliases.get(name, name)
 
-    def _short_player_tag(self, name):
-        cleaned = re.sub(r"[^A-Za-z ]", " ", str(name or ""))
+    def _display_player_name(self, name):
+        cleaned = re.sub(r"[^A-Za-z\\-\\' ]", " ", str(name or ""))
         parts = [p for p in cleaned.split() if p]
         if not parts:
             return ""
         base = parts[-1] if len(parts) > 1 else parts[0]
-        return base[:3].upper()
+        return base.upper()
 
     def _short_leader_value(self, value):
         text = str(value or "").strip()
@@ -581,11 +602,11 @@ class SportsWidget(Widget):
             return ""
         match = re.search(r"\d+(?:\.\d+)?", text)
         if not match:
-            return text[:2]
+            return text[:3]
         num = match.group(0)
         if "." in num:
             num = num.split(".", 1)[0]
-        return num[:2]
+        return num[:3]
 
     def _parse_team_color(self, color_hex, fallback):
         if not color_hex:
