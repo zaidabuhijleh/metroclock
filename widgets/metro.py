@@ -44,6 +44,7 @@ class MetroWidget(Widget):
                 data = resp.json()
                 
                 if 'Trains' in data:
+                    previous_len = len(self.trains)
                     valid = []
                     for t in data['Trains']:
                         line = t.get('Line', '--').strip()
@@ -52,6 +53,12 @@ class MetroWidget(Widget):
                         if dest in ["No Passenger", "Train", ""] or "ssenge" in dest: continue
                         valid.append(t)
                     self.trains = valid
+                    if not self.trains:
+                        self.scroll_index = 0
+                    else:
+                        self.scroll_index %= len(self.trains)
+                    if len(self.trains) != previous_len:
+                        self.page_start_time = now
                 self.last_fetch = now
             except Exception as e:
                 print(f"API Error: {e}")
@@ -62,6 +69,9 @@ class MetroWidget(Widget):
 
         if not self.trains:
             return self.canvas
+
+        # Trains list can shrink between fetches; keep index in range.
+        self.scroll_index %= len(self.trains)
 
         # --- DETERMINE WHICH TRAINS TO SHOW ---
         t1 = self.trains[self.scroll_index]

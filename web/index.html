@@ -255,6 +255,31 @@
     .network-item:hover { background: var(--surface2); }
     .network-item.selected { background: #1a2040; color: var(--accent); }
 
+    .team-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .team-chip {
+      background: var(--surface2);
+      border: 2px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 9px 4px;
+      text-align: center;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: all var(--transition);
+      color: var(--text-dim);
+      user-select: none;
+    }
+    .team-chip:hover { background: var(--border); }
+    .team-chip.selected {
+      background: rgba(255,255,255,0.06);
+    }
+
     .info-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -336,6 +361,7 @@
     <button class="tab-btn" data-tab="metro">Metro</button>
     <button class="tab-btn" data-tab="weather">Weather</button>
     <button class="tab-btn" data-tab="flight">Flight</button>
+    <button class="tab-btn" data-tab="sports">Sports</button>
     <button class="tab-btn" data-tab="ambient">Ambient</button>
     <button class="tab-btn" data-tab="wifi">WiFi</button>
     <button class="tab-btn" data-tab="system">System</button>
@@ -357,6 +383,9 @@
         </button>
         <button class="mode-btn" data-mode="ambient" onclick="switchMode('ambient')">
           <span class="icon">🌌</span>Ambient
+        </button>
+        <button class="mode-btn" data-mode="sports" onclick="switchMode('sports')">
+          <span class="icon">🏀</span>Sports
         </button>
       </div>
     </div>
@@ -429,6 +458,41 @@
       <label>AviationStack API Key</label>
       <input type="password" id="aviationstack-api-key" placeholder="Enter key (leave blank to keep current)" autocomplete="new-password" />
       <button class="btn btn-primary" onclick="saveFlight()">Save</button>
+    </div>
+  </div>
+
+  <!-- Sports Tab -->
+  <div class="panel" id="panel-sports">
+    <div class="card">
+      <div class="card-title">View Mode</div>
+      <div class="toggle-row">
+        <button class="unit-btn" data-sports-view="all_live" onclick="setSportsView('all_live')">All Teams</button>
+        <button class="unit-btn" data-sports-view="favorites" onclick="setSportsView('favorites')">Favorite Teams</button>
+      </div>
+      <p class="hint">All Teams cycles the whole slate. Favorites only shows games involving the teams you pick below.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Live Focus</div>
+      <div class="toggle-row">
+        <button class="unit-btn" data-sports-live-focus="on" onclick="setSportsLiveFocus(true)">On</button>
+        <button class="unit-btn" data-sports-live-focus="off" onclick="setSportsLiveFocus(false)">Off</button>
+      </div>
+      <p class="hint">When On: if any selected game is live, Sports mode rotates only live games. Pregame games return automatically when nothing is live.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Favorite Teams (NBA)</div>
+      <div class="team-grid" id="team-grid"></div>
+      <button class="btn btn-primary" onclick="saveSports()">Save</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Test Mode</div>
+      <label>Pinned Date (YYYYMMDD)</label>
+      <input type="text" id="sports-test-date" placeholder="e.g. 20240615 — leave blank for today" maxlength="8" />
+      <p class="hint">ESPN's scoreboard accepts a date param. Pin a past date with known games to preview the layout when no games are live.</p>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveSports()">Save</button>
+        <button class="btn btn-ghost" onclick="clearTestDate()">Use Today</button>
+      </div>
     </div>
   </div>
 
@@ -615,8 +679,44 @@ const LINE_COLORS = {
   GR: "#43a047", BL: "#1e88e5", SV: "#9e9e9e"
 };
 
+const NBA_TEAMS = [
+  {abbr:"ATL", name:"Hawks",         color:"#E03A3E"},
+  {abbr:"BOS", name:"Celtics",       color:"#007A33"},
+  {abbr:"BKN", name:"Nets",          color:"#FFFFFF"},
+  {abbr:"CHA", name:"Hornets",       color:"#00788C"},
+  {abbr:"CHI", name:"Bulls",         color:"#CE1141"},
+  {abbr:"CLE", name:"Cavaliers",     color:"#860038"},
+  {abbr:"DAL", name:"Mavericks",     color:"#00538C"},
+  {abbr:"DEN", name:"Nuggets",       color:"#0E2240"},
+  {abbr:"DET", name:"Pistons",       color:"#C8102E"},
+  {abbr:"GSW", name:"Warriors",      color:"#1D428A"},
+  {abbr:"HOU", name:"Rockets",       color:"#CE1141"},
+  {abbr:"IND", name:"Pacers",        color:"#FDBB30"},
+  {abbr:"LAC", name:"Clippers",      color:"#C8102E"},
+  {abbr:"LAL", name:"Lakers",        color:"#7A4DAB"},
+  {abbr:"MEM", name:"Grizzlies",     color:"#5D76A9"},
+  {abbr:"MIA", name:"Heat",          color:"#98002E"},
+  {abbr:"MIL", name:"Bucks",         color:"#00471B"},
+  {abbr:"MIN", name:"Timberwolves",  color:"#236192"},
+  {abbr:"NOP", name:"Pelicans",      color:"#85714D"},
+  {abbr:"NYK", name:"Knicks",        color:"#F58426"},
+  {abbr:"OKC", name:"Thunder",       color:"#007AC1"},
+  {abbr:"ORL", name:"Magic",         color:"#0077C0"},
+  {abbr:"PHI", name:"76ers",         color:"#006BB6"},
+  {abbr:"PHX", name:"Suns",          color:"#E56020"},
+  {abbr:"POR", name:"Trail Blazers", color:"#E03A3E"},
+  {abbr:"SAC", name:"Kings",         color:"#7A4DAB"},
+  {abbr:"SAS", name:"Spurs",         color:"#C4CED4"},
+  {abbr:"TOR", name:"Raptors",       color:"#CE1141"},
+  {abbr:"UTA", name:"Jazz",          color:"#F9A01B"},
+  {abbr:"WAS", name:"Wizards",       color:"#E31837"},
+];
+
 let selectedStation = null;
 let selectedUnit = "metric";
+let selectedTeams = new Set();
+let selectedSportsView = "all_live";
+let selectedSportsLiveFocus = true;
 
 // ── Tabs ───────────────────────────────────────────────────────────────────
 document.querySelectorAll(".tab-btn").forEach(btn => {
@@ -673,6 +773,20 @@ async function init() {
 
     // Ambient
     setActiveAmbientScene(data.ambient_scene || "auto");
+
+    // Sports
+    selectedSportsView = data.SPORTS_VIEW_MODE === "favorites" ? "favorites" : "all_live";
+    setActiveSportsView(selectedSportsView);
+    selectedSportsLiveFocus = data.SPORTS_LIVE_FOCUS !== false;
+    setActiveSportsLiveFocus(selectedSportsLiveFocus);
+    selectedTeams = new Set(
+      String(data.SPORTS_FAVORITE_TEAMS || "")
+        .split(",")
+        .map(s => s.trim().toUpperCase())
+        .filter(Boolean)
+    );
+    renderTeams();
+    document.getElementById("sports-test-date").value = data.SPORTS_TEST_DATE || "";
 
   } catch (e) {
     toast("Failed to load settings", "error");
@@ -848,6 +962,70 @@ async function setAmbientScene(scene) {
   } catch (e) {
     toast("Failed to set scene", "error");
   }
+}
+
+// ── Sports ─────────────────────────────────────────────────────────────────
+function renderTeams() {
+  const el = document.getElementById("team-grid");
+  el.innerHTML = NBA_TEAMS.map(t => {
+    const sel = selectedTeams.has(t.abbr);
+    const style = sel
+      ? `color:${t.color};border-color:${t.color};`
+      : `color:${t.color};opacity:0.55;`;
+    return `<div class="team-chip${sel ? " selected" : ""}"
+                 style="${style}"
+                 title="${t.name}"
+                 onclick="toggleTeam('${t.abbr}')">${t.abbr}</div>`;
+  }).join("");
+}
+
+function toggleTeam(abbr) {
+  if (selectedTeams.has(abbr)) selectedTeams.delete(abbr);
+  else selectedTeams.add(abbr);
+  renderTeams();
+}
+
+function setActiveSportsView(view) {
+  document.querySelectorAll("[data-sports-view]").forEach(b => {
+    b.classList.toggle("active", b.dataset.sportsView === view);
+  });
+}
+
+function setSportsView(view) {
+  selectedSportsView = view;
+  setActiveSportsView(view);
+}
+
+function setActiveSportsLiveFocus(enabled) {
+  document.querySelectorAll("[data-sports-live-focus]").forEach(b => {
+    const shouldBeActive = enabled ? b.dataset.sportsLiveFocus === "on" : b.dataset.sportsLiveFocus === "off";
+    b.classList.toggle("active", shouldBeActive);
+  });
+}
+
+function setSportsLiveFocus(enabled) {
+  selectedSportsLiveFocus = !!enabled;
+  setActiveSportsLiveFocus(selectedSportsLiveFocus);
+}
+
+async function saveSports() {
+  const dateRaw = document.getElementById("sports-test-date").value.trim();
+  if (dateRaw && !/^\d{8}$/.test(dateRaw)) {
+    toast("Test date must be YYYYMMDD or empty", "error");
+    return;
+  }
+  const payload = {
+    SPORTS_VIEW_MODE: selectedSportsView,
+    SPORTS_LIVE_FOCUS: selectedSportsLiveFocus,
+    SPORTS_FAVORITE_TEAMS: Array.from(selectedTeams).join(","),
+    SPORTS_TEST_DATE: dateRaw,
+  };
+  await saveSettings(payload);
+}
+
+function clearTestDate() {
+  document.getElementById("sports-test-date").value = "";
+  saveSports();
 }
 
 // ── WiFi ───────────────────────────────────────────────────────────────────
