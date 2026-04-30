@@ -264,54 +264,38 @@ class MetroWidget(Widget):
     def _fetch_ttc(self):
         station_id = self._ttc_station_id()
         stop_uris = self._ttc_stop_uris()
-        if not station_id or not stop_uris:
+        if not stop_uris:
             self._replace_trains([], time.time())
             return
 
-        try:
-            url = f"https://myttc.ca/{station_id}.json"
-            resp = requests.get(url, timeout=8)
-            if resp.status_code != 200:
-                print(f"TTC API Error: status {resp.status_code} for {url}")
-                return
-            data = resp.json()
-        except Exception as exc:
-            print(f"TTC API Error: {exc}")
-            return
-
         now_ts = int(time.time())
-        chosen_stop_uris = set(stop_uris)
         arrivals = []
+        source_count = 0
 
-        for stop in data.get("stops", []):
-            stop_uri = str(stop.get("uri", "") or "").strip().lower()
-            if stop_uri and stop_uri not in chosen_stop_uris:
+        for stop_uri in stop_uris:
+            try:
+                url = f"https://myttc.ca/{stop_uri}.json"
+                resp = requests.get(url, timeout=8)
+                if resp.status_code != 200:
+                    print(f"TTC API Error: status {resp.status_code} for {url}")
+                    continue
+                data = resp.json()
+            except Exception as exc:
+                print(f"TTC API Error for {stop_uri}: {exc}")
                 continue
 
-            for route in stop.get("routes", []):
-                route_uri = str(route.get("uri", "") or "").strip().lower()
-                route_name = str(route.get("name", "") or "").strip()
-                line = self._ttc_route_to_line(route_uri, route_name)
-                if not line:
-                    continue
-                if not self._is_ttc_line_enabled(line):
-                    continue
+            source_count += 1
+            arrivals.extend(self._ttc_collect_arrivals(data, now_ts, {stop_uri}))
 
-                for stop_time in route.get("stop_times", []):
-                    eta_minutes = self._ttc_eta_minutes(stop_time, now_ts)
-                    if eta_minutes is None:
-                        continue
-                    if not self._is_in_arrival_window(eta_minutes):
-                        continue
-
-                    arrivals.append(
-                        {
-                            "line": line,
-                            "destination": self._ttc_destination_name(stop_time, route_name),
-                            "mins": str(eta_minutes),
-                            "eta": eta_minutes,
-                        }
-                    )
+        # Fallback for old configs where stop URIs may be stale but station slug is valid.
+        if source_count == 0 and station_id:
+            try:
+                url = f"https://myttc.ca/{station_id}.json"
+                resp = requests.get(url, timeout=8)
+                if resp.status_code == 200:
+                    arrivals.extend(self._ttc_collect_arrivals(resp.json(), now_ts, set(stop_uris)))
+            except Exception as exc:
+                print(f"TTC API fallback error for {station_id}: {exc}")
 
         arrivals.sort(key=lambda item: (item["eta"], item["line"], item["destination"]))
         deduped = self._dedupe_ttc_arrivals(arrivals)
@@ -324,6 +308,43 @@ class MetroWidget(Widget):
             for row in deduped
         ]
         self._replace_trains(trains, time.time())
+
+    def _ttc_collect_arrivals(self, data, now_ts, allowed_stop_uris):
+        output = []
+        allowed = {str(uri or "").strip().lower() for uri in (allowed_stop_uris or set()) if str(uri or "").strip()}
+
+        for stop in data.get("stops", []):
+            stop_uri = str(stop.get("uri", "") or "").strip().lower()
+            if allowed and stop_uri not in allowed:
+                continue
+
+            for route in stop.get("routes", []):
+                route_uri = str(route.get("uri", "") or "").strip().lower()
+                route_name = str(route.get("name", "") or "").strip()
+                route_group_id = str(route.get("route_group_id", "") or "").strip()
+                line = self._ttc_route_to_line(route_uri, route_name, route_group_id)
+                if not line:
+                    continue
+                if not self._is_ttc_line_enabled(line):
+                    continue
+
+                for stop_time in route.get("stop_times", []):
+                    eta_minutes = self._ttc_eta_minutes(stop_time, now_ts)
+                    if eta_minutes is None:
+                        continue
+                    if not self._is_in_arrival_window(eta_minutes):
+                        continue
+
+                    output.append(
+                        {
+                            "line": line,
+                            "destination": self._ttc_destination_name(stop_time, route_name),
+                            "mins": str(eta_minutes),
+                            "eta": eta_minutes,
+                        }
+                    )
+
+        return output
 
     def _replace_trains(self, trains, now):
         previous_trains = self.trains
@@ -460,21 +481,7 @@ class MetroWidget(Widget):
         return tuple(urls)
 
     def _ttc_station_id(self):
-        value = str(getattr(config, "TTC_STATION_ID", "") or "").strip().lower()
-        if value:
-            return value
-
-        stop_uris = self._ttc_stop_uris()
-        if not stop_uris:
-            return ""
-
-        first = stop_uris[0]
-        marker = "_station_"
-        if marker in first:
-            return first.split(marker, 1)[0] + "_station"
-        if first.endswith("_platform"):
-            return first.rsplit("_", 1)[0]
-        return ""
+        return str(getattr(config, "TTC_STATION_ID", "") or "").strip().lower()
 
     def _ttc_stop_uris(self):
         raw = str(getattr(config, "TTC_STOP_URIS", "") or "")
@@ -486,6 +493,30 @@ class MetroWidget(Widget):
                 continue
             seen.add(uri)
             stop_uris.append(uri)
+        if stop_uris:
+            return tuple(stop_uris)
+
+        # Backward-compatible fallback: derive stop URIs from station metadata if config CSV is blank.
+        station_id = self._ttc_station_id()
+        if not station_id:
+            return tuple()
+        stations_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web", "ttc_stations.json"))
+        try:
+            with open(stations_path, "r", encoding="utf-8") as f:
+                stations = json.load(f)
+        except Exception:
+            return tuple()
+        for station in stations if isinstance(stations, list) else []:
+            if not isinstance(station, dict):
+                continue
+            if str(station.get("id", "") or "").strip().lower() != station_id:
+                continue
+            for candidate in station.get("stop_uris", []):
+                uri = str(candidate or "").strip().lower()
+                if not uri or uri in seen:
+                    continue
+                seen.add(uri)
+                stop_uris.append(uri)
         return tuple(stop_uris)
 
     def _normalize_nyc_route_id(self, route_id):
@@ -494,14 +525,24 @@ class MetroWidget(Widget):
             return "7"
         return route[:2]
 
-    def _ttc_route_to_line(self, route_uri, route_name):
+    def _ttc_route_to_line(self, route_uri, route_name, route_group_id=""):
+        group_id = str(route_group_id or "").strip()
+        if group_id in {"1", "2", "3", "4"}:
+            return group_id
+
         route_key = str(route_uri or "").strip().lower()
         if route_key in TTC_ROUTE_TO_LINE:
             return TTC_ROUTE_TO_LINE[route_key]
+        if "line_1" in route_key or route_key.startswith("1_"):
+            return "1"
+        if "line_2" in route_key or route_key.startswith("2_"):
+            return "2"
+        if "line_3" in route_key or route_key.startswith("3_"):
+            return "3"
+        if "line_4" in route_key or route_key.startswith("4_"):
+            return "4"
 
         name = str(route_name or "").strip().lower()
-        if "subway" not in name and "rt" not in name:
-            return ""
         line_match = re.search(r"\bline\s*([1-4])\b", name)
         if line_match:
             return line_match.group(1)
