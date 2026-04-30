@@ -1,0 +1,810 @@
+﻿[
+    {
+        "id":  "bathurst_station",
+        "name":  "Bathurst",
+        "display_name":  "Bathurst (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "bathurst_station_eastbound_platform",
+                          "bathurst_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "bay_station",
+        "name":  "Bay",
+        "display_name":  "Bay (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "bay_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "bayview_station",
+        "name":  "Bayview",
+        "display_name":  "Bayview (4)",
+        "lines":  [
+                      "4"
+                  ],
+        "stop_uris":  [
+                          "bayview_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "bessarion_station",
+        "name":  "Bessarion",
+        "display_name":  "Bessarion (4)",
+        "lines":  [
+                      "4"
+                  ],
+        "stop_uris":  [
+                          "bessarion_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "bloor-yonge_station",
+        "name":  "Bloor-Yonge",
+        "display_name":  "Bloor-Yonge (1,2)",
+        "lines":  [
+                      "1",
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "bloor-yonge_station_east-west_platform",
+                          "bloor-yonge_station_northbound_platform",
+                          "bloor-yonge_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "broadview_station",
+        "name":  "Broadview",
+        "display_name":  "Broadview (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "broadview_station_eastbound_platform",
+                          "broadview_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "castle_frank_station",
+        "name":  "Castle Frank",
+        "display_name":  "Castle Frank (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "castle_frank_station_eastbound_platform",
+                          "castle_frank_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "chester_station",
+        "name":  "Chester",
+        "display_name":  "Chester (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "chester_station_eastbound_platform",
+                          "chester_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "christie_station",
+        "name":  "Christie",
+        "display_name":  "Christie (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "christie_station_eastbound_platform",
+                          "christie_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "college_station",
+        "name":  "College",
+        "display_name":  "College (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "college_station_northbound_platform",
+                          "college_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "coxwell_station",
+        "name":  "Coxwell",
+        "display_name":  "Coxwell (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "coxwell_station_eastbound_platform",
+                          "coxwell_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "davisville_station",
+        "name":  "Davisville",
+        "display_name":  "Davisville (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "davisville_station_northbound_platform",
+                          "davisville_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "don_mills_station",
+        "name":  "Don Mills",
+        "display_name":  "Don Mills (4)",
+        "lines":  [
+                      "4"
+                  ],
+        "stop_uris":  [
+                          "don_mills_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "donlands_station",
+        "name":  "Donlands",
+        "display_name":  "Donlands (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "donlands_station_eastbound_platform",
+                          "donlands_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "downsview_station",
+        "name":  "Downsview",
+        "display_name":  "Downsview (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "downsview_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "dufferin_station",
+        "name":  "Dufferin",
+        "display_name":  "Dufferin (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "dufferin_station_eastbound_platform",
+                          "dufferin_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "dundas_station",
+        "name":  "Dundas",
+        "display_name":  "Dundas (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "dundas_station_northbound_platform",
+                          "dundas_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "dundas_west_station",
+        "name":  "Dundas West",
+        "display_name":  "Dundas West (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "dundas_west_station_eastbound_platform",
+                          "dundas_west_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "dupont_station",
+        "name":  "Dupont",
+        "display_name":  "Dupont (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "dupont_station_northbound_platform",
+                          "dupont_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "eglinton_station",
+        "name":  "Eglinton",
+        "display_name":  "Eglinton (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "eglinton_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "eglinton_west_station",
+        "name":  "Eglinton West",
+        "display_name":  "Eglinton West (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "eglinton_west_station_northbound_platform",
+                          "eglinton_west_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "ellesmere_station",
+        "name":  "Ellesmere",
+        "display_name":  "Ellesmere (3)",
+        "lines":  [
+                      "3"
+                  ],
+        "stop_uris":  [
+                          "ellesmere_station"
+                      ]
+    },
+    {
+        "id":  "finch_station",
+        "name":  "Finch",
+        "display_name":  "Finch (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "finch_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "glencairn_station",
+        "name":  "Glencairn",
+        "display_name":  "Glencairn (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "glencairn_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "greenwood_station",
+        "name":  "Greenwood",
+        "display_name":  "Greenwood (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "greenwood_station_eastbound_platform",
+                          "greenwood_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "high_park_station",
+        "name":  "High Park",
+        "display_name":  "High Park (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "high_park_station_eastbound_platform",
+                          "high_park_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "islington_station",
+        "name":  "Islington",
+        "display_name":  "Islington (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "islington_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "jane_station",
+        "name":  "Jane",
+        "display_name":  "Jane (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "jane_station_eastbound_platform",
+                          "jane_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "keele_station",
+        "name":  "Keele",
+        "display_name":  "Keele (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "keele_station_eastbound_platform",
+                          "keele_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "kennedy_station",
+        "name":  "Kennedy",
+        "display_name":  "Kennedy (2,3)",
+        "lines":  [
+                      "2",
+                      "3"
+                  ],
+        "stop_uris":  [
+                          "kennedy_station_rapid_transit",
+                          "kennedy_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "king_station",
+        "name":  "King",
+        "display_name":  "King (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "king_station_northbound_platform",
+                          "king_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "kipling_station",
+        "name":  "Kipling",
+        "display_name":  "Kipling (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "kipling_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "lansdowne_station",
+        "name":  "Lansdowne",
+        "display_name":  "Lansdowne (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "lansdowne_station_eastbound_platform",
+                          "lansdowne_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "lawrence_station",
+        "name":  "Lawrence",
+        "display_name":  "Lawrence (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "lawrence_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "lawrence_east_station",
+        "name":  "Lawrence East",
+        "display_name":  "Lawrence East (3)",
+        "lines":  [
+                      "3"
+                  ],
+        "stop_uris":  [
+                          "lawrence_east_station"
+                      ]
+    },
+    {
+        "id":  "lawrence_west_station",
+        "name":  "Lawrence West",
+        "display_name":  "Lawrence West (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "lawrence_west_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "leslie_station",
+        "name":  "Leslie",
+        "display_name":  "Leslie (4)",
+        "lines":  [
+                      "4"
+                  ],
+        "stop_uris":  [
+                          "leslie_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "main_street_station",
+        "name":  "Main Street",
+        "display_name":  "Main Street (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "main_street_station_eastbound_platform",
+                          "main_street_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "mccowan_station",
+        "name":  "Mccowan",
+        "display_name":  "Mccowan (3)",
+        "lines":  [
+                      "3"
+                  ],
+        "stop_uris":  [
+                          "mccowan_station"
+                      ]
+    },
+    {
+        "id":  "midland_station",
+        "name":  "Midland",
+        "display_name":  "Midland (3)",
+        "lines":  [
+                      "3"
+                  ],
+        "stop_uris":  [
+                          "midland_station"
+                      ]
+    },
+    {
+        "id":  "museum_station",
+        "name":  "Museum",
+        "display_name":  "Museum (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "museum_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "north_york_centre_station",
+        "name":  "North York Centre",
+        "display_name":  "North York Centre (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "north_york_centre_station_northbound_platform",
+                          "north_york_centre_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "old_mill_station",
+        "name":  "Old Mill",
+        "display_name":  "Old Mill (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "old_mill_station_eastbound_platform",
+                          "old_mill_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "osgoode_station",
+        "name":  "Osgoode",
+        "display_name":  "Osgoode (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "osgoode_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "ossington_station",
+        "name":  "Ossington",
+        "display_name":  "Ossington (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "ossington_station_eastbound_platform",
+                          "ossington_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "pape_station",
+        "name":  "Pape",
+        "display_name":  "Pape (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "pape_station_eastbound_platform",
+                          "pape_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "queen_station",
+        "name":  "Queen",
+        "display_name":  "Queen (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "queen_station_northbound_platform",
+                          "queen_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "queens_park_station",
+        "name":  "Queens Park",
+        "display_name":  "Queens Park (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "queens_park_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "rosedale_station",
+        "name":  "Rosedale",
+        "display_name":  "Rosedale (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "rosedale_station_northbound_platform",
+                          "rosedale_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "royal_york_station",
+        "name":  "Royal York",
+        "display_name":  "Royal York (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "royal_york_station_eastbound_platform",
+                          "royal_york_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "runnymede_station",
+        "name":  "Runnymede",
+        "display_name":  "Runnymede (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "runnymede_station_eastbound_platform",
+                          "runnymede_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "scarborough_centre_station",
+        "name":  "Scarborough Centre",
+        "display_name":  "Scarborough Centre (3)",
+        "lines":  [
+                      "3"
+                  ],
+        "stop_uris":  [
+                          "scarborough_centre_station"
+                      ]
+    },
+    {
+        "id":  "sheppard-yonge_station",
+        "name":  "Sheppard-Yonge",
+        "display_name":  "Sheppard-Yonge (1,4)",
+        "lines":  [
+                      "1",
+                      "4"
+                  ],
+        "stop_uris":  [
+                          "sheppard-yonge_station_eastbound_platform",
+                          "sheppard-yonge_station_north-south_platform"
+                      ]
+    },
+    {
+        "id":  "sherbourne_station",
+        "name":  "Sherbourne",
+        "display_name":  "Sherbourne (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "sherbourne_station_eastbound_platform",
+                          "sherbourne_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "spadina_station",
+        "name":  "Spadina",
+        "display_name":  "Spadina (1,2)",
+        "lines":  [
+                      "1",
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "spadina_station_eastbound_platform",
+                          "spadina_station_northbound_platform",
+                          "spadina_station_southbound_platform",
+                          "spadina_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "st_andrew_station",
+        "name":  "St Andrew",
+        "display_name":  "St Andrew (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "st_andrew_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "st_clair_station",
+        "name":  "St Clair",
+        "display_name":  "St Clair (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "st_clair_station_northbound_platform",
+                          "st_clair_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "st_clair_west_station",
+        "name":  "St Clair West",
+        "display_name":  "St Clair West (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "st_clair_west_station_northbound_platform",
+                          "st_clair_west_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "st_george_station",
+        "name":  "St George",
+        "display_name":  "St George (1,2)",
+        "lines":  [
+                      "1",
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "st_george_station_east-west_platform",
+                          "st_george_station_north-south_platform"
+                      ]
+    },
+    {
+        "id":  "st_patrick_station",
+        "name":  "St Patrick",
+        "display_name":  "St Patrick (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "st_patrick_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "summerhill_station",
+        "name":  "Summerhill",
+        "display_name":  "Summerhill (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "summerhill_station_northbound_platform",
+                          "summerhill_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "union_station",
+        "name":  "Union",
+        "display_name":  "Union (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "union_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "victoria_park_station",
+        "name":  "Victoria Park",
+        "display_name":  "Victoria Park (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "victoria_park_station_eastbound_platform",
+                          "victoria_park_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "warden_station",
+        "name":  "Warden",
+        "display_name":  "Warden (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "warden_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "wellesley_station",
+        "name":  "Wellesley",
+        "display_name":  "Wellesley (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "wellesley_station_northbound_platform",
+                          "wellesley_station_southbound_platform"
+                      ]
+    },
+    {
+        "id":  "wilson_station",
+        "name":  "Wilson",
+        "display_name":  "Wilson (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "wilson_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "woodbine_station",
+        "name":  "Woodbine",
+        "display_name":  "Woodbine (2)",
+        "lines":  [
+                      "2"
+                  ],
+        "stop_uris":  [
+                          "woodbine_station_eastbound_platform",
+                          "woodbine_station_westbound_platform"
+                      ]
+    },
+    {
+        "id":  "york_mills_station",
+        "name":  "York Mills",
+        "display_name":  "York Mills (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "york_mills_station_subway_platform"
+                      ]
+    },
+    {
+        "id":  "yorkdale_station",
+        "name":  "Yorkdale",
+        "display_name":  "Yorkdale (1)",
+        "lines":  [
+                      "1"
+                  ],
+        "stop_uris":  [
+                          "yorkdale_station_subway_platform"
+                      ]
+    }
+]

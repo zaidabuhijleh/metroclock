@@ -16,7 +16,7 @@ FONT_PATH_TALL = "assets/fonts/6x10.bdf"
 FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
 
 # --- WMATA (DC Metro) ---
-METRO_SYSTEM = "wmata"  # "wmata" or "nyc"
+METRO_SYSTEM = "wmata"  # "wmata", "nyc", or "ttc"
 WMATA_API_KEY = ""
 WMATA_STATION_CODE = "E05" 
 WMATA_LINE_FILTER = ""  # CSV of line codes; empty = show all lines at station
@@ -37,6 +37,12 @@ STATION_SHORT_NAMES = {
 NYC_MTA_FEED_URL = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
 NYC_STOP_IDS = "127N,127S"  # CSV; example is Times Sq-42 St (1/2/3)
 NYC_LINE_FILTER = ""  # CSV of line codes; empty = show all lines at station
+
+# --- Toronto Subway (TTC / MyTTC) ---
+TTC_STATION_ID = "queens_park_station"
+TTC_STOP_URIS = "queens_park_station_subway_platform"  # CSV of platform stop URIs
+TTC_LINE_FILTER = ""  # CSV of line codes (1,2,3,4); empty = show all lines
+
 METRO_MIN_ARRIVAL_MINUTES = 0
 METRO_MAX_ARRIVAL_MINUTES = 20
 
