@@ -104,8 +104,10 @@ class MetroWidget(Widget):
             self._metro_system(),
             str(getattr(config, "WMATA_STATION_CODE", "") or "").strip().upper(),
             str(getattr(config, "WMATA_API_KEY", "") or "").strip(),
+            tuple(sorted(self._wmata_line_filter())),
             tuple(self._nyc_feed_urls()),
             tuple(sorted(self._nyc_stop_ids())),
+            tuple(sorted(self._nyc_line_filter())),
             self._arrival_window(),
         )
 
@@ -146,6 +148,9 @@ class MetroWidget(Widget):
             dest = str(train.get("Destination", "") or "").strip()
             if not line or line == "--":
                 continue
+            line = line[:2]
+            if not self._is_wmata_line_enabled(line):
+                continue
             if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
                 continue
 
@@ -158,7 +163,7 @@ class MetroWidget(Widget):
 
             valid.append(
                 {
-                    "Line": line[:2],
+                    "Line": line,
                     "Destination": dest,
                     "Min": mins,
                 }
@@ -200,6 +205,8 @@ class MetroWidget(Widget):
                 trip_update = entity.trip_update
                 route = self._normalize_nyc_route_id(getattr(trip_update.trip, "route_id", ""))
                 if not route:
+                    continue
+                if not self._is_nyc_line_enabled(route):
                     continue
 
                 trip_id = str(getattr(trip_update.trip, "trip_id", "") or "")
@@ -280,6 +287,41 @@ class MetroWidget(Widget):
             return int(value)
         except Exception:
             return fallback
+
+    def _parse_line_filter(self, raw):
+        lines = set()
+        for part in str(raw or "").split(","):
+            token = self._normalize_nyc_route_id(part)
+            if token:
+                lines.add(token)
+        return lines
+
+    def _wmata_line_filter(self):
+        return self._parse_line_filter(getattr(config, "WMATA_LINE_FILTER", ""))
+
+    def _nyc_line_filter(self):
+        return self._parse_line_filter(getattr(config, "NYC_LINE_FILTER", ""))
+
+    def _is_wmata_line_enabled(self, line):
+        selected = self._wmata_line_filter()
+        if not selected:
+            return True
+        return str(line or "").strip().upper() in selected
+
+    def _is_nyc_line_enabled(self, route):
+        selected = self._nyc_line_filter()
+        if not selected:
+            return True
+
+        normalized_route = self._normalize_nyc_route_id(route)
+        if normalized_route in selected:
+            return True
+
+        # Allow generic "S" filter to include shuttle feed variants like GS/FS.
+        if normalized_route in {"GS", "FS"} and "S" in selected:
+            return True
+
+        return False
 
     def _load_nyc_stop_name_map(self):
         path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web", "nyc_stations.json"))
