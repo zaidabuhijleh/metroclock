@@ -16,6 +16,7 @@ FONT_PATH_TALL = "assets/fonts/6x10.bdf"
 FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
 
 # --- WMATA (DC Metro) ---
+METRO_SYSTEM = "wmata"  # "wmata" or "nyc"
 WMATA_API_KEY = ""
 WMATA_STATION_CODE = "E05" 
 STATION_SHORT_NAMES = {
@@ -29,6 +30,11 @@ STATION_SHORT_NAMES = {
     "Fort Totten": "FtTottn",
     "No Passenger": "NoPsngr"
 }
+
+# --- NYC Subway (MTA GTFS-RT) ---
+# Feed docs: https://www.mta.info/developers
+NYC_MTA_FEED_URL = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
+NYC_STOP_IDS = "127N,127S"  # CSV; example is Times Sq-42 St (1/2/3)
 
 # --- WEATHER ---
 OPENWEATHER_API_KEY = "" 
@@ -53,15 +59,6 @@ COLOR_WHITE = (255, 255, 255)
 COLOR_GREY = (100, 100, 100)
 COLOR_BLUE = (0, 0, 255)
 COLOR_YELLOW = (255, 255, 0)
-
-LINE_COLORS = {
-    "GR": (0, 255, 0),
-    "YL": (255, 255, 0),
-    "RD": (255, 0, 0),
-    "BL": (0, 0, 255),
-    "OR": (255, 165, 0),
-    "SV": (220, 220, 220)
-}
 
 DISPLAY_MODE = "metro"
 WEB_SERVER_PORT = 80

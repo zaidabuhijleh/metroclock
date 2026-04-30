@@ -1,6 +1,7 @@
 requests
 Pillow
 flask
+gtfs-realtime-bindings
 
 # rgbmatrix is NOT installed via pip.
 # Install from source on the Pi:
