@@ -205,6 +205,9 @@
     #station-search {
       margin-bottom: 8px;
     }
+    #nyc-station-search {
+      margin-bottom: 8px;
+    }
     .station-list {
       max-height: 200px;
       overflow-y: auto;
@@ -412,12 +415,15 @@
       <input type="password" id="wmata-api-key" placeholder="Enter key (leave blank to keep current)" autocomplete="new-password" />
     </div>
     <div class="card" id="nyc-settings" style="display:none;">
-      <div class="card-title">NYC GTFS-RT</div>
-      <label>MTA Feed URL</label>
+      <div class="card-title">NYC Subway Station</div>
+      <input type="text" id="nyc-station-search" placeholder="Search stations..." oninput="filterNYCStations(this.value)" />
+      <div class="station-list" id="nyc-station-list"></div>
+      <input type="hidden" id="nyc-station-id" />
+      <label>MTA Feed URL (auto-filled)</label>
       <input type="text" id="nyc-feed-url" placeholder="https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs" />
-      <label>Stop IDs (CSV)</label>
+      <label>Stop IDs (CSV, auto-filled)</label>
       <input type="text" id="nyc-stop-ids" placeholder="e.g. 127N,127S" />
-      <p class="hint">Use platform stop IDs (N/S suffix). Example: 127N,127S for Times Sq-42 St (1/2/3). MTA says API keys are no longer required for these feeds.</p>
+      <p class="hint">Pick a station from the list to auto-fill stop IDs and feed URL. MTA says API keys are no longer required for these feeds.</p>
     </div>
     <button class="btn btn-primary" onclick="saveMetro()">Save</button>
   </div>
@@ -584,7 +590,7 @@
 <div id="toast-container"></div>
 
 <script>
-// ── WMATA Stations ─────────────────────────────────────────────────────────
+// ── Metro Stations ─────────────────────────────────────────────────────────
 const STATIONS = [
   {code:"A01",name:"Metro Center",lines:["RD","OR","SV","BL"]},
   {code:"A02",name:"Farragut North",lines:["RD"]},
@@ -694,6 +700,20 @@ const LINE_COLORS = {
   GR: "#43a047", BL: "#1e88e5", SV: "#9e9e9e"
 };
 
+const NYC_LINE_COLORS = {
+  "1": "#EE352E", "2": "#EE352E", "3": "#EE352E",
+  "4": "#00933C", "5": "#00933C", "6": "#00933C",
+  "7": "#B933AD",
+  A: "#0039A6", C: "#0039A6", E: "#0039A6",
+  B: "#FF6319", D: "#FF6319", F: "#FF6319", M: "#FF6319",
+  G: "#6CBE45",
+  J: "#996633", Z: "#996633",
+  L: "#A7A9AC",
+  N: "#FCCC0A", Q: "#FCCC0A", R: "#FCCC0A", W: "#FCCC0A",
+  S: "#808183", GS: "#808183", FS: "#808183",
+  SI: "#0039A6"
+};
+
 const NBA_TEAMS = [
   {abbr:"ATL", name:"Hawks",         color:"#E03A3E"},
   {abbr:"BOS", name:"Celtics",       color:"#007A33"},
@@ -728,6 +748,8 @@ const NBA_TEAMS = [
 ];
 
 let selectedStation = null;
+let selectedNYCStation = null;
+let nycStations = [];
 let selectedUnit = "metric";
 let selectedTeams = new Set();
 let selectedSportsView = "all_live";
@@ -747,6 +769,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   renderStations(STATIONS);
+  await loadNYCStations();
   try {
     const res = await fetch("/api/status");
     const data = await res.json();
@@ -773,6 +796,7 @@ async function init() {
     }
     document.getElementById("nyc-feed-url").value = data.NYC_MTA_FEED_URL || "";
     document.getElementById("nyc-stop-ids").value = data.NYC_STOP_IDS || "";
+    syncNYCSelectionFromStopIds(data.NYC_STOP_IDS || "");
 
     // Weather
     if (data.OPENWEATHER_CITY_ID) {
@@ -838,12 +862,114 @@ function filterStations(q) {
 function selectStation(code, scroll = true) {
   selectedStation = code;
   document.getElementById("wmata-station-code").value = code;
-  document.querySelectorAll(".station-item").forEach(el => {
+  document.querySelectorAll("#station-list .station-item").forEach(el => {
     el.classList.toggle("selected", el.textContent.includes(code));
   });
   if (scroll) {
-    const sel = document.querySelector(".station-item.selected");
+    const sel = document.querySelector("#station-list .station-item.selected");
     if (sel) sel.scrollIntoView({block: "nearest"});
+  }
+}
+
+async function loadNYCStations() {
+  const listEl = document.getElementById("nyc-station-list");
+  if (!listEl) return;
+
+  try {
+    const res = await fetch("/nyc_stations.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    nycStations = Array.isArray(data) ? data : [];
+    renderNYCStations(nycStations);
+  } catch (err) {
+    nycStations = [];
+    listEl.innerHTML = `<div class="station-item"><span style="color:var(--text-dim);">Unable to load NYC stations</span></div>`;
+  }
+}
+
+function renderNYCStations(list) {
+  const el = document.getElementById("nyc-station-list");
+  if (!el) return;
+
+  if (!Array.isArray(list) || list.length === 0) {
+    el.innerHTML = `<div class="station-item"><span style="color:var(--text-dim);">No stations found</span></div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(s => {
+    const lines = Array.isArray(s.lines) ? s.lines : [];
+    const dots = lines.slice(0, 6).map(l => {
+      const color = NYC_LINE_COLORS[l] || "#9e9e9e";
+      return `<span class="dot" style="background:${color}" title="${l}"></span>`;
+    }).join("");
+    const stopCode = String((s.stop_ids && s.stop_ids[0]) || s.id || "").replace(/[NS]$/, "");
+    const selected = String(s.id) === String(selectedNYCStation) ? " selected" : "";
+    const name = s.display_name || s.name || "Unknown station";
+    return `
+      <div class="station-item${selected}" onclick="selectNYCStation('${String(s.id)}')">
+        <div class="line-dots">${dots}</div>
+        <span>${name}</span>
+        <span style="margin-left:auto;color:var(--text-dim);font-size:11px;">${stopCode}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function filterNYCStations(query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) {
+    renderNYCStations(nycStations);
+    return;
+  }
+  const filtered = nycStations.filter(s => {
+    const id = String(s.id || "").toLowerCase();
+    const name = String(s.name || "").toLowerCase();
+    const display = String(s.display_name || "").toLowerCase();
+    const lines = Array.isArray(s.lines) ? s.lines.join(",").toLowerCase() : "";
+    const stops = Array.isArray(s.stop_ids) ? s.stop_ids.join(",").toLowerCase() : "";
+    return id.includes(q) || name.includes(q) || display.includes(q) || lines.includes(q) || stops.includes(q);
+  });
+  renderNYCStations(filtered);
+}
+
+function syncNYCSelectionFromStopIds(stopIdsCsv) {
+  const raw = String(stopIdsCsv || "");
+  const stopSet = new Set(
+    raw.split(",").map(s => s.trim().toUpperCase()).filter(Boolean)
+  );
+  if (!stopSet.size || !nycStations.length) return;
+
+  const match = nycStations.find(st =>
+    Array.isArray(st.stop_ids) && st.stop_ids.some(id => stopSet.has(String(id).toUpperCase()))
+  );
+  if (!match) return;
+
+  selectedNYCStation = String(match.id);
+  document.getElementById("nyc-station-id").value = selectedNYCStation;
+  filterNYCStations(document.getElementById("nyc-station-search").value);
+}
+
+function selectNYCStation(stationId, scroll = true) {
+  const station = nycStations.find(s => String(s.id) === String(stationId));
+  if (!station) return;
+
+  selectedNYCStation = String(station.id);
+  document.getElementById("nyc-station-id").value = selectedNYCStation;
+
+  const stopIds = Array.isArray(station.stop_ids) ? station.stop_ids : [];
+  if (stopIds.length) {
+    document.getElementById("nyc-stop-ids").value = stopIds.join(",");
+  }
+
+  const feeds = Array.isArray(station.feed_urls) ? station.feed_urls : [];
+  if (feeds.length) {
+    document.getElementById("nyc-feed-url").value = feeds[0];
+  }
+
+  filterNYCStations(document.getElementById("nyc-station-search").value);
+  if (scroll) {
+    const sel = document.querySelector("#nyc-station-list .station-item.selected");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
   }
 }
 
@@ -861,6 +987,10 @@ function setMetroSystem(system, toastOnChange = true) {
   document.getElementById("wmata-settings").style.display = showWMATA ? "" : "none";
   document.getElementById("wmata-key-card").style.display = showWMATA ? "" : "none";
   document.getElementById("nyc-settings").style.display = showWMATA ? "none" : "";
+
+  if (!showWMATA && nycStations.length === 0) {
+    loadNYCStations();
+  }
 
   if (toastOnChange) {
     toast(showWMATA ? "Metro source: WMATA" : "Metro source: NYC");
