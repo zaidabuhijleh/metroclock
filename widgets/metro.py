@@ -121,6 +121,7 @@ class MetroWidget(Widget):
             tuple(sorted(self._ttc_stop_uris())),
             tuple(sorted(self._ttc_line_filter())),
             self._arrival_window(),
+            self._metro_page_transition(),
         )
 
     def _invalidate_cached_rows(self, now):
@@ -133,6 +134,10 @@ class MetroWidget(Widget):
         if value in {"nyc", "ttc"}:
             return value
         return "wmata"
+
+    def _metro_page_transition(self):
+        value = str(getattr(config, "METRO_PAGE_TRANSITION", "slide") or "slide").strip().lower()
+        return "cut" if value == "cut" else "slide"
 
     def _fetch_wmata(self):
         headers = {}
@@ -753,14 +758,11 @@ class MetroWidget(Widget):
         # Handle cycling.
         now = time.time()
         time_on_page = now - self.page_start_time
-        transition_duration = 0.28
+        transition_style = self._metro_page_transition()
+        transition_duration = 0.35
         page_step = 2 if len(self.trains) > 1 else 1
-        can_slide = len(self.trains) > page_step
+        can_slide = transition_style == "slide" and len(self.trains) > page_step
         rows_to_draw = []
-
-        if not can_slide and time_on_page > page_duration:
-            self.page_start_time = now
-            time_on_page = 0
 
         if can_slide and time_on_page > page_duration:
             transition_elapsed = time_on_page - page_duration
@@ -785,6 +787,13 @@ class MetroWidget(Widget):
                 if len(next_pair) > 1:
                     rows_to_draw.append((next_pair[1], 48 - shift, 0.0))
         else:
+            if time_on_page > page_duration:
+                if len(self.trains) > page_step:
+                    self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+                self.page_start_time = now
+                time_on_page = 0
+                current_pair = self._pair_for_index(self.scroll_index)
+
             rows_to_draw = [
                 (current_pair[0], 0, time_on_page),
             ]

@@ -487,6 +487,14 @@
       </div>
       <p class="hint">Only trains within this inclusive range are shown. Default is 0 to 20 minutes.</p>
     </div>
+    <div class="card">
+      <div class="card-title">Page Transition</div>
+      <div class="toggle-row">
+        <button class="unit-btn" data-metro-transition="slide" onclick="setMetroTransition('slide')">Slide</button>
+        <button class="unit-btn" data-metro-transition="cut" onclick="setMetroTransition('cut')">Cut</button>
+      </div>
+      <p class="hint">Slide animates rows to the next page. Cut switches immediately.</p>
+    </div>
     <button class="btn btn-primary" onclick="saveMetro()">Save</button>
   </div>
 
@@ -829,6 +837,7 @@ let selectedMetroSystem = "wmata";
 let selectedWmataLineFilters = new Set();
 let selectedNycLineFilters = new Set();
 let selectedTtcLineFilters = new Set();
+let selectedMetroTransition = "slide";
 
 function parseCsvSet(raw) {
   return new Set(
@@ -971,6 +980,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 async function init() {
   renderStations(STATIONS);
   await Promise.all([loadNYCStations(), loadTTCStations()]);
+  setMetroTransition(selectedMetroTransition, false);
   try {
     const res = await fetch("/api/status");
     const data = await res.json();
@@ -996,6 +1006,7 @@ async function init() {
     selectedWmataLineFilters = parseCsvSet(data.WMATA_LINE_FILTER);
     selectedNycLineFilters = parseCsvSet(data.NYC_LINE_FILTER);
     selectedTtcLineFilters = parseCsvSet(data.TTC_LINE_FILTER);
+    setMetroTransition(data.METRO_PAGE_TRANSITION, false);
     setMetroSystem(selectedMetroSystem, false);
     if (data.WMATA_STATION_CODE) {
       selectStation(data.WMATA_STATION_CODE, false);
@@ -1315,6 +1326,20 @@ function setActiveMetroSystem(system) {
   });
 }
 
+function setActiveMetroTransition(transitionStyle) {
+  document.querySelectorAll("[data-metro-transition]").forEach(b => {
+    b.classList.toggle("active", b.dataset.metroTransition === transitionStyle);
+  });
+}
+
+function setMetroTransition(transitionStyle, toastOnChange = true) {
+  selectedMetroTransition = transitionStyle === "cut" ? "cut" : "slide";
+  setActiveMetroTransition(selectedMetroTransition);
+  if (toastOnChange) {
+    toast("Transition: " + (selectedMetroTransition === "slide" ? "Slide" : "Cut"));
+  }
+}
+
 function setMetroSystem(system, toastOnChange = true) {
   if (system === "nyc" || system === "ttc") selectedMetroSystem = system;
   else selectedMetroSystem = "wmata";
@@ -1419,7 +1444,8 @@ async function saveMetro() {
   const payload = {
     METRO_SYSTEM: selectedMetroSystem,
     METRO_MIN_ARRIVAL_MINUTES: minMinutes,
-    METRO_MAX_ARRIVAL_MINUTES: maxMinutes
+    METRO_MAX_ARRIVAL_MINUTES: maxMinutes,
+    METRO_PAGE_TRANSITION: selectedMetroTransition
   };
 
   if (selectedMetroSystem === "wmata") {

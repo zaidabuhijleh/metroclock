@@ -45,6 +45,7 @@ TTC_LINE_FILTER = ""  # CSV of line codes (1,2,3,4); empty = show all lines
 
 METRO_MIN_ARRIVAL_MINUTES = 0
 METRO_MAX_ARRIVAL_MINUTES = 20
+METRO_PAGE_TRANSITION = "slide"  # "slide" or "cut"
 
 # --- WEATHER ---
 OPENWEATHER_API_KEY = "" 
