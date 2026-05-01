@@ -825,6 +825,13 @@ class MetroWidget(Widget):
         start_x = x + ((9 - glyph_w) // 2) - min_x
         start_y = y + ((9 - glyph_h) // 2) - min_y
 
+        # Optical centering: some glyphs (especially numeric routes) are
+        # geometrically centered by bounds but still appear right-heavy.
+        avg_x = sum(px for px, _ in pixels) / float(len(pixels))
+        desired_center_x = x + 4
+        current_center_x = start_x + avg_x
+        start_x += int(round(desired_center_x - current_center_x))
+
         for px, py in pixels:
             draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
 
@@ -845,11 +852,7 @@ class MetroWidget(Widget):
         glyph = (text or "?").upper()
         letter_pixels = BITMAP_LETTERS.get(glyph)
         if letter_pixels:
-            # Keep letter placement identical to the original WMATA-style badges.
-            start_x = x + 3
-            start_y = y + 2
-            for px, py in letter_pixels:
-                draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
+            self._draw_bitmap_glyph(draw, x, y, letter_pixels)
             return
 
         # NYC numeric routes render cleaner with a dedicated bitmap than the tiny fallback font.
