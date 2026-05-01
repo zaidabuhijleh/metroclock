@@ -211,6 +211,9 @@
     #nyc-station-search {
       margin-bottom: 8px;
     }
+    #ttc-station-search {
+      margin-bottom: 8px;
+    }
     .station-list {
       max-height: 200px;
       overflow-y: auto;
@@ -436,6 +439,7 @@
       <div class="toggle-row">
         <button class="unit-btn" data-metro-system="wmata" onclick="setMetroSystem('wmata')">WMATA (DC)</button>
         <button class="unit-btn" data-metro-system="nyc" onclick="setMetroSystem('nyc')">NYC Subway</button>
+        <button class="unit-btn" data-metro-system="ttc" onclick="setMetroSystem('ttc')">Toronto TTC</button>
       </div>
     </div>
     <div class="card" id="wmata-settings">
@@ -460,6 +464,15 @@
       <input type="text" id="nyc-stop-ids" placeholder="e.g. 127N,127S" />
       <p class="hint">Pick a station from the list to auto-fill stop IDs and all required feed URLs. MTA says API keys are no longer required for these feeds.</p>
     </div>
+    <div class="card" id="ttc-settings" style="display:none;">
+      <div class="card-title">Toronto TTC Subway Station</div>
+      <input type="text" id="ttc-station-search" placeholder="Search stations..." oninput="filterTTCStations(this.value)" />
+      <div class="station-list" id="ttc-station-list"></div>
+      <input type="hidden" id="ttc-station-id" />
+      <label>Stop URI(s) (CSV, auto-filled)</label>
+      <input type="text" id="ttc-stop-uris" placeholder="Comma-separated TTC stop URIs" />
+      <p class="hint">Pick a TTC station to auto-fill platform stop URIs. MyTTC does not require an API key.</p>
+    </div>
     <div class="card">
       <div class="card-title">Line Filter</div>
       <div id="metro-line-filter-list" class="line-filter-grid"></div>
@@ -473,6 +486,14 @@
         <input type="number" id="metro-max-minutes" min="0" max="240" step="1" placeholder="20" />
       </div>
       <p class="hint">Only trains within this inclusive range are shown. Default is 0 to 20 minutes.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Page Transition</div>
+      <div class="toggle-row">
+        <button class="unit-btn" data-metro-transition="slide" onclick="setMetroTransition('slide')">Slide</button>
+        <button class="unit-btn" data-metro-transition="cut" onclick="setMetroTransition('cut')">Cut</button>
+      </div>
+      <p class="hint">Slide animates rows to the next page. Cut switches immediately.</p>
     </div>
     <button class="btn btn-primary" onclick="saveMetro()">Save</button>
   </div>
@@ -684,7 +705,7 @@ const STATIONS = [
   {code:"C15",name:"Huntington",lines:["YL"]},
   {code:"D01",name:"Federal Triangle",lines:["OR","SV","BL"]},
   {code:"D02",name:"Smithsonian",lines:["OR","SV","BL"]},
-  {code:"D03",name:"L'Enfant Plaza",lines:["OR","SV","BL","GR","YL"]},
+  {code:"D03",name:"L'Enfant Plaza (Upper)",lines:["OR","SV","BL"]},
   {code:"D04",name:"Federal Center SW",lines:["OR","SV","BL"]},
   {code:"D05",name:"Capitol South",lines:["OR","SV","BL"]},
   {code:"D06",name:"Eastern Market",lines:["OR","SV","BL"]},
@@ -707,7 +728,7 @@ const STATIONS = [
   {code:"E10",name:"U Street",lines:["GR","YL"]},
   {code:"F01",name:"Gallery Pl-Chinatown",lines:["GR","YL"]},
   {code:"F02",name:"Archives",lines:["GR","YL"]},
-  {code:"F03",name:"L'Enfant Plaza",lines:["GR","YL"]},
+  {code:"F03",name:"L'Enfant Plaza (Lower)",lines:["GR","YL"]},
   {code:"F04",name:"Waterfront",lines:["GR"]},
   {code:"F05",name:"Navy Yard-Ballpark",lines:["GR"]},
   {code:"F06",name:"Anacostia",lines:["GR"]},
@@ -744,9 +765,48 @@ const STATIONS = [
   {code:"N12",name:"Ashburn",lines:["SV"]},
 ];
 
+function normalizeWmataGroupName(name) {
+  const raw = String(name || "").trim();
+  // Collapse UI suffixes like "(Upper)/(Lower)" so multi-platform stations group together.
+  return raw.replace(/\s+\((upper|lower)\)$/i, "").trim();
+}
+
+function buildWmataStationGroups(stations) {
+  const grouped = new Map();
+  for (const station of stations) {
+    if (!station || !station.code) continue;
+    const displayName = normalizeWmataGroupName(station.name);
+    const key = displayName.toLowerCase();
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        name: displayName,
+        codes: [],
+        lines: new Set(),
+      });
+    }
+    const group = grouped.get(key);
+    group.codes.push(String(station.code).toUpperCase());
+    for (const line of (Array.isArray(station.lines) ? station.lines : [])) {
+      group.lines.add(String(line).toUpperCase());
+    }
+  }
+
+  return Array.from(grouped.values())
+    .map(group => ({
+      key: group.key,
+      name: group.name,
+      codes: Array.from(new Set(group.codes)).sort(),
+      lines: Array.from(group.lines).sort(),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+const WMATA_STATION_GROUPS = buildWmataStationGroups(STATIONS);
+
 const LINE_COLORS = {
-  RD: "#e53935", OR: "#f57c00", YL: "#fdd835",
-  GR: "#43a047", BL: "#1e88e5", SV: "#9e9e9e"
+  RD: "#e53935", OR: "#f57c00", YL: "#e0d028",
+  GR: "#43a047", BL: "#1e88e5", SV: "#787878"
 };
 
 const NYC_LINE_COLORS = {
@@ -761,6 +821,13 @@ const NYC_LINE_COLORS = {
   N: "#FCCC0A", Q: "#FCCC0A", R: "#FCCC0A", W: "#FCCC0A",
   S: "#808183", GS: "#808183", FS: "#808183",
   SI: "#0039A6"
+};
+
+const TTC_LINE_COLORS = {
+  "1": "#D5C82B",
+  "2": "#008000",
+  "3": "#0072CE",
+  "4": "#B258A5"
 };
 
 const NBA_TEAMS = [
@@ -797,8 +864,11 @@ const NBA_TEAMS = [
 ];
 
 let selectedStation = null;
+let selectedWmataGroupKey = null;
 let selectedNYCStation = null;
+let selectedTTCStation = null;
 let nycStations = [];
+let ttcStations = [];
 let selectedUnit = "metric";
 let selectedTeams = new Set();
 let selectedSportsView = "all_live";
@@ -806,6 +876,8 @@ let selectedSportsLiveFocus = true;
 let selectedMetroSystem = "wmata";
 let selectedWmataLineFilters = new Set();
 let selectedNycLineFilters = new Set();
+let selectedTtcLineFilters = new Set();
+let selectedMetroTransition = "slide";
 
 function parseCsvSet(raw) {
   return new Set(
@@ -824,17 +896,70 @@ function serializeCsvSet(setObj) {
     .join(",");
 }
 
+function normalizeWmataCodes(value) {
+  return Array.from(
+    new Set(
+      String(value || "")
+        .split(",")
+        .map(s => s.trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ).sort();
+}
+
+function normalizeTokenArray(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map(s => String(s || "").trim().toUpperCase())
+      .filter(Boolean);
+  }
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map(s => s.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function normalizeStringArray(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map(s => String(s || "").trim())
+      .filter(Boolean);
+  }
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
 function getCurrentLineFilterSet() {
-  return selectedMetroSystem === "wmata" ? selectedWmataLineFilters : selectedNycLineFilters;
+  if (selectedMetroSystem === "wmata") return selectedWmataLineFilters;
+  if (selectedMetroSystem === "nyc") return selectedNycLineFilters;
+  return selectedTtcLineFilters;
 }
 
 function getCurrentStationLines() {
   if (selectedMetroSystem === "wmata") {
-    const station = STATIONS.find(s => s.code === selectedStation);
-    return station && Array.isArray(station.lines) ? station.lines.map(l => String(l).toUpperCase()) : [];
+    const selectedCodes = new Set(normalizeWmataCodes(selectedStation));
+    if (!selectedCodes.size) return [];
+    const lines = new Set();
+    for (const station of STATIONS) {
+      if (!selectedCodes.has(String(station.code || "").toUpperCase())) continue;
+      for (const line of (Array.isArray(station.lines) ? station.lines : [])) {
+        lines.add(String(line).toUpperCase());
+      }
+    }
+    return Array.from(lines).sort();
   }
-  const station = nycStations.find(s => String(s.id) === String(selectedNYCStation));
-  return station && Array.isArray(station.lines) ? station.lines.map(l => String(l).toUpperCase()) : [];
+  if (selectedMetroSystem === "nyc") {
+    const station = nycStations.find(s => String(s.id) === String(selectedNYCStation));
+    return station ? normalizeTokenArray(station.lines) : [];
+  }
+  const station = ttcStations.find(s => String(s.id) === String(selectedTTCStation));
+  return station ? normalizeTokenArray(station.lines) : [];
 }
 
 function lineColorForSystem(line) {
@@ -842,7 +967,10 @@ function lineColorForSystem(line) {
   if (selectedMetroSystem === "wmata") {
     return LINE_COLORS[key] || "#9e9e9e";
   }
-  return NYC_LINE_COLORS[key] || NYC_LINE_COLORS[key.charAt(0)] || "#9e9e9e";
+  if (selectedMetroSystem === "nyc") {
+    return NYC_LINE_COLORS[key] || NYC_LINE_COLORS[key.charAt(0)] || "#9e9e9e";
+  }
+  return TTC_LINE_COLORS[key] || "#9e9e9e";
 }
 
 function pruneLineFiltersToCurrentStation() {
@@ -863,9 +991,13 @@ function renderMetroLineFilters() {
   const active = getCurrentLineFilterSet();
 
   if (!lines.length) {
-    hintEl.textContent = selectedMetroSystem === "wmata"
-      ? "Select a WMATA station to enable line filtering."
-      : "Select an NYC station to enable line filtering.";
+    if (selectedMetroSystem === "wmata") {
+      hintEl.textContent = "Select a WMATA station to enable line filtering.";
+    } else if (selectedMetroSystem === "nyc") {
+      hintEl.textContent = "Select an NYC station to enable line filtering.";
+    } else {
+      hintEl.textContent = "Select a TTC station to enable line filtering.";
+    }
     listEl.className = "";
     listEl.innerHTML = `<div class="line-filter-empty">No station selected</div>`;
     return;
@@ -905,8 +1037,9 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  renderStations(STATIONS);
-  await loadNYCStations();
+  renderStations(WMATA_STATION_GROUPS);
+  await Promise.all([loadNYCStations(), loadTTCStations()]);
+  setMetroTransition(selectedMetroTransition, false);
   try {
     const res = await fetch("/api/status");
     const data = await res.json();
@@ -926,9 +1059,13 @@ async function init() {
     setActiveMode(data.display_mode);
 
     // Metro
-    selectedMetroSystem = data.METRO_SYSTEM === "nyc" ? "nyc" : "wmata";
+    selectedMetroSystem = ["wmata", "nyc", "ttc"].includes(String(data.METRO_SYSTEM || "").toLowerCase())
+      ? String(data.METRO_SYSTEM).toLowerCase()
+      : "wmata";
     selectedWmataLineFilters = parseCsvSet(data.WMATA_LINE_FILTER);
     selectedNycLineFilters = parseCsvSet(data.NYC_LINE_FILTER);
+    selectedTtcLineFilters = parseCsvSet(data.TTC_LINE_FILTER);
+    setMetroTransition(data.METRO_PAGE_TRANSITION, false);
     setMetroSystem(selectedMetroSystem, false);
     if (data.WMATA_STATION_CODE) {
       selectStation(data.WMATA_STATION_CODE, false);
@@ -936,6 +1073,8 @@ async function init() {
     document.getElementById("nyc-feed-url").value = data.NYC_MTA_FEED_URL || "";
     document.getElementById("nyc-stop-ids").value = data.NYC_STOP_IDS || "";
     syncNYCSelectionFromStopIds(data.NYC_STOP_IDS || "");
+    document.getElementById("ttc-stop-uris").value = data.TTC_STOP_URIS || "";
+    syncTTCSelectionFromConfig(data.TTC_STATION_ID || "", data.TTC_STOP_URIS || "");
     renderMetroLineFilters();
     const metroMin = Number.isFinite(Number(data.METRO_MIN_ARRIVAL_MINUTES)) ? Number(data.METRO_MIN_ARRIVAL_MINUTES) : 0;
     const metroMax = Number.isFinite(Number(data.METRO_MAX_ARRIVAL_MINUTES)) ? Number(data.METRO_MAX_ARRIVAL_MINUTES) : 20;
@@ -985,30 +1124,54 @@ async function init() {
 function renderStations(list) {
   const el = document.getElementById("station-list");
   el.innerHTML = list.map(s => `
-    <div class="station-item${s.code === selectedStation ? " selected" : ""}"
-         onclick="selectStation('${s.code}')">
+    <div class="station-item${s.key === selectedWmataGroupKey ? " selected" : ""}"
+         data-group-key="${s.key}"
+         onclick="selectStation('${s.codes.join(",")}')">
       <div class="line-dots">
         ${s.lines.map(l => `<span class="dot" style="background:${LINE_COLORS[l]}"></span>`).join("")}
       </div>
       <span>${s.name}</span>
-      <span style="margin-left:auto;color:var(--text-dim);font-size:11px;">${s.code}</span>
+      <span style="margin-left:auto;color:var(--text-dim);font-size:11px;">${s.codes.join("+")}</span>
     </div>
   `).join("");
 }
 
 function filterStations(q) {
-  q = q.toLowerCase();
-  renderStations(STATIONS.filter(s =>
-    s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)
-  ));
+  const query = String(q || "").trim().toLowerCase();
+  if (!query) {
+    renderStations(WMATA_STATION_GROUPS);
+    return;
+  }
+  const filtered = WMATA_STATION_GROUPS.filter(s => {
+    const name = String(s.name || "").toLowerCase();
+    const codes = s.codes.join(",").toLowerCase();
+    const lines = s.lines.join(",").toLowerCase();
+    return name.includes(query) || codes.includes(query) || lines.includes(query);
+  });
+  renderStations(filtered);
 }
 
 function selectStation(code, scroll = true) {
-  selectedStation = code;
-  document.getElementById("wmata-station-code").value = code;
-  document.querySelectorAll("#station-list .station-item").forEach(el => {
-    el.classList.toggle("selected", el.textContent.includes(code));
+  const requestedCodes = normalizeWmataCodes(code);
+  if (!requestedCodes.length) return;
+
+  const group = WMATA_STATION_GROUPS.find(g =>
+    requestedCodes.some(c => g.codes.includes(c))
+  );
+
+  if (group) {
+    selectedWmataGroupKey = group.key;
+    selectedStation = group.codes.join(",");
+  } else {
+    selectedWmataGroupKey = null;
+    selectedStation = requestedCodes.join(",");
+  }
+
+  document.getElementById("wmata-station-code").value = selectedStation;
+  document.querySelectorAll("#station-list .station-item").forEach(node => {
+    node.classList.toggle("selected", node.dataset.groupKey === selectedWmataGroupKey);
   });
+
   if (scroll) {
     const sel = document.querySelector("#station-list .station-item.selected");
     if (sel) sel.scrollIntoView({block: "nearest"});
@@ -1122,29 +1285,169 @@ function selectNYCStation(stationId, scroll = true) {
   renderMetroLineFilters();
 }
 
+async function loadTTCStations() {
+  const listEl = document.getElementById("ttc-station-list");
+  if (!listEl) return;
+
+  try {
+    const res = await fetch("/ttc_stations.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    ttcStations = Array.isArray(data) ? data : [];
+    renderTTCStations(ttcStations);
+    renderMetroLineFilters();
+  } catch (err) {
+    ttcStations = [];
+    listEl.innerHTML = `<div class="station-item"><span style="color:var(--text-dim);">Unable to load TTC stations</span></div>`;
+    renderMetroLineFilters();
+  }
+}
+
+function renderTTCStations(list) {
+  const el = document.getElementById("ttc-station-list");
+  if (!el) return;
+
+  if (!Array.isArray(list) || list.length === 0) {
+    el.innerHTML = `<div class="station-item"><span style="color:var(--text-dim);">No stations found</span></div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(s => {
+    const lines = normalizeTokenArray(s.lines);
+    const dots = lines.slice(0, 6).map(l => {
+      const color = TTC_LINE_COLORS[l] || "#9e9e9e";
+      return `<span class="dot" style="background:${color}" title="Line ${l}"></span>`;
+    }).join("");
+    const selected = String(s.id) === String(selectedTTCStation) ? " selected" : "";
+    const name = s.display_name || s.name || "Unknown station";
+    return `
+      <div class="station-item${selected}" onclick="selectTTCStation('${String(s.id)}')">
+        <div class="line-dots">${dots}</div>
+        <span>${name}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function filterTTCStations(query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) {
+    renderTTCStations(ttcStations);
+    return;
+  }
+  const filtered = ttcStations.filter(s => {
+    const id = String(s.id || "").toLowerCase();
+    const name = String(s.name || "").toLowerCase();
+    const display = String(s.display_name || "").toLowerCase();
+    const lines = normalizeTokenArray(s.lines).join(",").toLowerCase();
+    const stopUris = normalizeStringArray(s.stop_uris).join(",").toLowerCase();
+    return id.includes(q) || name.includes(q) || display.includes(q) || lines.includes(q) || stopUris.includes(q);
+  });
+  renderTTCStations(filtered);
+}
+
+function syncTTCSelectionFromConfig(stationId, stopUrisCsv) {
+  const normalizedStationId = String(stationId || "").trim().toLowerCase();
+  if (normalizedStationId) {
+    const stationMatch = ttcStations.find(s => String(s.id || "").toLowerCase() === normalizedStationId);
+    if (stationMatch) {
+      selectedTTCStation = String(stationMatch.id);
+      document.getElementById("ttc-station-id").value = selectedTTCStation;
+      const existingStopUris = document.getElementById("ttc-stop-uris").value.trim();
+      if (!existingStopUris) {
+        const stopUris = normalizeStringArray(stationMatch.stop_uris);
+        if (stopUris.length) {
+          document.getElementById("ttc-stop-uris").value = stopUris.join(",");
+        }
+      }
+      filterTTCStations(document.getElementById("ttc-station-search").value);
+      return;
+    }
+  }
+
+  const stopSet = new Set(
+    String(stopUrisCsv || "")
+      .split(",")
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (!stopSet.size || !ttcStations.length) return;
+
+  const match = ttcStations.find(st =>
+    normalizeStringArray(st.stop_uris).some(uri => stopSet.has(String(uri).toLowerCase()))
+  );
+  if (!match) return;
+
+  selectedTTCStation = String(match.id);
+  document.getElementById("ttc-station-id").value = selectedTTCStation;
+  filterTTCStations(document.getElementById("ttc-station-search").value);
+}
+
+function selectTTCStation(stationId, scroll = true) {
+  const station = ttcStations.find(s => String(s.id) === String(stationId));
+  if (!station) return;
+
+  selectedTTCStation = String(station.id);
+  document.getElementById("ttc-station-id").value = selectedTTCStation;
+
+  const stopUris = normalizeStringArray(station.stop_uris);
+  if (stopUris.length) {
+    document.getElementById("ttc-stop-uris").value = stopUris.join(",");
+  }
+
+  filterTTCStations(document.getElementById("ttc-station-search").value);
+  if (scroll) {
+    const sel = document.querySelector("#ttc-station-list .station-item.selected");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+  renderMetroLineFilters();
+}
+
 function setActiveMetroSystem(system) {
   document.querySelectorAll("[data-metro-system]").forEach(b => {
     b.classList.toggle("active", b.dataset.metroSystem === system);
   });
 }
 
+function setActiveMetroTransition(transitionStyle) {
+  document.querySelectorAll("[data-metro-transition]").forEach(b => {
+    b.classList.toggle("active", b.dataset.metroTransition === transitionStyle);
+  });
+}
+
+function setMetroTransition(transitionStyle, toastOnChange = true) {
+  selectedMetroTransition = transitionStyle === "cut" ? "cut" : "slide";
+  setActiveMetroTransition(selectedMetroTransition);
+  if (toastOnChange) {
+    toast("Transition: " + (selectedMetroTransition === "slide" ? "Slide" : "Cut"));
+  }
+}
+
 function setMetroSystem(system, toastOnChange = true) {
-  selectedMetroSystem = system === "nyc" ? "nyc" : "wmata";
+  if (system === "nyc" || system === "ttc") selectedMetroSystem = system;
+  else selectedMetroSystem = "wmata";
   setActiveMetroSystem(selectedMetroSystem);
 
   const showWMATA = selectedMetroSystem === "wmata";
+  const showNYC = selectedMetroSystem === "nyc";
+  const showTTC = selectedMetroSystem === "ttc";
   document.getElementById("wmata-settings").style.display = showWMATA ? "" : "none";
   document.getElementById("wmata-key-card").style.display = showWMATA ? "" : "none";
-  document.getElementById("nyc-settings").style.display = showWMATA ? "none" : "";
+  document.getElementById("nyc-settings").style.display = showNYC ? "" : "none";
+  document.getElementById("ttc-settings").style.display = showTTC ? "" : "none";
 
-  if (!showWMATA && nycStations.length === 0) {
+  if (showNYC && nycStations.length === 0) {
     loadNYCStations();
+  }
+  if (showTTC && ttcStations.length === 0) {
+    loadTTCStations();
   }
 
   renderMetroLineFilters();
 
   if (toastOnChange) {
-    toast(showWMATA ? "Metro source: WMATA" : "Metro source: NYC");
+    const label = showWMATA ? "WMATA" : (showNYC ? "NYC" : "TTC");
+    toast("Metro source: " + label);
   }
 }
 
@@ -1224,13 +1527,14 @@ async function saveMetro() {
   const payload = {
     METRO_SYSTEM: selectedMetroSystem,
     METRO_MIN_ARRIVAL_MINUTES: minMinutes,
-    METRO_MAX_ARRIVAL_MINUTES: maxMinutes
+    METRO_MAX_ARRIVAL_MINUTES: maxMinutes,
+    METRO_PAGE_TRANSITION: selectedMetroTransition
   };
 
   if (selectedMetroSystem === "wmata") {
     if (selectedStation) payload.WMATA_STATION_CODE = selectedStation;
     payload.WMATA_LINE_FILTER = serializeCsvSet(selectedWmataLineFilters);
-  } else {
+  } else if (selectedMetroSystem === "nyc") {
     const nycFeedUrl = document.getElementById("nyc-feed-url").value.trim();
     const nycStopIds = document.getElementById("nyc-stop-ids").value.trim();
 
@@ -1242,6 +1546,18 @@ async function saveMetro() {
     payload.NYC_MTA_FEED_URL = nycFeedUrl;
     payload.NYC_STOP_IDS = nycStopIds;
     payload.NYC_LINE_FILTER = serializeCsvSet(selectedNycLineFilters);
+  } else {
+    const ttcStationId = document.getElementById("ttc-station-id").value.trim();
+    const ttcStopUris = document.getElementById("ttc-stop-uris").value.trim();
+
+    if (!ttcStationId || !ttcStopUris) {
+      toast("Pick a TTC station first so station + stop URIs are set", "error");
+      return;
+    }
+
+    payload.TTC_STATION_ID = ttcStationId;
+    payload.TTC_STOP_URIS = ttcStopUris;
+    payload.TTC_LINE_FILTER = serializeCsvSet(selectedTtcLineFilters);
   }
 
   const wmataKey = document.getElementById("wmata-api-key").value.trim();

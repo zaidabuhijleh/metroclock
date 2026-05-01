@@ -9,7 +9,7 @@ from PIL import ImageDraw, ImageFont
 
 import config
 from core.widget import Widget
-from widgets.metrolines import NYC_LINE_COLORS, WMATA_LINE_COLORS
+from widgets.metrolines import NYC_LINE_COLORS, TTC_LINE_COLORS, WMATA_LINE_COLORS
 
 try:
     from google.transit import gtfs_realtime_pb2
@@ -50,6 +50,13 @@ BITMAP_DIGITS = {
     "7": [(0, 0), (1, 0), (2, 0), (3, 0), (3, 1), (2, 2), (2, 3), (1, 4)],
     "8": [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2), (0, 3), (3, 3), (1, 4), (2, 4)],
     "9": [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2), (3, 2), (3, 3), (0, 4), (1, 4), (2, 4)],
+}
+
+TTC_ROUTE_TO_LINE = {
+    "yonge-university-spadina_subway": "1",
+    "bloor-danforth_subway": "2",
+    "scarborough_rt": "3",
+    "sheppard_subway": "4",
 }
 
 
@@ -94,6 +101,8 @@ class MetroWidget(Widget):
         system = self._metro_system()
         if system == "nyc":
             self._fetch_nyc()
+        elif system == "ttc":
+            self._fetch_ttc()
         else:
             self._fetch_wmata()
 
@@ -102,13 +111,17 @@ class MetroWidget(Widget):
     def _current_config_signature(self):
         return (
             self._metro_system(),
-            str(getattr(config, "WMATA_STATION_CODE", "") or "").strip().upper(),
+            tuple(self._wmata_station_codes()),
             str(getattr(config, "WMATA_API_KEY", "") or "").strip(),
             tuple(sorted(self._wmata_line_filter())),
             tuple(self._nyc_feed_urls()),
             tuple(sorted(self._nyc_stop_ids())),
             tuple(sorted(self._nyc_line_filter())),
+            str(getattr(config, "TTC_STATION_ID", "") or "").strip().lower(),
+            tuple(sorted(self._ttc_stop_uris())),
+            tuple(sorted(self._ttc_line_filter())),
             self._arrival_window(),
+            self._metro_page_transition(),
         )
 
     def _invalidate_cached_rows(self, now):
@@ -118,7 +131,13 @@ class MetroWidget(Widget):
 
     def _metro_system(self):
         value = str(getattr(config, "METRO_SYSTEM", "wmata") or "wmata").strip().lower()
-        return "nyc" if value == "nyc" else "wmata"
+        if value in {"nyc", "ttc"}:
+            return value
+        return "wmata"
+
+    def _metro_page_transition(self):
+        value = str(getattr(config, "METRO_PAGE_TRANSITION", "slide") or "slide").strip().lower()
+        return "cut" if value == "cut" else "slide"
 
     def _fetch_wmata(self):
         headers = {}
@@ -126,50 +145,61 @@ class MetroWidget(Widget):
         if key:
             headers["api_key"] = key
 
-        station_code = str(getattr(config, "WMATA_STATION_CODE", "") or "").strip()
-        if not station_code:
+        station_codes = self._wmata_station_codes()
+        if not station_codes:
             self._replace_trains([], time.time())
             return
 
-        try:
-            url = f"https://api.wmata.com/StationPrediction.svc/json/GetPrediction/{station_code}"
-            resp = requests.get(url, headers=headers, timeout=6)
-            data = resp.json()
-        except Exception as exc:
-            print(f"WMATA API Error: {exc}")
-            return
-
-        if "Trains" not in data:
-            return
-
         valid = []
-        for train in data.get("Trains", []):
-            line = str(train.get("Line", "") or "").strip().upper()
-            dest = str(train.get("Destination", "") or "").strip()
-            if not line or line == "--":
-                continue
-            line = line[:2]
-            if not self._is_wmata_line_enabled(line):
-                continue
-            if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
+
+        for station_code in station_codes:
+            try:
+                url = f"https://api.wmata.com/StationPrediction.svc/json/GetPrediction/{station_code}"
+                resp = requests.get(url, headers=headers, timeout=6)
+                data = resp.json()
+            except Exception as exc:
+                print(f"WMATA API Error ({station_code}): {exc}")
                 continue
 
-            mins = self._normalize_wmata_mins(train.get("Min"))
-            if mins == "--":
-                continue
-            mins_int = int(mins)
-            if not self._is_in_arrival_window(mins_int):
+            if "Trains" not in data:
                 continue
 
-            valid.append(
-                {
-                    "Line": line,
-                    "Destination": dest,
-                    "Min": mins,
-                }
-            )
+            for train in data.get("Trains", []):
+                line = str(train.get("Line", "") or "").strip().upper()
+                dest = str(train.get("Destination", "") or "").strip()
+                if not line or line == "--":
+                    continue
+                line = line[:2]
+                if not self._is_wmata_line_enabled(line):
+                    continue
+                if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
+                    continue
 
-        self._replace_trains(valid, time.time())
+                mins = self._normalize_wmata_mins(train.get("Min"))
+                if mins == "--":
+                    continue
+                mins_int = int(mins)
+                if not self._is_in_arrival_window(mins_int):
+                    continue
+
+                valid.append(
+                    {
+                        "Line": line,
+                        "Destination": dest,
+                        "Min": mins,
+                    }
+                )
+
+        deduped = []
+        seen = set()
+        for row in sorted(valid, key=lambda item: (int(item["Min"]), item["Line"], item["Destination"])):
+            key = (row["Line"], row["Destination"], row["Min"])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+
+        self._replace_trains(deduped, time.time())
 
     def _fetch_nyc(self):
         if gtfs_realtime_pb2 is None:
@@ -247,6 +277,91 @@ class MetroWidget(Widget):
         ]
         self._replace_trains(trains, time.time())
 
+    def _fetch_ttc(self):
+        station_id = self._ttc_station_id()
+        stop_uris = self._ttc_stop_uris()
+        if not stop_uris:
+            self._replace_trains([], time.time())
+            return
+
+        now_ts = int(time.time())
+        arrivals = []
+        source_count = 0
+
+        for stop_uri in stop_uris:
+            try:
+                url = f"https://myttc.ca/{stop_uri}.json"
+                resp = requests.get(url, timeout=8)
+                if resp.status_code != 200:
+                    print(f"TTC API Error: status {resp.status_code} for {url}")
+                    continue
+                data = resp.json()
+            except Exception as exc:
+                print(f"TTC API Error for {stop_uri}: {exc}")
+                continue
+
+            source_count += 1
+            arrivals.extend(self._ttc_collect_arrivals(data, now_ts, {stop_uri}))
+
+        # Fallback for old configs where stop URIs may be stale but station slug is valid.
+        if source_count == 0 and station_id:
+            try:
+                url = f"https://myttc.ca/{station_id}.json"
+                resp = requests.get(url, timeout=8)
+                if resp.status_code == 200:
+                    arrivals.extend(self._ttc_collect_arrivals(resp.json(), now_ts, set(stop_uris)))
+            except Exception as exc:
+                print(f"TTC API fallback error for {station_id}: {exc}")
+
+        arrivals.sort(key=lambda item: (item["eta"], item["line"], item["destination"]))
+        deduped = self._dedupe_ttc_arrivals(arrivals)
+        trains = [
+            {
+                "Line": row["line"],
+                "Destination": row["destination"],
+                "Min": row["mins"],
+            }
+            for row in deduped
+        ]
+        self._replace_trains(trains, time.time())
+
+    def _ttc_collect_arrivals(self, data, now_ts, allowed_stop_uris):
+        output = []
+        allowed = {str(uri or "").strip().lower() for uri in (allowed_stop_uris or set()) if str(uri or "").strip()}
+
+        for stop in data.get("stops", []):
+            stop_uri = str(stop.get("uri", "") or "").strip().lower()
+            if allowed and stop_uri not in allowed:
+                continue
+
+            for route in stop.get("routes", []):
+                route_uri = str(route.get("uri", "") or "").strip().lower()
+                route_name = str(route.get("name", "") or "").strip()
+                route_group_id = str(route.get("route_group_id", "") or "").strip()
+                line = self._ttc_route_to_line(route_uri, route_name, route_group_id)
+                if not line:
+                    continue
+                if not self._is_ttc_line_enabled(line):
+                    continue
+
+                for stop_time in route.get("stop_times", []):
+                    eta_minutes = self._ttc_eta_minutes(stop_time, now_ts)
+                    if eta_minutes is None:
+                        continue
+                    if not self._is_in_arrival_window(eta_minutes):
+                        continue
+
+                    output.append(
+                        {
+                            "line": line,
+                            "destination": self._ttc_destination_name(stop_time, route_name),
+                            "mins": str(eta_minutes),
+                            "eta": eta_minutes,
+                        }
+                    )
+
+        return output
+
     def _replace_trains(self, trains, now):
         previous_trains = self.trains
         self.trains = trains
@@ -302,6 +417,9 @@ class MetroWidget(Widget):
     def _nyc_line_filter(self):
         return self._parse_line_filter(getattr(config, "NYC_LINE_FILTER", ""))
 
+    def _ttc_line_filter(self):
+        return self._parse_line_filter(getattr(config, "TTC_LINE_FILTER", ""))
+
     def _is_wmata_line_enabled(self, line):
         selected = self._wmata_line_filter()
         if not selected:
@@ -322,6 +440,12 @@ class MetroWidget(Widget):
             return True
 
         return False
+
+    def _is_ttc_line_enabled(self, line):
+        selected = self._ttc_line_filter()
+        if not selected:
+            return True
+        return str(line or "").strip().upper() in selected
 
     def _load_nyc_stop_name_map(self):
         path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web", "nyc_stations.json"))
@@ -356,6 +480,18 @@ class MetroWidget(Widget):
 
         return mapping
 
+    def _wmata_station_codes(self):
+        raw = str(getattr(config, "WMATA_STATION_CODE", "") or "")
+        codes = []
+        seen = set()
+        for part in raw.replace("\n", ",").split(","):
+            code = str(part or "").strip().upper()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
+        return tuple(sorted(codes))
+
     def _nyc_stop_ids(self):
         raw = str(getattr(config, "NYC_STOP_IDS", "") or "")
         return {part.strip().upper() for part in raw.split(",") if part.strip()}
@@ -372,11 +508,81 @@ class MetroWidget(Widget):
             urls.append(url)
         return tuple(urls)
 
+    def _ttc_station_id(self):
+        return str(getattr(config, "TTC_STATION_ID", "") or "").strip().lower()
+
+    def _ttc_stop_uris(self):
+        raw = str(getattr(config, "TTC_STOP_URIS", "") or "")
+        stop_uris = []
+        seen = set()
+        for part in raw.replace("\n", ",").split(","):
+            uri = str(part or "").strip().lower()
+            if not uri or uri in seen:
+                continue
+            seen.add(uri)
+            stop_uris.append(uri)
+        if stop_uris:
+            return tuple(stop_uris)
+
+        # Backward-compatible fallback: derive stop URIs from station metadata if config CSV is blank.
+        station_id = self._ttc_station_id()
+        if not station_id:
+            return tuple()
+        stations_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web", "ttc_stations.json"))
+        try:
+            with open(stations_path, "r", encoding="utf-8") as f:
+                stations = json.load(f)
+        except Exception:
+            return tuple()
+        for station in stations if isinstance(stations, list) else []:
+            if not isinstance(station, dict):
+                continue
+            if str(station.get("id", "") or "").strip().lower() != station_id:
+                continue
+            for candidate in station.get("stop_uris", []):
+                uri = str(candidate or "").strip().lower()
+                if not uri or uri in seen:
+                    continue
+                seen.add(uri)
+                stop_uris.append(uri)
+        return tuple(stop_uris)
+
     def _normalize_nyc_route_id(self, route_id):
         route = str(route_id or "").strip().upper()
         if route == "7X":
             return "7"
         return route[:2]
+
+    def _ttc_route_to_line(self, route_uri, route_name, route_group_id=""):
+        group_id = str(route_group_id or "").strip()
+        if group_id in {"1", "2", "3", "4"}:
+            return group_id
+
+        route_key = str(route_uri or "").strip().lower()
+        if route_key in TTC_ROUTE_TO_LINE:
+            return TTC_ROUTE_TO_LINE[route_key]
+        if "line_1" in route_key or route_key.startswith("1_"):
+            return "1"
+        if "line_2" in route_key or route_key.startswith("2_"):
+            return "2"
+        if "line_3" in route_key or route_key.startswith("3_"):
+            return "3"
+        if "line_4" in route_key or route_key.startswith("4_"):
+            return "4"
+
+        name = str(route_name or "").strip().lower()
+        line_match = re.search(r"\bline\s*([1-4])\b", name)
+        if line_match:
+            return line_match.group(1)
+        if "sheppard" in name:
+            return "4"
+        if "bloor-danforth" in name:
+            return "2"
+        if "scarborough" in name:
+            return "3"
+        if "yonge-university" in name:
+            return "1"
+        return ""
 
     def _nyc_direction_label(self, stop_id):
         if stop_id.endswith("N"):
@@ -412,6 +618,16 @@ class MetroWidget(Widget):
             return route
         return f"{route} {direction}"
 
+    def _ttc_destination_name(self, stop_time, route_name):
+        shape = str(stop_time.get("shape", "") or "").strip()
+        if " TO " in shape.upper():
+            dest = re.split(r"\s+TO\s+", shape, maxsplit=1, flags=re.IGNORECASE)[-1].strip()
+            if dest:
+                return dest
+
+        route = str(route_name or "").strip()
+        return route or "Train"
+
     def _gtfs_eta_minutes(self, stop_update, now_ts):
         arrival = getattr(stop_update, "arrival", None)
         departure = getattr(stop_update, "departure", None)
@@ -442,6 +658,83 @@ class MetroWidget(Widget):
             output.append(row)
         return output
 
+    def _ttc_eta_minutes(self, stop_time, now_ts):
+        dep_ts = stop_time.get("departure_timestamp")
+        if dep_ts is None:
+            return None
+        try:
+            eta_ts = int(dep_ts)
+        except Exception:
+            return None
+
+        delta = eta_ts - now_ts
+        if delta < -30:
+            return None
+        return max(0, int(round(delta / 60.0)))
+
+    def _dedupe_ttc_arrivals(self, rows):
+        seen = set()
+        output = []
+        for row in rows:
+            key = (row["line"], row["destination"], row["eta"])
+            if key in seen:
+                continue
+            seen.add(key)
+            output.append(row)
+        return output
+
+    def _pair_for_index(self, start_index):
+        if not self.trains:
+            return []
+        pair = [self.trains[start_index % len(self.trains)]]
+        if len(self.trains) > 1:
+            pair.append(self.trains[(start_index + 1) % len(self.trains)])
+        return pair
+
+    def _draw_train_row(self, draw, train, row_y, text_start_x, time_on_page):
+        if row_y <= -16 or row_y >= self.height:
+            return
+
+        line = str(train.get("Line", "--")).upper()
+        dest = train.get("Destination", "")
+        mins = train.get("Min", "--")
+        line_color = self._line_color(line)
+
+        eta_width = self.font_tall.getlength(mins)
+        mask_x_start = 64 - eta_width - 3
+        visible_space = mask_x_start - text_start_x
+
+        text_width = self.font_tall.getlength(dest)
+        x_pos = text_start_x
+
+        if text_width > visible_space:
+            last_space = dest.rfind(" ")
+            if last_space != -1:
+                max_offset = self.font_tall.getlength(dest[: last_space + 1])
+            else:
+                max_offset = text_width - visible_space
+
+            if time_on_page < 1.0:
+                offset = 0
+            else:
+                active_scroll_time = time_on_page - 1.0
+                offset = active_scroll_time * self.scroll_speed
+                if offset > max_offset:
+                    offset = max_offset
+
+            x_pos = text_start_x - offset
+
+        draw.text((x_pos, row_y + 3), dest, font=self.font_tall, fill=config.COLOR_BLUE)
+
+        # Masks.
+        draw.rectangle((0, row_y, 12, row_y + 16), fill=(0, 0, 0))
+        draw.rectangle((mask_x_start, row_y, 64, row_y + 16), fill=(0, 0, 0))
+
+        # Icons and time.
+        self._draw_octagon(draw, 2, row_y + 3, line_color, line[:1] or "?")
+        time_x = 64 - eta_width - 1
+        draw.text((time_x, row_y + 3), mins, font=self.font_tall, fill=config.COLOR_WHITE)
+
     def draw(self):
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
@@ -450,6 +743,8 @@ class MetroWidget(Widget):
             label = "NO TRAINS"
             if self._metro_system() == "nyc":
                 label = "NYC NO DATA"
+            if self._metro_system() == "ttc":
+                label = "TTC NO DATA"
             draw.text((1, 12), label, font=self.font_small, fill=config.COLOR_GREY)
             return self.canvas
 
@@ -457,12 +752,7 @@ class MetroWidget(Widget):
         self.scroll_index %= len(self.trains)
 
         # Determine which trains to show.
-        t1 = self.trains[self.scroll_index]
-        t2 = self.trains[(self.scroll_index + 1) % len(self.trains)] if len(self.trains) > 1 else None
-
-        current_pair = [t1]
-        if t2:
-            current_pair.append(t2)
+        current_pair = self._pair_for_index(self.scroll_index)
 
         # Calculate page duration.
         longest_scroll_time = 0
@@ -491,55 +781,50 @@ class MetroWidget(Widget):
         # Handle cycling.
         now = time.time()
         time_on_page = now - self.page_start_time
+        transition_style = self._metro_page_transition()
+        transition_duration = 0.35
+        page_step = 2 if len(self.trains) > 1 else 1
+        can_slide = transition_style == "slide" and len(self.trains) > page_step
+        rows_to_draw = []
 
-        if time_on_page > page_duration:
-            if len(self.trains) > 2:
-                self.scroll_index = (self.scroll_index + 1) % len(self.trains)
-            self.page_start_time = now
-            time_on_page = 0
+        if can_slide and time_on_page > page_duration:
+            transition_elapsed = time_on_page - page_duration
+            if transition_elapsed >= transition_duration:
+                self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+                self.page_start_time = now
+                current_pair = self._pair_for_index(self.scroll_index)
+                rows_to_draw = [
+                    (current_pair[0], 0, 0.0),
+                ]
+                if len(current_pair) > 1:
+                    rows_to_draw.append((current_pair[1], 16, 0.0))
+            else:
+                shift = int(round((transition_elapsed / transition_duration) * 32))
+                next_pair = self._pair_for_index(self.scroll_index + page_step)
+                if current_pair:
+                    rows_to_draw.append((current_pair[0], -shift, page_duration))
+                if len(current_pair) > 1:
+                    rows_to_draw.append((current_pair[1], 16 - shift, page_duration))
+                if next_pair:
+                    rows_to_draw.append((next_pair[0], 32 - shift, 0.0))
+                if len(next_pair) > 1:
+                    rows_to_draw.append((next_pair[1], 48 - shift, 0.0))
+        else:
+            if time_on_page > page_duration:
+                if len(self.trains) > page_step:
+                    self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+                self.page_start_time = now
+                time_on_page = 0
+                current_pair = self._pair_for_index(self.scroll_index)
 
-        # Draw rows.
-        for i, train in enumerate(current_pair):
-            row_y = i * 16
-            line = str(train.get("Line", "--")).upper()
-            dest = train.get("Destination", "")
-            mins = train.get("Min", "--")
-            line_color = self._line_color(line)
+            rows_to_draw = [
+                (current_pair[0], 0, time_on_page),
+            ]
+            if len(current_pair) > 1:
+                rows_to_draw.append((current_pair[1], 16, time_on_page))
 
-            eta_width = self.font_tall.getlength(mins)
-            mask_x_start = 64 - eta_width - 3
-            visible_space = mask_x_start - text_start_x
-
-            text_width = self.font_tall.getlength(dest)
-            x_pos = text_start_x
-
-            if text_width > visible_space:
-                last_space = dest.rfind(" ")
-                if last_space != -1:
-                    max_offset = self.font_tall.getlength(dest[: last_space + 1])
-                else:
-                    max_offset = text_width - visible_space
-
-                if time_on_page < 1.0:
-                    offset = 0
-                else:
-                    active_scroll_time = time_on_page - 1.0
-                    offset = active_scroll_time * self.scroll_speed
-                    if offset > max_offset:
-                        offset = max_offset
-
-                x_pos = text_start_x - offset
-
-            draw.text((x_pos, row_y + 3), dest, font=self.font_tall, fill=config.COLOR_BLUE)
-
-            # Masks.
-            draw.rectangle((0, row_y, 12, row_y + 16), fill=(0, 0, 0))
-            draw.rectangle((mask_x_start, row_y, 64, row_y + 16), fill=(0, 0, 0))
-
-            # Icons and time.
-            self._draw_octagon(draw, 2, row_y + 3, line_color, line[:1] or "?")
-            time_x = 64 - eta_width - 1
-            draw.text((time_x, row_y + 3), mins, font=self.font_tall, fill=config.COLOR_WHITE)
+        for train, row_y, row_time in rows_to_draw:
+            self._draw_train_row(draw, train, row_y, text_start_x, row_time)
 
         return self.canvas
 
@@ -547,6 +832,8 @@ class MetroWidget(Widget):
         line = str(line or "").upper()
         if self._metro_system() == "nyc":
             return NYC_LINE_COLORS.get(line) or NYC_LINE_COLORS.get(line[:1], config.COLOR_GREY)
+        if self._metro_system() == "ttc":
+            return TTC_LINE_COLORS.get(line) or TTC_LINE_COLORS.get(line[:1], config.COLOR_GREY)
         return WMATA_LINE_COLORS.get(line, config.COLOR_GREY)
 
     def _draw_bitmap_glyph(self, draw, x, y, pixels):
@@ -560,6 +847,13 @@ class MetroWidget(Widget):
 
         start_x = x + ((9 - glyph_w) // 2) - min_x
         start_y = y + ((9 - glyph_h) // 2) - min_y
+
+        # Optical centering: some glyphs (especially numeric routes) are
+        # geometrically centered by bounds but still appear right-heavy.
+        avg_x = sum(px for px, _ in pixels) / float(len(pixels))
+        desired_center_x = x + 4
+        current_center_x = start_x + avg_x
+        start_x += int(round(desired_center_x - current_center_x))
 
         for px, py in pixels:
             draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
@@ -581,11 +875,7 @@ class MetroWidget(Widget):
         glyph = (text or "?").upper()
         letter_pixels = BITMAP_LETTERS.get(glyph)
         if letter_pixels:
-            # Keep letter placement identical to the original WMATA-style badges.
-            start_x = x + 3
-            start_y = y + 2
-            for px, py in letter_pixels:
-                draw.point((start_x + px, start_y + py), fill=(255, 255, 255))
+            self._draw_bitmap_glyph(draw, x, y, letter_pixels)
             return
 
         # NYC numeric routes render cleaner with a dedicated bitmap than the tiny fallback font.
