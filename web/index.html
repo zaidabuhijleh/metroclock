@@ -705,7 +705,7 @@ const STATIONS = [
   {code:"C15",name:"Huntington",lines:["YL"]},
   {code:"D01",name:"Federal Triangle",lines:["OR","SV","BL"]},
   {code:"D02",name:"Smithsonian",lines:["OR","SV","BL"]},
-  {code:"D03",name:"L'Enfant Plaza",lines:["OR","SV","BL","GR","YL"]},
+  {code:"D03",name:"L'Enfant Plaza (Upper)",lines:["OR","SV","BL"]},
   {code:"D04",name:"Federal Center SW",lines:["OR","SV","BL"]},
   {code:"D05",name:"Capitol South",lines:["OR","SV","BL"]},
   {code:"D06",name:"Eastern Market",lines:["OR","SV","BL"]},
@@ -728,7 +728,7 @@ const STATIONS = [
   {code:"E10",name:"U Street",lines:["GR","YL"]},
   {code:"F01",name:"Gallery Pl-Chinatown",lines:["GR","YL"]},
   {code:"F02",name:"Archives",lines:["GR","YL"]},
-  {code:"F03",name:"L'Enfant Plaza",lines:["GR","YL"]},
+  {code:"F03",name:"L'Enfant Plaza (Lower)",lines:["GR","YL"]},
   {code:"F04",name:"Waterfront",lines:["GR"]},
   {code:"F05",name:"Navy Yard-Ballpark",lines:["GR"]},
   {code:"F06",name:"Anacostia",lines:["GR"]},
@@ -764,6 +764,45 @@ const STATIONS = [
   {code:"N11",name:"Loudoun Gateway",lines:["SV"]},
   {code:"N12",name:"Ashburn",lines:["SV"]},
 ];
+
+function normalizeWmataGroupName(name) {
+  const raw = String(name || "").trim();
+  // Collapse UI suffixes like "(Upper)/(Lower)" so multi-platform stations group together.
+  return raw.replace(/\s+\((upper|lower)\)$/i, "").trim();
+}
+
+function buildWmataStationGroups(stations) {
+  const grouped = new Map();
+  for (const station of stations) {
+    if (!station || !station.code) continue;
+    const displayName = normalizeWmataGroupName(station.name);
+    const key = displayName.toLowerCase();
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        name: displayName,
+        codes: [],
+        lines: new Set(),
+      });
+    }
+    const group = grouped.get(key);
+    group.codes.push(String(station.code).toUpperCase());
+    for (const line of (Array.isArray(station.lines) ? station.lines : [])) {
+      group.lines.add(String(line).toUpperCase());
+    }
+  }
+
+  return Array.from(grouped.values())
+    .map(group => ({
+      key: group.key,
+      name: group.name,
+      codes: Array.from(new Set(group.codes)).sort(),
+      lines: Array.from(group.lines).sort(),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+const WMATA_STATION_GROUPS = buildWmataStationGroups(STATIONS);
 
 const LINE_COLORS = {
   RD: "#e53935", OR: "#f57c00", YL: "#fdd835",
@@ -825,6 +864,7 @@ const NBA_TEAMS = [
 ];
 
 let selectedStation = null;
+let selectedWmataGroupKey = null;
 let selectedNYCStation = null;
 let selectedTTCStation = null;
 let nycStations = [];
@@ -854,6 +894,17 @@ function serializeCsvSet(setObj) {
     .filter(Boolean)
     .sort()
     .join(",");
+}
+
+function normalizeWmataCodes(value) {
+  return Array.from(
+    new Set(
+      String(value || "")
+        .split(",")
+        .map(s => s.trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ).sort();
 }
 
 function normalizeTokenArray(value) {
@@ -892,8 +943,16 @@ function getCurrentLineFilterSet() {
 
 function getCurrentStationLines() {
   if (selectedMetroSystem === "wmata") {
-    const station = STATIONS.find(s => s.code === selectedStation);
-    return station && Array.isArray(station.lines) ? station.lines.map(l => String(l).toUpperCase()) : [];
+    const selectedCodes = new Set(normalizeWmataCodes(selectedStation));
+    if (!selectedCodes.size) return [];
+    const lines = new Set();
+    for (const station of STATIONS) {
+      if (!selectedCodes.has(String(station.code || "").toUpperCase())) continue;
+      for (const line of (Array.isArray(station.lines) ? station.lines : [])) {
+        lines.add(String(line).toUpperCase());
+      }
+    }
+    return Array.from(lines).sort();
   }
   if (selectedMetroSystem === "nyc") {
     const station = nycStations.find(s => String(s.id) === String(selectedNYCStation));
@@ -978,7 +1037,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  renderStations(STATIONS);
+  renderStations(WMATA_STATION_GROUPS);
   await Promise.all([loadNYCStations(), loadTTCStations()]);
   setMetroTransition(selectedMetroTransition, false);
   try {
@@ -1065,30 +1124,54 @@ async function init() {
 function renderStations(list) {
   const el = document.getElementById("station-list");
   el.innerHTML = list.map(s => `
-    <div class="station-item${s.code === selectedStation ? " selected" : ""}"
-         onclick="selectStation('${s.code}')">
+    <div class="station-item${s.key === selectedWmataGroupKey ? " selected" : ""}"
+         data-group-key="${s.key}"
+         onclick="selectStation('${s.codes.join(",")}')">
       <div class="line-dots">
         ${s.lines.map(l => `<span class="dot" style="background:${LINE_COLORS[l]}"></span>`).join("")}
       </div>
       <span>${s.name}</span>
-      <span style="margin-left:auto;color:var(--text-dim);font-size:11px;">${s.code}</span>
+      <span style="margin-left:auto;color:var(--text-dim);font-size:11px;">${s.codes.join("+")}</span>
     </div>
   `).join("");
 }
 
 function filterStations(q) {
-  q = q.toLowerCase();
-  renderStations(STATIONS.filter(s =>
-    s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)
-  ));
+  const query = String(q || "").trim().toLowerCase();
+  if (!query) {
+    renderStations(WMATA_STATION_GROUPS);
+    return;
+  }
+  const filtered = WMATA_STATION_GROUPS.filter(s => {
+    const name = String(s.name || "").toLowerCase();
+    const codes = s.codes.join(",").toLowerCase();
+    const lines = s.lines.join(",").toLowerCase();
+    return name.includes(query) || codes.includes(query) || lines.includes(query);
+  });
+  renderStations(filtered);
 }
 
 function selectStation(code, scroll = true) {
-  selectedStation = code;
-  document.getElementById("wmata-station-code").value = code;
-  document.querySelectorAll("#station-list .station-item").forEach(el => {
-    el.classList.toggle("selected", el.textContent.includes(code));
+  const requestedCodes = normalizeWmataCodes(code);
+  if (!requestedCodes.length) return;
+
+  const group = WMATA_STATION_GROUPS.find(g =>
+    requestedCodes.some(c => g.codes.includes(c))
+  );
+
+  if (group) {
+    selectedWmataGroupKey = group.key;
+    selectedStation = group.codes.join(",");
+  } else {
+    selectedWmataGroupKey = null;
+    selectedStation = requestedCodes.join(",");
+  }
+
+  document.getElementById("wmata-station-code").value = selectedStation;
+  document.querySelectorAll("#station-list .station-item").forEach(node => {
+    node.classList.toggle("selected", node.dataset.groupKey === selectedWmataGroupKey);
   });
+
   if (scroll) {
     const sel = document.querySelector("#station-list .station-item.selected");
     if (sel) sel.scrollIntoView({block: "nearest"});

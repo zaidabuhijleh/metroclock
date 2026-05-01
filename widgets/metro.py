@@ -111,7 +111,7 @@ class MetroWidget(Widget):
     def _current_config_signature(self):
         return (
             self._metro_system(),
-            str(getattr(config, "WMATA_STATION_CODE", "") or "").strip().upper(),
+            tuple(self._wmata_station_codes()),
             str(getattr(config, "WMATA_API_KEY", "") or "").strip(),
             tuple(sorted(self._wmata_line_filter())),
             tuple(self._nyc_feed_urls()),
@@ -145,50 +145,61 @@ class MetroWidget(Widget):
         if key:
             headers["api_key"] = key
 
-        station_code = str(getattr(config, "WMATA_STATION_CODE", "") or "").strip()
-        if not station_code:
+        station_codes = self._wmata_station_codes()
+        if not station_codes:
             self._replace_trains([], time.time())
             return
 
-        try:
-            url = f"https://api.wmata.com/StationPrediction.svc/json/GetPrediction/{station_code}"
-            resp = requests.get(url, headers=headers, timeout=6)
-            data = resp.json()
-        except Exception as exc:
-            print(f"WMATA API Error: {exc}")
-            return
-
-        if "Trains" not in data:
-            return
-
         valid = []
-        for train in data.get("Trains", []):
-            line = str(train.get("Line", "") or "").strip().upper()
-            dest = str(train.get("Destination", "") or "").strip()
-            if not line or line == "--":
-                continue
-            line = line[:2]
-            if not self._is_wmata_line_enabled(line):
-                continue
-            if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
+
+        for station_code in station_codes:
+            try:
+                url = f"https://api.wmata.com/StationPrediction.svc/json/GetPrediction/{station_code}"
+                resp = requests.get(url, headers=headers, timeout=6)
+                data = resp.json()
+            except Exception as exc:
+                print(f"WMATA API Error ({station_code}): {exc}")
                 continue
 
-            mins = self._normalize_wmata_mins(train.get("Min"))
-            if mins == "--":
-                continue
-            mins_int = int(mins)
-            if not self._is_in_arrival_window(mins_int):
+            if "Trains" not in data:
                 continue
 
-            valid.append(
-                {
-                    "Line": line,
-                    "Destination": dest,
-                    "Min": mins,
-                }
-            )
+            for train in data.get("Trains", []):
+                line = str(train.get("Line", "") or "").strip().upper()
+                dest = str(train.get("Destination", "") or "").strip()
+                if not line or line == "--":
+                    continue
+                line = line[:2]
+                if not self._is_wmata_line_enabled(line):
+                    continue
+                if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
+                    continue
 
-        self._replace_trains(valid, time.time())
+                mins = self._normalize_wmata_mins(train.get("Min"))
+                if mins == "--":
+                    continue
+                mins_int = int(mins)
+                if not self._is_in_arrival_window(mins_int):
+                    continue
+
+                valid.append(
+                    {
+                        "Line": line,
+                        "Destination": dest,
+                        "Min": mins,
+                    }
+                )
+
+        deduped = []
+        seen = set()
+        for row in sorted(valid, key=lambda item: (int(item["Min"]), item["Line"], item["Destination"])):
+            key = (row["Line"], row["Destination"], row["Min"])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+
+        self._replace_trains(deduped, time.time())
 
     def _fetch_nyc(self):
         if gtfs_realtime_pb2 is None:
@@ -468,6 +479,18 @@ class MetroWidget(Widget):
                 mapping[self._strip_nyc_stop_id(stop_id)] = name
 
         return mapping
+
+    def _wmata_station_codes(self):
+        raw = str(getattr(config, "WMATA_STATION_CODE", "") or "")
+        codes = []
+        seen = set()
+        for part in raw.replace("\n", ",").split(","):
+            code = str(part or "").strip().upper()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
+        return tuple(sorted(codes))
 
     def _nyc_stop_ids(self):
         raw = str(getattr(config, "NYC_STOP_IDS", "") or "")
