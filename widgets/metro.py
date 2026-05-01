@@ -655,6 +655,14 @@ class MetroWidget(Widget):
             output.append(row)
         return output
 
+    def _pair_for_index(self, start_index):
+        if not self.trains:
+            return []
+        pair = [self.trains[start_index % len(self.trains)]]
+        if len(self.trains) > 1:
+            pair.append(self.trains[(start_index + 1) % len(self.trains)])
+        return pair
+
     def draw(self):
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
@@ -672,12 +680,8 @@ class MetroWidget(Widget):
         self.scroll_index %= len(self.trains)
 
         # Determine which trains to show.
-        t1 = self.trains[self.scroll_index]
-        t2 = self.trains[(self.scroll_index + 1) % len(self.trains)] if len(self.trains) > 1 else None
-
-        current_pair = [t1]
-        if t2:
-            current_pair.append(t2)
+        current_pair = self._pair_for_index(self.scroll_index)
+        page_step = 2 if len(self.trains) > 1 else 1
 
         # Calculate page duration.
         longest_scroll_time = 0
@@ -708,10 +712,12 @@ class MetroWidget(Widget):
         time_on_page = now - self.page_start_time
 
         if time_on_page > page_duration:
-            if len(self.trains) > 2:
-                self.scroll_index = (self.scroll_index + 1) % len(self.trains)
+            if len(self.trains) > page_step:
+                # Advance by a full page so rows do not "jump" between top/bottom.
+                self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
             self.page_start_time = now
             time_on_page = 0
+            current_pair = self._pair_for_index(self.scroll_index)
 
         # Draw rows.
         for i, train in enumerate(current_pair):
