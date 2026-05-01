@@ -663,6 +663,50 @@ class MetroWidget(Widget):
             pair.append(self.trains[(start_index + 1) % len(self.trains)])
         return pair
 
+    def _draw_train_row(self, draw, train, row_y, text_start_x, time_on_page):
+        if row_y <= -16 or row_y >= self.height:
+            return
+
+        line = str(train.get("Line", "--")).upper()
+        dest = train.get("Destination", "")
+        mins = train.get("Min", "--")
+        line_color = self._line_color(line)
+
+        eta_width = self.font_tall.getlength(mins)
+        mask_x_start = 64 - eta_width - 3
+        visible_space = mask_x_start - text_start_x
+
+        text_width = self.font_tall.getlength(dest)
+        x_pos = text_start_x
+
+        if text_width > visible_space:
+            last_space = dest.rfind(" ")
+            if last_space != -1:
+                max_offset = self.font_tall.getlength(dest[: last_space + 1])
+            else:
+                max_offset = text_width - visible_space
+
+            if time_on_page < 1.0:
+                offset = 0
+            else:
+                active_scroll_time = time_on_page - 1.0
+                offset = active_scroll_time * self.scroll_speed
+                if offset > max_offset:
+                    offset = max_offset
+
+            x_pos = text_start_x - offset
+
+        draw.text((x_pos, row_y + 3), dest, font=self.font_tall, fill=config.COLOR_BLUE)
+
+        # Masks.
+        draw.rectangle((0, row_y, 12, row_y + 16), fill=(0, 0, 0))
+        draw.rectangle((mask_x_start, row_y, 64, row_y + 16), fill=(0, 0, 0))
+
+        # Icons and time.
+        self._draw_octagon(draw, 2, row_y + 3, line_color, line[:1] or "?")
+        time_x = 64 - eta_width - 1
+        draw.text((time_x, row_y + 3), mins, font=self.font_tall, fill=config.COLOR_WHITE)
+
     def draw(self):
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
@@ -681,7 +725,6 @@ class MetroWidget(Widget):
 
         # Determine which trains to show.
         current_pair = self._pair_for_index(self.scroll_index)
-        page_step = 2 if len(self.trains) > 1 else 1
 
         # Calculate page duration.
         longest_scroll_time = 0
@@ -710,57 +753,46 @@ class MetroWidget(Widget):
         # Handle cycling.
         now = time.time()
         time_on_page = now - self.page_start_time
+        transition_duration = 0.28
+        page_step = 2 if len(self.trains) > 1 else 1
+        can_slide = len(self.trains) > page_step
+        rows_to_draw = []
 
-        if time_on_page > page_duration:
-            if len(self.trains) > page_step:
-                # Advance by a full page so rows do not "jump" between top/bottom.
-                self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+        if not can_slide and time_on_page > page_duration:
             self.page_start_time = now
             time_on_page = 0
-            current_pair = self._pair_for_index(self.scroll_index)
 
-        # Draw rows.
-        for i, train in enumerate(current_pair):
-            row_y = i * 16
-            line = str(train.get("Line", "--")).upper()
-            dest = train.get("Destination", "")
-            mins = train.get("Min", "--")
-            line_color = self._line_color(line)
+        if can_slide and time_on_page > page_duration:
+            transition_elapsed = time_on_page - page_duration
+            if transition_elapsed >= transition_duration:
+                self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+                self.page_start_time = now
+                current_pair = self._pair_for_index(self.scroll_index)
+                rows_to_draw = [
+                    (current_pair[0], 0, 0.0),
+                ]
+                if len(current_pair) > 1:
+                    rows_to_draw.append((current_pair[1], 16, 0.0))
+            else:
+                shift = int(round((transition_elapsed / transition_duration) * 32))
+                next_pair = self._pair_for_index(self.scroll_index + page_step)
+                if current_pair:
+                    rows_to_draw.append((current_pair[0], -shift, page_duration))
+                if len(current_pair) > 1:
+                    rows_to_draw.append((current_pair[1], 16 - shift, page_duration))
+                if next_pair:
+                    rows_to_draw.append((next_pair[0], 32 - shift, 0.0))
+                if len(next_pair) > 1:
+                    rows_to_draw.append((next_pair[1], 48 - shift, 0.0))
+        else:
+            rows_to_draw = [
+                (current_pair[0], 0, time_on_page),
+            ]
+            if len(current_pair) > 1:
+                rows_to_draw.append((current_pair[1], 16, time_on_page))
 
-            eta_width = self.font_tall.getlength(mins)
-            mask_x_start = 64 - eta_width - 3
-            visible_space = mask_x_start - text_start_x
-
-            text_width = self.font_tall.getlength(dest)
-            x_pos = text_start_x
-
-            if text_width > visible_space:
-                last_space = dest.rfind(" ")
-                if last_space != -1:
-                    max_offset = self.font_tall.getlength(dest[: last_space + 1])
-                else:
-                    max_offset = text_width - visible_space
-
-                if time_on_page < 1.0:
-                    offset = 0
-                else:
-                    active_scroll_time = time_on_page - 1.0
-                    offset = active_scroll_time * self.scroll_speed
-                    if offset > max_offset:
-                        offset = max_offset
-
-                x_pos = text_start_x - offset
-
-            draw.text((x_pos, row_y + 3), dest, font=self.font_tall, fill=config.COLOR_BLUE)
-
-            # Masks.
-            draw.rectangle((0, row_y, 12, row_y + 16), fill=(0, 0, 0))
-            draw.rectangle((mask_x_start, row_y, 64, row_y + 16), fill=(0, 0, 0))
-
-            # Icons and time.
-            self._draw_octagon(draw, 2, row_y + 3, line_color, line[:1] or "?")
-            time_x = 64 - eta_width - 1
-            draw.text((time_x, row_y + 3), mins, font=self.font_tall, fill=config.COLOR_WHITE)
+        for train, row_y, row_time in rows_to_draw:
+            self._draw_train_row(draw, train, row_y, text_start_x, row_time)
 
         return self.canvas
 
