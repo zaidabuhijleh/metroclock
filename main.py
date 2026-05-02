@@ -7,6 +7,7 @@ from widgets.weather import WeatherWidget
 from widgets.flight import FlightWidget
 from widgets.ambient import AmbientWidget
 from widgets.sports import SportsWidget
+from widgets.stocks import StocksWidget
 
 def _pwm_bits_for_mode(mode: str) -> int:
     defaults = {
@@ -15,6 +16,7 @@ def _pwm_bits_for_mode(mode: str) -> int:
         "weather": 5,
         "ambient": 5,
         "sports": 5,
+        "stocks": 5,
     }
     fallback = getattr(config, "MATRIX_PWM_BITS", 3)
     value = getattr(config, f"MATRIX_PWM_BITS_{mode.upper()}", defaults.get(mode, fallback))
@@ -34,6 +36,7 @@ def main():
     flight = FlightWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
     ambient = AmbientWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
     sports = SportsWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
+    stocks = StocksWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
 
     print("Dashboard Started. Press Ctrl+C to exit.")
 
@@ -70,6 +73,9 @@ def main():
             elif mode == "sports":
                 sports.update()
                 img = sports.draw()
+            elif mode == "stocks":
+                stocks.update()
+                img = stocks.draw()
             else:
                 img = metro.draw()
 

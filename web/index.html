@@ -321,6 +321,66 @@
       background: rgba(255,255,255,0.06);
     }
 
+    .stock-input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .stock-input-row input {
+      flex: 1;
+      margin-bottom: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .stock-input-row .btn {
+      white-space: nowrap;
+    }
+    .stock-chip-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+      min-height: 32px;
+    }
+    .stock-chip {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--text);
+      cursor: pointer;
+      transition: all var(--transition);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+    .stock-chip:hover {
+      background: var(--border);
+      color: var(--danger);
+    }
+    .stock-chip::after {
+      content: "×";
+      font-size: 14px;
+      color: var(--text-dim);
+      font-weight: 400;
+    }
+    .stock-chip:hover::after { color: var(--danger); }
+    .stock-chip.empty {
+      cursor: default;
+      color: var(--text-dim);
+      font-weight: 400;
+      letter-spacing: 0;
+    }
+    .stock-chip.empty::after { content: ""; }
+    .stock-chip.empty:hover {
+      background: var(--surface2);
+      color: var(--text-dim);
+    }
+
     .info-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -403,6 +463,7 @@
     <button class="tab-btn" data-tab="weather">Weather</button>
     <button class="tab-btn" data-tab="flight">Flight</button>
     <button class="tab-btn" data-tab="sports">Sports</button>
+    <button class="tab-btn" data-tab="stocks">Stocks</button>
     <button class="tab-btn" data-tab="ambient">Ambient</button>
     <button class="tab-btn" data-tab="wifi">WiFi</button>
     <button class="tab-btn" data-tab="system">System</button>
@@ -427,6 +488,9 @@
         </button>
         <button class="mode-btn" data-mode="sports" onclick="switchMode('sports')">
           <span class="icon">🏀</span>Sports
+        </button>
+        <button class="mode-btn" data-mode="stocks" onclick="switchMode('stocks')">
+          <span class="icon">📈</span>Stocks
         </button>
       </div>
     </div>
@@ -584,6 +648,45 @@
         <button class="btn btn-primary" onclick="saveSports()">Save</button>
         <button class="btn btn-ghost" onclick="clearTestDate()">Use Today</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Stocks Tab -->
+  <div class="panel" id="panel-stocks">
+    <div class="card">
+      <div class="card-title">View</div>
+      <div class="toggle-row">
+        <button class="unit-btn" data-stocks-view="ticker" onclick="setStocksView('ticker')">Ticker</button>
+        <button class="unit-btn" data-stocks-view="focus" onclick="setStocksView('focus')">Focus</button>
+      </div>
+      <p class="hint">Ticker scrolls all your stocks across the display. Focus shows one stock with a price chart and rotates through your list.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Watchlist</div>
+      <div class="stock-input-row">
+        <input type="text" id="stock-add-input" placeholder="e.g. AAPL" maxlength="10" autocomplete="off" onkeydown="if(event.key==='Enter'){addStockSymbol();event.preventDefault();}" />
+        <button class="btn btn-ghost" onclick="addStockSymbol()">Add</button>
+      </div>
+      <div class="stock-chip-grid" id="stock-chip-grid"></div>
+      <p class="hint">Tap a chip to remove it. Symbols are pulled from Yahoo Finance — most US tickers + ETFs work (try <code>SPY</code>, <code>QQQ</code>, <code>BTC-USD</code>).</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Focus Chart Timeframe</div>
+      <div class="toggle-row">
+        <button class="unit-btn" data-stocks-tf="1D" onclick="setStocksTimeframe('1D')">1D</button>
+        <button class="unit-btn" data-stocks-tf="1W" onclick="setStocksTimeframe('1W')">1W</button>
+        <button class="unit-btn" data-stocks-tf="1M" onclick="setStocksTimeframe('1M')">1M</button>
+        <button class="unit-btn" data-stocks-tf="cycle" onclick="setStocksTimeframe('cycle')">Cycle</button>
+      </div>
+      <p class="hint">Cycle rotates through 1D → 1W → 1M while focus view is active.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Pacing</div>
+      <label>Focus rotation (seconds per stock)</label>
+      <input type="number" id="stocks-rotate-seconds" min="2" max="60" />
+      <label>Ticker scroll speed (pixels/sec)</label>
+      <input type="number" id="stocks-ticker-speed" min="5" max="80" />
+      <button class="btn btn-primary btn-full" onclick="saveStocks()">Save</button>
     </div>
   </div>
 
@@ -873,6 +976,9 @@ let selectedUnit = "metric";
 let selectedTeams = new Set();
 let selectedSportsView = "all_live";
 let selectedSportsLiveFocus = true;
+let selectedStocksView = "ticker";
+let selectedStocksTimeframe = "1D";
+let selectedStockSymbols = [];
 let selectedMetroSystem = "wmata";
 let selectedWmataLineFilters = new Set();
 let selectedNycLineFilters = new Set();
@@ -1114,6 +1220,24 @@ async function init() {
     );
     renderTeams();
     document.getElementById("sports-test-date").value = data.SPORTS_TEST_DATE || "";
+
+    // Stocks
+    selectedStocksView = data.STOCKS_VIEW_MODE === "focus" ? "focus" : "ticker";
+    setActiveStocksView(selectedStocksView);
+    selectedStocksTimeframe = ["1D","1W","1M","cycle"].includes(data.STOCKS_FOCUS_TIMEFRAME)
+      ? data.STOCKS_FOCUS_TIMEFRAME : "1D";
+    setActiveStocksTimeframe(selectedStocksTimeframe);
+    selectedStockSymbols = String(data.STOCKS_SYMBOLS || "")
+      .split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+    // dedupe while preserving order
+    selectedStockSymbols = Array.from(new Set(selectedStockSymbols));
+    renderStockChips();
+    if (data.STOCKS_FOCUS_ROTATE_SECONDS != null) {
+      document.getElementById("stocks-rotate-seconds").value = data.STOCKS_FOCUS_ROTATE_SECONDS;
+    }
+    if (data.STOCKS_TICKER_SPEED != null) {
+      document.getElementById("stocks-ticker-speed").value = data.STOCKS_TICKER_SPEED;
+    }
 
   } catch (e) {
     toast("Failed to load settings", "error");
@@ -1704,6 +1828,93 @@ async function saveSports() {
 function clearTestDate() {
   document.getElementById("sports-test-date").value = "";
   saveSports();
+}
+
+// ── Stocks ─────────────────────────────────────────────────────────────────
+function setActiveStocksView(view) {
+  document.querySelectorAll("[data-stocks-view]").forEach(b => {
+    b.classList.toggle("active", b.dataset.stocksView === view);
+  });
+}
+
+function setStocksView(view) {
+  selectedStocksView = view;
+  setActiveStocksView(view);
+  saveStocks();
+}
+
+function setActiveStocksTimeframe(tf) {
+  document.querySelectorAll("[data-stocks-tf]").forEach(b => {
+    b.classList.toggle("active", b.dataset.stocksTf === tf);
+  });
+}
+
+function setStocksTimeframe(tf) {
+  selectedStocksTimeframe = tf;
+  setActiveStocksTimeframe(tf);
+  saveStocks();
+}
+
+function renderStockChips() {
+  const el = document.getElementById("stock-chip-grid");
+  if (!el) return;
+  if (!selectedStockSymbols.length) {
+    el.innerHTML = `<div class="stock-chip empty">No symbols — add one above</div>`;
+    return;
+  }
+  el.innerHTML = selectedStockSymbols.map(sym => {
+    const safe = sym.replace(/[^A-Z0-9.\-]/g, "");
+    return `<div class="stock-chip" title="Remove ${safe}" onclick="removeStockSymbol('${safe}')">${safe}</div>`;
+  }).join("");
+}
+
+function addStockSymbol() {
+  const input = document.getElementById("stock-add-input");
+  const raw = (input.value || "").trim().toUpperCase();
+  // Allow letters, digits, dot, dash (e.g. BRK.B, BTC-USD).
+  const sym = raw.replace(/[^A-Z0-9.\-]/g, "");
+  if (!sym) {
+    toast("Enter a symbol like AAPL", "error");
+    return;
+  }
+  if (selectedStockSymbols.includes(sym)) {
+    toast(`${sym} is already in your list`);
+    input.value = "";
+    return;
+  }
+  if (selectedStockSymbols.length >= 12) {
+    toast("Max 12 symbols", "error");
+    return;
+  }
+  selectedStockSymbols.push(sym);
+  input.value = "";
+  renderStockChips();
+  saveStocks();
+}
+
+function removeStockSymbol(sym) {
+  selectedStockSymbols = selectedStockSymbols.filter(s => s !== sym);
+  renderStockChips();
+  saveStocks();
+}
+
+async function saveStocks() {
+  const rotateRaw = document.getElementById("stocks-rotate-seconds").value;
+  const speedRaw = document.getElementById("stocks-ticker-speed").value;
+  const payload = {
+    STOCKS_SYMBOLS: selectedStockSymbols.join(","),
+    STOCKS_VIEW_MODE: selectedStocksView,
+    STOCKS_FOCUS_TIMEFRAME: selectedStocksTimeframe,
+  };
+  const rotate = parseInt(rotateRaw, 10);
+  if (!Number.isNaN(rotate) && rotate >= 2 && rotate <= 60) {
+    payload.STOCKS_FOCUS_ROTATE_SECONDS = rotate;
+  }
+  const speed = parseInt(speedRaw, 10);
+  if (!Number.isNaN(speed) && speed >= 5 && speed <= 80) {
+    payload.STOCKS_TICKER_SPEED = speed;
+  }
+  await saveSettings(payload);
 }
 
 // ── WiFi ───────────────────────────────────────────────────────────────────
