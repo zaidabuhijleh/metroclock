@@ -303,7 +303,7 @@ class StocksWidget(Widget):
         widths = []
         for it in items:
             sym_w = int(self.font_tall.getlength(it["symbol"]))
-            price_w = int(self.font_tall.getlength(self._fmt_price(it["last_price"])))
+            price_w = self._measure_price_tall(self._fmt_price(it["last_price"]))
             pct_w = int(self.font_tall.getlength(self._fmt_pct(it["last_price"], it["prev_close"])))
             ah_w = 0
             if it["market_state"] in {"PRE", "POST"}:
@@ -329,8 +329,8 @@ class StocksWidget(Widget):
             x += int(self.font_tall.getlength(it["symbol"])) + 3
 
             price_str = self._fmt_price(it["last_price"])
-            d.text((x, y_text), price_str, font=self.font_tall, fill=self.COLOR_TEXT)
-            x += int(self.font_tall.getlength(price_str)) + 3
+            self._draw_price_tall(d, x, y_text, price_str, self.COLOR_TEXT)
+            x += self._measure_price_tall(price_str) + 3
 
             self._draw_arrow(d, x, y_text + 2, change >= 0, chg_color)
             x += 3 + 2
@@ -377,13 +377,12 @@ class StocksWidget(Widget):
         chg_color = self._change_color(change)
 
         price_str = self._fmt_price(last)
-        pw = int(self.font_tall.getlength(price_str))
-        draw.text((self.width - pw - 1, 0), price_str, font=self.font_tall, fill=self.COLOR_TEXT)
+        pw = self._measure_price_tall(price_str)
+        self._draw_price_tall(draw, self.width - pw - 1, 0, price_str, self.COLOR_TEXT)
 
         # Sub row: change + timeframe label
         chg_str = self._fmt_change(last, prev)
         pct_str = self._fmt_pct(last, prev)
-        sub = f"{chg_str} {pct_str}"
         # tag for after-hours/pre on top-left of sub-row
         ms = data.get("market_state", "")
         x_sub = 1
@@ -398,12 +397,29 @@ class StocksWidget(Widget):
             draw.text((x_sub, 11), tag, font=self.font_small, fill=self.COLOR_DIM)
             x_sub += tw + 2
 
-        sub_fit = self._fit_text(sub, self.width - x_sub - 12, self.font_small)
-        draw.text((x_sub, 11), sub_fit, font=self.font_small, fill=chg_color)
-
         tf_label = timeframe
         tw = int(self.font_small.getlength(tf_label))
-        draw.text((self.width - tw - 1, 11), tf_label, font=self.font_small, fill=self.COLOR_DIM)
+        tf_x = self.width - tw - 1
+        draw.text((tf_x, 11), tf_label, font=self.font_small, fill=self.COLOR_DIM)
+
+        # Keep two-decimal percent visible; if space gets tight, trim change first.
+        available = max(0, tf_x - x_sub - 1)
+        sub = f"{chg_str} {pct_str}"
+        sub_compact = f"{chg_str}{pct_str}"
+        if int(self.font_small.getlength(sub)) <= available:
+            sub_to_draw = sub
+        elif int(self.font_small.getlength(sub_compact)) <= available:
+            sub_to_draw = sub_compact
+        else:
+            pct_w = int(self.font_small.getlength(pct_str))
+            if pct_w <= available:
+                chg_max = max(0, available - pct_w - 1)
+                chg_fit = self._fit_text(chg_str, chg_max, self.font_small, ellipsis="")
+                sub_to_draw = f"{chg_fit} {pct_str}" if chg_fit else pct_str
+            else:
+                sub_to_draw = self._fit_text(pct_str, available, self.font_small, ellipsis="")
+
+        self._draw_text_small_with_compact_plus(draw, x_sub, 11, sub_to_draw, chg_color)
 
         # Divider
         draw.line((0, 17, self.width - 1, 17), fill=self.COLOR_FAINT)
@@ -511,12 +527,48 @@ class StocksWidget(Widget):
             draw.line((x, y + 2, x + 2, y + 2), fill=color)
             draw.point((x + 1, y + 3), fill=color)
 
-    def _fit_text(self, text, max_width, font):
+    def _fit_text(self, text, max_width, font, ellipsis="..."):
         if not text:
             return ""
         text = str(text)
         if int(font.getlength(text)) <= max_width:
             return text
-        while text and int(font.getlength(text + "...")) > max_width:
+        while text and int(font.getlength(text + ellipsis)) > max_width:
             text = text[:-1]
-        return (text + "...") if text else ""
+        return (text + ellipsis) if text else ""
+
+    def _measure_price_tall(self, price_str):
+        if "." not in price_str:
+            return int(self.font_tall.getlength(price_str))
+        whole, frac = price_str.split(".", 1)
+        return int(self.font_tall.getlength(whole)) + 1 + int(self.font_tall.getlength(frac))
+
+    def _draw_price_tall(self, draw, x, y, price_str, color):
+        # Use a 1-pixel decimal dot for compact, cleaner price rendering.
+        if "." not in price_str:
+            draw.text((x, y), price_str, font=self.font_tall, fill=color)
+            return
+        whole, frac = price_str.split(".", 1)
+        draw.text((x, y), whole, font=self.font_tall, fill=color)
+        x_dot = x + int(self.font_tall.getlength(whole))
+        y_dot = y + 8
+        draw.point((x_dot, y_dot), fill=color)
+        draw.text((x_dot + 1, y), frac, font=self.font_tall, fill=color)
+
+    def _draw_text_small_with_compact_plus(self, draw, x, y, text, color):
+        if not text:
+            return
+        cx = x
+        plus_w = int(self.font_small.getlength("+"))
+        for ch in text:
+            if ch == "+":
+                self._draw_compact_plus_small(draw, cx, y, color)
+                cx += plus_w
+            else:
+                draw.text((cx, y), ch, font=self.font_small, fill=color)
+                cx += int(self.font_small.getlength(ch))
+
+    def _draw_compact_plus_small(self, draw, x, y, color):
+        # Shorten vertical stroke by one pixel at top/bottom vs full-height plus.
+        draw.line((x, y + 3, x + 3, y + 3), fill=color)
+        draw.line((x + 1, y + 2, x + 1, y + 4), fill=color)
