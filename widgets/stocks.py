@@ -381,8 +381,8 @@ class StocksWidget(Widget):
         self._draw_price_tall(draw, self.width - pw - 1, 0, price_str, self.COLOR_TEXT)
 
         # Sub row: change + timeframe label
-        chg_str = self._fmt_change(last, prev)
-        pct_str = self._fmt_pct(last, prev)
+        chg_str = self._fmt_change(last, prev, signed=False, with_dollar=True)
+        pct_str = self._fmt_pct(last, prev, signed=False)
         # tag for after-hours/pre on top-left of sub-row
         ms = data.get("market_state", "")
         x_sub = 1
@@ -494,14 +494,19 @@ class StocksWidget(Widget):
             return f"{v:.2f}"
         return f"{v:.3f}"
 
-    def _fmt_change(self, last, prev):
+    def _fmt_change(self, last, prev, signed=True, with_dollar=False):
         change = round(self._change(last, prev), 2)
         if change == -0.0:
             change = 0.0
-        sign = "+" if change >= 0 else "-"
-        return f"{sign}{abs(change):.2f}"
+        magnitude = f"{abs(change):.2f}"
+        if with_dollar:
+            magnitude = f"${magnitude}"
+        if signed:
+            sign = "+" if change >= 0 else "-"
+            return f"{sign}{magnitude}"
+        return magnitude
 
-    def _fmt_pct(self, last, prev):
+    def _fmt_pct(self, last, prev, signed=True):
         try:
             if prev is None or prev == 0:
                 return "--%"
@@ -511,8 +516,11 @@ class StocksWidget(Widget):
         pct = round(pct, 2)
         if pct == -0.0:
             pct = 0.0
-        sign = "+" if pct >= 0 else "-"
-        return f"{sign}{abs(pct):.2f}%"
+        magnitude = f"{abs(pct):.2f}%"
+        if signed:
+            sign = "+" if pct >= 0 else "-"
+            return f"{sign}{magnitude}"
+        return magnitude
 
     def _draw_arrow(self, draw, x, y, up, color):
         # 3x4 chunky triangle.
