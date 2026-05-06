@@ -48,8 +48,6 @@ class StocksWidget(Widget):
         self.focus_index = 0
         self.last_focus_rotate = time.time()
         self.cycle_tf_index = 0
-        self.last_cycle_advance = time.time()
-        self.cycle_advance_interval = 24.0
 
         self.ticker_offset = 0.0
         self.last_ticker_step = time.time()
@@ -118,18 +116,27 @@ class StocksWidget(Widget):
             return
         self.placeholder = None
 
+        view_mode = self._view_mode()
+        timeframe_setting = self._timeframe_setting()
+        cycle_focus = timeframe_setting == "cycle" and view_mode == "focus"
+
         rotate_interval = self._focus_rotate_interval()
         if symbols and now - self.last_focus_rotate >= rotate_interval:
-            self.focus_index = (self.focus_index + 1) % len(symbols)
-            self.last_focus_rotate = now
-
-        if self._timeframe_setting() == "cycle" and self._view_mode() == "focus":
-            if now - self.last_cycle_advance >= self.cycle_advance_interval:
+            if cycle_focus:
+                # Cycle all timeframes for the current symbol before moving
+                # on to the next symbol.
                 self.cycle_tf_index = (self.cycle_tf_index + 1) % len(TIMEFRAME_ORDER)
-                self.last_cycle_advance = now
+                if self.cycle_tf_index == 0:
+                    self.focus_index = (self.focus_index + 1) % len(symbols)
+            else:
+                self.focus_index = (self.focus_index + 1) % len(symbols)
+                self.cycle_tf_index = 0
+            self.last_focus_rotate = now
+        elif not cycle_focus:
+            self.cycle_tf_index = 0
 
         # Only fetch what's actually being shown.
-        if self._view_mode() == "ticker":
+        if view_mode == "ticker":
             needed = {"1D"}
         else:
             needed = {self._current_timeframe()}
@@ -472,9 +479,11 @@ class StocksWidget(Widget):
         return f"{v:.3f}"
 
     def _fmt_change(self, last, prev):
-        change = self._change(last, prev)
+        change = round(self._change(last, prev), 2)
+        if change == -0.0:
+            change = 0.0
         sign = "+" if change >= 0 else "-"
-        return f"{sign}{self._fmt_price(abs(change))}"
+        return f"{sign}{abs(change):.2f}"
 
     def _fmt_pct(self, last, prev):
         try:
@@ -483,13 +492,11 @@ class StocksWidget(Widget):
             pct = (float(last) - float(prev)) / float(prev) * 100.0
         except (TypeError, ValueError):
             return "--%"
+        pct = round(pct, 2)
+        if pct == -0.0:
+            pct = 0.0
         sign = "+" if pct >= 0 else "-"
-        absp = abs(pct)
-        if absp >= 100:
-            return f"{sign}{absp:.0f}%"
-        if absp >= 10:
-            return f"{sign}{absp:.1f}%"
-        return f"{sign}{absp:.2f}%"
+        return f"{sign}{abs(pct):.2f}%"
 
     def _draw_arrow(self, draw, x, y, up, color):
         # 3x4 chunky triangle.
