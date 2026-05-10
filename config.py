@@ -10,6 +10,7 @@ MATRIX_PWM_BITS_FLIGHT = 3
 MATRIX_PWM_BITS_WEATHER = 5
 MATRIX_PWM_BITS_AMBIENT = 5
 MATRIX_PWM_BITS_SPORTS = 5
+MATRIX_PWM_BITS_STOCKS = 5
 
 # --- FONTS ---
 FONT_PATH_TALL = "assets/fonts/6x10.bdf" 
@@ -64,6 +65,13 @@ SPORTS_VIEW_MODE = "all_live"   # "all_live" (all teams) or "favorites"
 SPORTS_FAVORITE_TEAMS = ""      # CSV of NBA abbreviations, e.g. "LAL,BOS"
 SPORTS_TEST_DATE = ""           # YYYYMMDD to pin a date for testing; empty = today
 SPORTS_LIVE_FOCUS = True        # If True: when any chosen game is live, rotate only live games
+
+# --- STOCKS ---
+STOCKS_SYMBOLS = "AAPL,TSLA,NVDA,SPY"
+STOCKS_VIEW_MODE = "ticker"
+STOCKS_FOCUS_TIMEFRAME = "1D"
+STOCKS_FOCUS_ROTATE_SECONDS = 8        # seconds per stock in focus view
+STOCKS_TICKER_SPEED = 25               # ticker scroll speed in pixels/sec
 
 # --- COLORS ---
 COLOR_WHITE = (255, 255, 255)
