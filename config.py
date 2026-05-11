@@ -58,6 +58,7 @@ OPENWEATHER_CITY_ID = "4140963"  # Washington DC
 WEATHER_UNITS = "metric"
 
 AMBIENT_SCENE_DURATION = 60  # seconds per scene
+AMBIENT_SCENE = "auto"  # "auto" or pinned scene key
 
 # Flight Tracking Configuration
 AVIATIONSTACK_API_KEY = ""
@@ -117,6 +118,7 @@ RUNTIME_EDITABLE_FIELDS = {
     "SPORTS_FAVORITE_TEAMS",
     "SPORTS_TEST_DATE",
     "SPORTS_LIVE_FOCUS",
+    "AMBIENT_SCENE",
     "STOCKS_SYMBOLS",
     "STOCKS_VIEW_MODE",
     "STOCKS_FOCUS_TIMEFRAME",

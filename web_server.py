@@ -14,7 +14,8 @@ _display_mode = None
 _weather_preview_lock = threading.Lock()
 _weather_preview = None
 _ambient_scene_lock = threading.Lock()
-_ambient_scene = None  # None = auto-cycle; scene key string = pinned
+_AMBIENT_UNSET = object()
+_ambient_scene = _AMBIENT_UNSET  # None = auto-cycle; scene key string = pinned
 _brightness_lock = threading.Lock()
 _brightness = None
 
@@ -75,15 +76,34 @@ def set_weather_preview(preview):
         _weather_preview = preview
 
 
+def _normalize_ambient_scene(scene):
+    aliases = {
+        "city_night": "city_day",
+        "forest": "sunset_trail",
+        "winter_cabin": "alpine_cabin",
+        "space": "coral_reef",
+    }
+    if scene in aliases:
+        scene = aliases[scene]
+
+    if scene in ("", None, "auto"):
+        return None
+    return str(scene)
+
+
 def get_ambient_scene():
     with _ambient_scene_lock:
+        global _ambient_scene
+        if _ambient_scene is _AMBIENT_UNSET:
+            configured = getattr(config, "AMBIENT_SCENE", "auto")
+            _ambient_scene = _normalize_ambient_scene(configured)
         return _ambient_scene
 
 
 def set_ambient_scene(scene):
     with _ambient_scene_lock:
         global _ambient_scene
-        _ambient_scene = scene
+        _ambient_scene = _normalize_ambient_scene(scene)
 
 
 def _get_ip() -> str:
@@ -144,6 +164,8 @@ def api_settings_post():
             set_display_mode(changed["DISPLAY_MODE"])
         if "MATRIX_BRIGHTNESS" in changed:
             set_brightness(changed["MATRIX_BRIGHTNESS"])
+        if "AMBIENT_SCENE" in changed:
+            set_ambient_scene(changed["AMBIENT_SCENE"])
         return jsonify({"ok": True, "changed": list(changed.keys())})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -188,23 +210,13 @@ def api_weather_preview():
 @app.route("/api/ambient/scene", methods=["POST"])
 def api_ambient_scene():
     data = request.get_json(force=True) or {}
-    scene = data.get("scene")
-    aliases = {
-        "city_night": "city_day",
-        "forest": "sunset_trail",
-        "winter_cabin": "alpine_cabin",
-        "space": "coral_reef",
-    }
-    if scene in aliases:
-        scene = aliases[scene]
+    scene = _normalize_ambient_scene(data.get("scene"))
 
     allowed = {"beach", "city_day", "sunset_trail", "alpine_cabin", "coral_reef", "lofi_cat"}
-    if scene in ("", None, "auto"):
-        set_ambient_scene(None)
-        return jsonify({"ok": True, "scene": None})
-    if scene not in allowed:
+    if scene is not None and scene not in allowed:
         return jsonify({"ok": False, "error": "Invalid scene"}), 400
     set_ambient_scene(scene)
+    config_manager.write_config({"AMBIENT_SCENE": scene or "auto"})
     return jsonify({"ok": True, "scene": scene})
 
 
