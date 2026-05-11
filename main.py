@@ -1,4 +1,5 @@
 import time
+import traceback
 import config
 import web_server
 from core.display import Display
@@ -54,53 +55,58 @@ def main():
 
     try:
         while True:
-            mode = web_server.get_display_mode()
-            target_pwm_bits = _pwm_bits_for_mode(mode)
-            if display is None or target_pwm_bits != active_pwm_bits:
-                display = Display(
-                    width=config.MATRIX_WIDTH,
-                    height=config.MATRIX_HEIGHT,
-                    slowdown=config.MATRIX_SLOWDOWN,
-                    brightness=config.MATRIX_BRIGHTNESS,
-                    pwm_bits=target_pwm_bits,
-                )
-                active_pwm_bits = target_pwm_bits
-                print(f"Display mode={mode}, pwm_bits={target_pwm_bits}")
+            try:
+                mode = web_server.get_display_mode()
+                target_pwm_bits = _pwm_bits_for_mode(mode)
+                if display is None or target_pwm_bits != active_pwm_bits:
+                    display = Display(
+                        width=config.MATRIX_WIDTH,
+                        height=config.MATRIX_HEIGHT,
+                        slowdown=config.MATRIX_SLOWDOWN,
+                        brightness=config.MATRIX_BRIGHTNESS,
+                        pwm_bits=target_pwm_bits,
+                    )
+                    active_pwm_bits = target_pwm_bits
+                    print(f"Display mode={mode}, pwm_bits={target_pwm_bits}")
 
-            display.clear()
-            display.set_brightness(web_server.get_brightness())
+                display.clear()
+                display.set_brightness(web_server.get_brightness())
 
-            if mode == "metro":
-                metro.update()
-                img = metro.draw()
-            elif mode == "weather":
-                weather.update()
-                img = weather.draw()
-            elif mode == "flight":
-                flight.update()
-                img = flight.draw()
-            elif mode == "ambient":
-                ambient.update()
-                img = ambient.draw()
-            elif mode == "sports":
-                sports.update()
-                img = sports.draw()
-            elif mode == "stocks":
-                stocks.update()
-                img = stocks.draw()
-            elif mode == "clock":
-                clock.update()
-                img = clock.draw()
-            elif mode == "clock_widget":
-                clock.update()
-                img = clock.draw()
-            else:
-                clock.update()
-                img = clock.draw()
+                if mode == "metro":
+                    metro.update()
+                    img = metro.draw()
+                elif mode == "weather":
+                    weather.update()
+                    img = weather.draw()
+                elif mode == "flight":
+                    flight.update()
+                    img = flight.draw()
+                elif mode == "ambient":
+                    ambient.update()
+                    img = ambient.draw()
+                elif mode == "sports":
+                    sports.update()
+                    img = sports.draw()
+                elif mode == "stocks":
+                    stocks.update()
+                    img = stocks.draw()
+                elif mode == "clock":
+                    clock.update()
+                    img = clock.draw()
+                elif mode == "clock_widget":
+                    clock.update()
+                    img = clock.draw()
+                else:
+                    clock.update()
+                    img = clock.draw()
 
-            display.draw_image(img)
-            display.push()
-            time.sleep(0.05)
+                display.draw_image(img)
+                display.push()
+                time.sleep(0.05)
+            except Exception as exc:
+                print(f"Render loop error ({web_server.get_display_mode()}): {exc}")
+                traceback.print_exc()
+                time.sleep(0.25)
 
     except KeyboardInterrupt:
         print("\nExiting...")

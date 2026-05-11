@@ -70,6 +70,8 @@ class ClockWidget(Widget):
 
         self._ticker_offset = 0.0
         self._last_ticker_step = time.time()
+        self._scroll_offsets = {}
+        self._scroll_last_ts = {}
 
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
@@ -190,20 +192,19 @@ class ClockWidget(Widget):
 
             if widget_count == 2 and left_w >= 12 and self.height >= 12:
                 # Left area becomes clock (top) + horizontal mini-widget (bottom).
-                left_clock_h = int(round(self.height * 2 / 3))
+                left_clock_h = max(1, min(self.height - 1, int(round(self.height * 2 / 3))))
                 left_bottom_h = self.height - left_clock_h
 
                 face = self._render_clock_face(left_w, left_clock_h, "vertical")
                 self.canvas.paste(face, (0, 0))
-                draw.line((0, left_clock_h, left_w - 1, left_clock_h), fill=self.COLOR_DIVIDER)
 
                 bottom_source = self._resolve_supported_source(secondary_req, "horizontal")
                 self._draw_widget_region(
                     draw,
                     0,
-                    left_clock_h + 1,
+                    left_clock_h,
                     left_w,
-                    max(1, left_bottom_h - 1),
+                    max(1, left_bottom_h),
                     bottom_source,
                     focused=False,
                 )
@@ -211,23 +212,21 @@ class ClockWidget(Widget):
                 face = self._render_clock_face(left_w, self.height, "vertical")
                 self.canvas.paste(face, (0, 0))
 
-            draw.line((left_w, 0, left_w, self.height - 1), fill=self.COLOR_DIVIDER)
             self._draw_widget_region(
                 draw,
-                left_w + 1,
+                left_w,
                 0,
-                max(1, side_w - 1),
+                max(1, side_w),
                 self.height,
                 side_source,
                 focused=True,
             )
         else:
-            clock_h = int(round(self.height * 2 / 3))
+            clock_h = max(1, min(self.height - 1, int(round(self.height * 2 / 3))))
             widget_h = self.height - clock_h
 
             face = self._render_clock_face(self.width, clock_h, "horizontal")
             self.canvas.paste(face, (0, 0))
-            draw.line((0, clock_h, self.width - 1, clock_h), fill=self.COLOR_DIVIDER)
 
             if widget_count == 2 and self.width >= 16:
                 left_w = self.width // 2
@@ -238,19 +237,18 @@ class ClockWidget(Widget):
                 self._draw_widget_region(
                     draw,
                     0,
-                    clock_h + 1,
+                    clock_h,
                     left_w,
-                    max(1, widget_h - 1),
+                    max(1, widget_h),
                     source_a,
                     focused=False,
                 )
-                draw.line((left_w, clock_h + 1, left_w, self.height - 1), fill=self.COLOR_DIVIDER)
                 self._draw_widget_region(
                     draw,
-                    left_w + 1,
-                    clock_h + 1,
-                    max(1, right_w - 1),
-                    max(1, widget_h - 1),
+                    left_w,
+                    clock_h,
+                    max(1, right_w),
+                    max(1, widget_h),
                     source_b,
                     focused=False,
                 )
@@ -259,9 +257,9 @@ class ClockWidget(Widget):
                 self._draw_widget_region(
                     draw,
                     0,
-                    clock_h + 1,
+                    clock_h,
                     self.width,
-                    max(1, widget_h - 1),
+                    max(1, widget_h),
                     source,
                     focused=False,
                 )
@@ -275,14 +273,21 @@ class ClockWidget(Widget):
         d = ImageDraw.Draw(img)
         face = self._face()
 
-        if face == "digital_matrix":
-            self._draw_face_digital_matrix(d, w, h, variant)
-        elif face == "digital_segment":
-            self._draw_face_digital_segment(d, w, h, variant)
-        elif face == "analog_ring":
-            self._draw_face_analog_ring(d, w, h, variant)
-        else:
-            self._draw_face_analog_compass(d, w, h, variant)
+        try:
+            if face == "digital_matrix":
+                self._draw_face_digital_matrix(d, w, h, variant)
+            elif face == "digital_segment":
+                self._draw_face_digital_segment(d, w, h, variant)
+            elif face == "analog_ring":
+                self._draw_face_analog_ring(d, w, h, variant)
+            else:
+                self._draw_face_analog_compass(d, w, h, variant)
+        except Exception:
+            # Keep clock mode alive even if one face errors in an edge case.
+            try:
+                self._draw_face_digital_matrix(d, w, h, variant)
+            except Exception:
+                d.text((1, 1), self._time_text(False), font=self.font_small, fill=self.COLOR_MAIN)
 
         return img
 
@@ -497,24 +502,86 @@ class ClockWidget(Widget):
         if w <= 0 or h <= 0:
             return
 
-        if source == "metro":
-            self._draw_widget_metro(draw, x, y, w, h)
-            return
-        if source == "weather":
-            self._draw_widget_weather(draw, x, y, w, h, focused=focused)
-            return
-        if source == "stocks":
-            self._draw_widget_stocks(draw, x, y, w, h, focused=focused)
-            return
-        if source == "flight":
-            self._draw_widget_flight(draw, x, y, w, h)
-            return
-        if source == "sports":
-            self._draw_widget_sports(draw, x, y, w, h)
+        try:
+            if source == "metro":
+                self._draw_widget_metro(draw, x, y, w, h)
+                return
+            if source == "weather":
+                self._draw_widget_weather(draw, x, y, w, h, focused=focused)
+                return
+            if source == "stocks":
+                self._draw_widget_stocks(draw, x, y, w, h, focused=focused)
+                return
+            if source == "flight":
+                self._draw_widget_flight(draw, x, y, w, h)
+                return
+            if source == "sports":
+                self._draw_widget_sports(draw, x, y, w, h)
+                return
+
+            txt = self._fit_text(source.upper(), max(0, w - 2), self.font_small)
+            draw.text((x + 1, y + max(0, (h - 6) // 2)), txt, font=self.font_small, fill=self.COLOR_DIM)
+        except Exception:
+            fallback = self._fit_text("WIDGET ERR", max(0, w - 2), self.font_small)
+            draw.text((x + 1, y + max(0, (h - 6) // 2)), fallback, font=self.font_small, fill=self.COLOR_DOWN)
+
+    def _current_metro_station_label(self):
+        system = str(getattr(config, "METRO_SYSTEM", "wmata") or "wmata").strip().lower()
+        if system == "nyc":
+            raw = str(getattr(config, "NYC_STOP_IDS", "") or "")
+            first = raw.split(",")[0].strip().upper() if raw else ""
+            if hasattr(self.metro, "_strip_nyc_stop_id"):
+                try:
+                    stripped = self.metro._strip_nyc_stop_id(first)
+                except Exception:
+                    stripped = first
+            else:
+                stripped = first
+            name_map = getattr(self.metro, "_nyc_stop_name_map", {}) or {}
+            return str(name_map.get(first) or name_map.get(stripped) or stripped or "NYC")
+
+        if system == "ttc":
+            sid = str(getattr(config, "TTC_STATION_ID", "") or "").strip()
+            return sid.replace("_", " ").upper() if sid else "TTC"
+
+        code = str(getattr(config, "WMATA_STATION_CODE", "") or "").split(",")[0].strip().upper()
+        return code or "WMATA"
+
+    def _draw_scrolling_text_clipped(self, x, y, w, h, text, color, key, speed=16.0):
+        if w <= 1 or h <= 1:
             return
 
-        txt = self._fit_text(source.upper(), max(0, w - 2), self.font_small)
-        draw.text((x + 1, y + max(0, (h - 6) // 2)), txt, font=self.font_small, fill=self.COLOR_DIM)
+        txt = str(text or "").strip()
+        if not txt:
+            return
+
+        region = Image.new("RGB", (w, h), self.COLOR_BG)
+        rd = ImageDraw.Draw(region)
+        text_w = int(self.font_small.getlength(txt))
+        y_text = max(0, (h - 6) // 2)
+
+        if text_w <= max(1, w - 2):
+            rd.text((max(1, (w - text_w) // 2), y_text), txt, font=self.font_small, fill=color)
+            self.canvas.paste(region, (x, y))
+            return
+
+        now = time.time()
+        last_ts = self._scroll_last_ts.get(key, now)
+        dt = now - last_ts
+        self._scroll_last_ts[key] = now
+        if dt < 0 or dt > 0.6:
+            dt = 0.05
+
+        gap = 10
+        cycle = text_w + gap
+        offset = self._scroll_offsets.get(key, 0.0)
+        offset = (offset + dt * speed) % cycle
+        self._scroll_offsets[key] = offset
+
+        start_x = w - int(offset)
+        rd.text((start_x, y_text), txt, font=self.font_small, fill=color)
+        rd.text((start_x - cycle, y_text), txt, font=self.font_small, fill=color)
+        self.canvas.paste(region, (x, y))
 
     def _draw_widget_metro(self, draw, x, y, w, h):
         trains = getattr(self.metro, "trains", []) or []
@@ -526,15 +593,10 @@ class ClockWidget(Widget):
         line = str(row.get("Line", "--")).upper()
         mins = str(row.get("Min", "--"))
         dest = str(row.get("Destination", "Train") or "Train")
-
-        head = f"{line} {mins}m"
-        head_w = int(self.font_small.getlength(head))
+        station = self._current_metro_station_label()
+        text = f"{station} {line} {mins}M TO {dest.upper()}"
         line_color = self.metro._line_color(line) if hasattr(self.metro, "_line_color") else self.COLOR_ACCENT
-        draw.text((x + 1, y + 1), head, font=self.font_small, fill=line_color)
-
-        avail = max(0, w - head_w - 4)
-        dest_fit = self._fit_text(dest.upper(), avail, self.font_small)
-        draw.text((x + 2 + head_w, y + 1), dest_fit, font=self.font_small, fill=self.COLOR_MAIN)
+        self._draw_scrolling_text_clipped(x, y, w, h, text, line_color, key=f"metro:{station}:{line}:{dest}:{mins}", speed=14.0)
 
     def _weather_data(self):
         preview = web_server.get_weather_preview()
@@ -597,8 +659,7 @@ class ClockWidget(Widget):
             return
 
         text = f"{temp}\N{DEGREE SIGN} {label}"
-        fit = self._fit_text(text, max(0, w - 2), self.font_small)
-        draw.text((x + 1, y + max(0, (h - 6) // 2)), fit, font=self.font_small, fill=self.COLOR_MAIN)
+        self._draw_scrolling_text_clipped(x, y, w, h, text, self.COLOR_MAIN, key=f"weather:{temp}:{label}", speed=14.0)
 
     def _stock_symbols(self):
         if hasattr(self.stocks, "_symbols"):
@@ -662,25 +723,7 @@ class ClockWidget(Widget):
             return
 
         ticker = "   ".join(parts)
-        tw = int(self.font_small.getlength(ticker))
-        if tw <= w - 2:
-            draw.text((x + max(1, (w - tw) // 2), y + max(0, (h - 6) // 2)), ticker, font=self.font_small, fill=self.COLOR_UP)
-            return
-
-        now = time.time()
-        dt = now - self._last_ticker_step
-        self._last_ticker_step = now
-        if dt < 0 or dt > 0.5:
-            dt = 0.05
-        speed = 18.0
-        gap = 10
-        cycle = tw + gap
-        self._ticker_offset = (self._ticker_offset + dt * speed) % cycle
-
-        start_x = x + w - int(self._ticker_offset)
-        y_text = y + max(0, (h - 6) // 2)
-        draw.text((start_x, y_text), ticker, font=self.font_small, fill=self.COLOR_UP)
-        draw.text((start_x - cycle, y_text), ticker, font=self.font_small, fill=self.COLOR_UP)
+        self._draw_scrolling_text_clipped(x, y, w, h, ticker, self.COLOR_UP, key=f"stocks:{ticker}", speed=18.0)
 
     def _draw_widget_flight(self, draw, x, y, w, h):
         data = getattr(self.flight, "data", None)
@@ -692,7 +735,7 @@ class ClockWidget(Widget):
         flight_no = str((data.get("flight") or {}).get("iata") or getattr(config, "FLIGHT_NUMBER", "FLIGHT")).upper()
         status = str(data.get("flight_status", "") or "").upper()
         text = f"{flight_no} {status}"
-        draw.text((x + 1, y + max(0, (h - 6) // 2)), self._fit_text(text, max(0, w - 2), self.font_small), font=self.font_small, fill=self.COLOR_MAIN)
+        self._draw_scrolling_text_clipped(x, y, w, h, text, self.COLOR_MAIN, key=f"flight:{text}", speed=14.0)
 
     def _draw_widget_sports(self, draw, x, y, w, h):
         games = getattr(self.sports, "games", []) or []
@@ -706,7 +749,7 @@ class ClockWidget(Widget):
         home = game.get("home", {})
         status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else ""
         text = f"{away.get('abbr', 'AWY')} {away.get('score', 0)}-{home.get('score', 0)} {home.get('abbr', 'HME')} {status}"
-        draw.text((x + 1, y + max(0, (h - 6) // 2)), self._fit_text(text, max(0, w - 2), self.font_small), font=self.font_small, fill=self.COLOR_MAIN)
+        self._draw_scrolling_text_clipped(x, y, w, h, text, self.COLOR_MAIN, key=f"sports:{text}", speed=14.0)
 
     # --------------------------------------------------------------- utils
 
