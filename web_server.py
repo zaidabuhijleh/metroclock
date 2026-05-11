@@ -316,7 +316,7 @@ def api_settings_post():
 def api_mode():
     data = request.get_json(force=True) or {}
     mode = data.get("mode", "").lower()
-    if mode not in ("metro", "weather", "flight", "ambient", "sports", "stocks"):
+    if mode not in ("metro", "weather", "flight", "ambient", "sports", "stocks", "clock", "clock_widget"):
         return jsonify({"ok": False, "error": "Invalid mode"}), 400
     set_display_mode(mode)
     return jsonify({"ok": True, "mode": mode})

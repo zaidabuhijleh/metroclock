@@ -15,6 +15,7 @@ MATRIX_PWM_BITS_WEATHER = 5
 MATRIX_PWM_BITS_AMBIENT = 5
 MATRIX_PWM_BITS_SPORTS = 5
 MATRIX_PWM_BITS_STOCKS = 5
+MATRIX_PWM_BITS_CLOCK = 5
 
 # --- FONTS ---
 FONT_PATH_TALL = "assets/fonts/6x10.bdf"
@@ -78,13 +79,25 @@ STOCKS_FOCUS_TIMEFRAME = "1D"
 STOCKS_FOCUS_ROTATE_SECONDS = 8  # seconds per stock in focus view
 STOCKS_TICKER_SPEED = 25  # ticker scroll speed in pixels/sec
 
+# --- CLOCK ---
+# Face options:
+#   digital_matrix, digital_segment, analog_ring, analog_compass
+CLOCK_FACE = "digital_matrix"
+# "horizontal" -> clock top 2/3, widget bottom 1/3
+# "vertical"   -> clock left 2/3, widget right 1/3
+CLOCK_WIDGET_LAYOUT = "horizontal"
+# Widget shown in clock+widget mode.
+CLOCK_WIDGET_SOURCE = "weather"
+# 24-hour vs 12-hour clock display.
+CLOCK_USE_24H = False
+
 # --- COLORS ---
 COLOR_WHITE = (255, 255, 255)
 COLOR_GREY = (100, 100, 100)
 COLOR_BLUE = (0, 0, 255)
 COLOR_YELLOW = (255, 255, 0)
 
-DISPLAY_MODE = "metro"
+DISPLAY_MODE = "clock"
 WEB_SERVER_PORT = 80
 SETUP_MODE = False
 
@@ -124,6 +137,10 @@ RUNTIME_EDITABLE_FIELDS = {
     "STOCKS_FOCUS_TIMEFRAME",
     "STOCKS_FOCUS_ROTATE_SECONDS",
     "STOCKS_TICKER_SPEED",
+    "CLOCK_FACE",
+    "CLOCK_WIDGET_LAYOUT",
+    "CLOCK_WIDGET_SOURCE",
+    "CLOCK_USE_24H",
 }
 
 def _default_runtime_config_path():
