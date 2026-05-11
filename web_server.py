@@ -1,11 +1,26 @@
+import hmac
 import importlib
+import os
 import socket
 import subprocess
 import threading
+import uuid
 
 import config
 import config_manager
 from flask import Flask, jsonify, request, send_from_directory
+
+API_VERSION = "1.0"
+
+WRITE_ENDPOINTS = {
+    "/api/settings",
+    "/api/mode",
+    "/api/weather/preview",
+    "/api/ambient/scene",
+    "/api/wifi/connect",
+    "/api/restart",
+    "/api/reboot",
+}
 
 app = Flask(__name__, static_folder="web", static_url_path="")
 
@@ -14,9 +29,131 @@ _display_mode = None
 _weather_preview_lock = threading.Lock()
 _weather_preview = None
 _ambient_scene_lock = threading.Lock()
-_ambient_scene = None  # None = auto-cycle; scene key string = pinned
+_AMBIENT_UNSET = object()
+_ambient_scene = _AMBIENT_UNSET  # None = auto-cycle; scene key string = pinned
 _brightness_lock = threading.Lock()
 _brightness = None
+_device_id_lock = threading.Lock()
+_device_id = None
+_app_version_lock = threading.Lock()
+_app_version = None
+
+
+def _configured_api_token():
+    token = str(os.environ.get("METROCLOCK_API_TOKEN", "") or "").strip()
+    return token or None
+
+
+def _extract_api_token():
+    header_token = request.headers.get("X-MetroClock-Token")
+    if header_token:
+        return str(header_token).strip()
+
+    auth_header = request.headers.get("Authorization", "")
+    if isinstance(auth_header, str) and auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return None
+
+
+@app.before_request
+def _authorize_writes():
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return None
+    if request.path not in WRITE_ENDPOINTS:
+        return None
+
+    expected_token = _configured_api_token()
+    if not expected_token:
+        return None
+
+    provided_token = _extract_api_token() or ""
+    if hmac.compare_digest(provided_token, expected_token):
+        return None
+
+    return jsonify({
+        "ok": False,
+        "error": "Unauthorized",
+        "hint": "Provide X-MetroClock-Token or Authorization: Bearer <token>",
+    }), 401
+
+
+def _device_id_path():
+    return os.environ.get("METROCLOCK_DEVICE_ID_PATH", "/etc/metroclock/device_id")
+
+
+def _get_device_id():
+    with _device_id_lock:
+        global _device_id
+        if _device_id:
+            return _device_id
+
+        env_id = str(os.environ.get("METROCLOCK_DEVICE_ID", "") or "").strip()
+        if env_id:
+            _device_id = env_id
+            return _device_id
+
+        path = _device_id_path()
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                stored = f.read().strip()
+            if stored:
+                _device_id = stored
+                return _device_id
+        except Exception:
+            pass
+
+        generated = uuid.uuid4().hex
+        directory = os.path.dirname(path)
+        try:
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(generated + "\n")
+        except Exception:
+            # Keep generated id in-memory even if file write fails.
+            pass
+
+        _device_id = generated
+        return _device_id
+
+
+def _get_app_version():
+    with _app_version_lock:
+        global _app_version
+        if _app_version:
+            return _app_version
+
+        env_version = str(os.environ.get("METROCLOCK_APP_VERSION", "") or "").strip()
+        if env_version:
+            _app_version = env_version
+            return _app_version
+
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        try:
+            git_ver = subprocess.check_output(
+                ["git", "describe", "--tags", "--always", "--dirty"],
+                cwd=app_dir,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+            if git_ver:
+                _app_version = git_ver
+                return _app_version
+        except Exception:
+            pass
+
+        for filename in ("version.txt", "VERSION"):
+            try:
+                with open(os.path.join(app_dir, filename), "r", encoding="utf-8") as f:
+                    file_ver = f.read().strip()
+                if file_ver:
+                    _app_version = file_ver
+                    return _app_version
+            except Exception:
+                pass
+
+        _app_version = "dev"
+        return _app_version
 
 
 def get_display_mode() -> str:
@@ -54,13 +191,13 @@ def get_weather_preview():
 
 def preview_weather_data(preview: str, units: str) -> dict:
     table = {
-        "clear_day":    ("Clear",        "clear sky",      "01d"),
-        "clear_night":  ("Clear",        "clear sky",      "01n"),
-        "cloudy":       ("Clouds",       "overcast clouds","04d"),
-        "drizzle":      ("Drizzle",      "light drizzle",  "09d"),
-        "rain":         ("Rain",         "light rain",     "10d"),
-        "thunderstorm": ("Thunderstorm", "thunderstorm",   "11d"),
-        "snow":         ("Snow",         "light snow",     "13d"),
+        "clear_day": ("Clear", "clear sky", "01d"),
+        "clear_night": ("Clear", "clear sky", "01n"),
+        "cloudy": ("Clouds", "overcast clouds", "04d"),
+        "drizzle": ("Drizzle", "light drizzle", "09d"),
+        "rain": ("Rain", "light rain", "10d"),
+        "thunderstorm": ("Thunderstorm", "thunderstorm", "11d"),
+        "snow": ("Snow", "light snow", "13d"),
     }
     main, description, icon_code = table.get(preview, table["clear_day"])
     return {
@@ -75,15 +212,34 @@ def set_weather_preview(preview):
         _weather_preview = preview
 
 
+def _normalize_ambient_scene(scene):
+    aliases = {
+        "city_night": "city_day",
+        "forest": "sunset_trail",
+        "winter_cabin": "alpine_cabin",
+        "space": "coral_reef",
+    }
+    if scene in aliases:
+        scene = aliases[scene]
+
+    if scene in ("", None, "auto"):
+        return None
+    return str(scene)
+
+
 def get_ambient_scene():
     with _ambient_scene_lock:
+        global _ambient_scene
+        if _ambient_scene is _AMBIENT_UNSET:
+            configured = getattr(config, "AMBIENT_SCENE", "auto")
+            _ambient_scene = _normalize_ambient_scene(configured)
         return _ambient_scene
 
 
 def set_ambient_scene(scene):
     with _ambient_scene_lock:
         global _ambient_scene
-        _ambient_scene = scene
+        _ambient_scene = _normalize_ambient_scene(scene)
 
 
 def _get_ip() -> str:
@@ -104,12 +260,13 @@ def _mask_config(cfg: dict) -> dict:
         "AVIATIONSTACK_API_KEY",
     }
     result = {}
-    for k, v in cfg.items():
-        if k in key_fields:
-            result[k + "_set"] = bool(v)
+    for key, value in cfg.items():
+        if key in key_fields:
+            result[key + "_set"] = bool(value)
         else:
-            result[k] = v
+            result[key] = value
     return result
+
 
 @app.route("/")
 def index():
@@ -126,6 +283,10 @@ def api_status():
     masked["display_mode"] = get_display_mode()
     masked["weather_preview"] = get_weather_preview()
     masked["ambient_scene"] = get_ambient_scene()
+    masked["device_id"] = _get_device_id()
+    masked["app_version"] = _get_app_version()
+    masked["api_version"] = API_VERSION
+    masked["write_auth_required"] = bool(_configured_api_token())
     return jsonify(masked)
 
 
@@ -144,9 +305,11 @@ def api_settings_post():
             set_display_mode(changed["DISPLAY_MODE"])
         if "MATRIX_BRIGHTNESS" in changed:
             set_brightness(changed["MATRIX_BRIGHTNESS"])
+        if "AMBIENT_SCENE" in changed:
+            set_ambient_scene(changed["AMBIENT_SCENE"])
         return jsonify({"ok": True, "changed": list(changed.keys())})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/mode", methods=["POST"])
@@ -177,7 +340,6 @@ def api_weather_preview():
         "thunderstorm",
         "snow",
     }
-
     if preview not in allowed_previews:
         return jsonify({"ok": False, "error": "Invalid weather preview"}), 400
 
@@ -188,23 +350,13 @@ def api_weather_preview():
 @app.route("/api/ambient/scene", methods=["POST"])
 def api_ambient_scene():
     data = request.get_json(force=True) or {}
-    scene = data.get("scene")
-    aliases = {
-        "city_night": "city_day",
-        "forest": "sunset_trail",
-        "winter_cabin": "alpine_cabin",
-        "space": "coral_reef",
-    }
-    if scene in aliases:
-        scene = aliases[scene]
+    scene = _normalize_ambient_scene(data.get("scene"))
 
     allowed = {"beach", "city_day", "sunset_trail", "alpine_cabin", "coral_reef", "lofi_cat"}
-    if scene in ("", None, "auto"):
-        set_ambient_scene(None)
-        return jsonify({"ok": True, "scene": None})
-    if scene not in allowed:
+    if scene is not None and scene not in allowed:
         return jsonify({"ok": False, "error": "Invalid scene"}), 400
     set_ambient_scene(scene)
+    config_manager.write_config({"AMBIENT_SCENE": scene or "auto"})
     return jsonify({"ok": True, "scene": scene})
 
 
@@ -212,7 +364,9 @@ def api_ambient_scene():
 def api_wifi_scan():
     try:
         output = subprocess.check_output(
-            ["iwlist", "wlan0", "scan"], stderr=subprocess.DEVNULL, text=True
+            ["iwlist", "wlan0", "scan"],
+            stderr=subprocess.DEVNULL,
+            text=True,
         )
         ssids = []
         for line in output.splitlines():
@@ -222,8 +376,8 @@ def api_wifi_scan():
                 if ssid and ssid not in ssids:
                     ssids.append(ssid)
         return jsonify({"ok": True, "ssids": ssids})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/wifi/connect", methods=["POST"])
@@ -241,10 +395,10 @@ def api_wifi_connect():
     )
 
     try:
-        with open("/etc/wpa_supplicant/wpa_supplicant.conf", "w") as f:
+        with open("/etc/wpa_supplicant/wpa_supplicant.conf", "w", encoding="utf-8") as f:
             f.write(wpa_conf)
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
     config_manager.write_config({"SETUP_MODE": False})
 
@@ -260,8 +414,8 @@ def api_restart():
     try:
         subprocess.Popen(["systemctl", "restart", "metroclock"])
         return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/reboot", methods=["POST"])
@@ -269,8 +423,8 @@ def api_reboot():
     try:
         subprocess.Popen(["reboot"])
         return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 def start_server():

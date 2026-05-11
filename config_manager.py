@@ -1,46 +1,43 @@
-import re
-import os
 import importlib
+import json
+import os
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.py")
+import config
 
-EDITABLE_FIELDS = {
-    "METRO_SYSTEM",
-    "WMATA_API_KEY",
-    "WMATA_STATION_CODE",
-    "WMATA_LINE_FILTER",
-    "NYC_MTA_FEED_URL",
-    "NYC_STOP_IDS",
-    "NYC_LINE_FILTER",
-    "TTC_STATION_ID",
-    "TTC_STOP_URIS",
-    "TTC_LINE_FILTER",
-    "METRO_MIN_ARRIVAL_MINUTES",
-    "METRO_MAX_ARRIVAL_MINUTES",
-    "METRO_PAGE_TRANSITION",
-    "OPENWEATHER_API_KEY",
-    "OPENWEATHER_CITY_ID",
-    "WEATHER_UNITS",
-    "AVIATIONSTACK_API_KEY",
-    "FLIGHT_NUMBER",
-    "DISPLAY_MODE",
-    "MATRIX_BRIGHTNESS",
-    "WEB_SERVER_PORT",
-    "SETUP_MODE",
-    "SPORTS_VIEW_MODE",
-    "SPORTS_FAVORITE_TEAMS",
-    "SPORTS_TEST_DATE",
-    "SPORTS_LIVE_FOCUS",
-    "STOCKS_SYMBOLS",
-    "STOCKS_VIEW_MODE",
-    "STOCKS_FOCUS_TIMEFRAME",
-    "STOCKS_FOCUS_ROTATE_SECONDS",
-    "STOCKS_TICKER_SPEED",
-}
+
+EDITABLE_FIELDS = set(getattr(config, "RUNTIME_EDITABLE_FIELDS", set()))
+
+
+def _runtime_config_path() -> str:
+    return getattr(config, "get_runtime_config_path", lambda: "/etc/metroclock/config.json")()
+
+
+def _load_runtime_config() -> dict:
+    path = _runtime_config_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_runtime_config(data: dict):
+    path = _runtime_config_path()
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp_path, path)
 
 
 def read_config() -> dict:
-    import config
     importlib.reload(config)
     result = {}
     for field in EDITABLE_FIELDS:
@@ -53,35 +50,12 @@ def write_config(updates: dict) -> dict:
     if not filtered:
         return {}
 
-    with open(CONFIG_PATH, "r") as f:
-        content = f.read()
-
+    runtime_data = _load_runtime_config()
     changed = {}
     for key, value in filtered.items():
-        if isinstance(value, str):
-            new_val = f'"{value}"'
-        elif isinstance(value, bool):
-            new_val = "True" if value else "False"
-        else:
-            new_val = str(value)
+        runtime_data[key] = value
+        changed[key] = value
 
-        pattern = rf'^({re.escape(key)}\s*=\s*)(.+)$'
-        replacement = rf'\g<1>{new_val}'
-        new_content, count = re.subn(pattern, replacement, content, flags=re.MULTILINE)
-        if count > 0:
-            content = new_content
-            changed[key] = value
-        else:
-            # Field not present — append it
-            content += f'\n{key} = {new_val}\n'
-            changed[key] = value
-
-    tmp_path = CONFIG_PATH + ".tmp"
-    with open(tmp_path, "w") as f:
-        f.write(content)
-    os.replace(tmp_path, CONFIG_PATH)
-
-    import config
+    _save_runtime_config(runtime_data)
     importlib.reload(config)
-
     return changed

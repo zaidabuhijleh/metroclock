@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-CONFIG_FILE="/home/pi/metroclock/config.py"
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "[1/6] Installing hostapd and dnsmasq..."
 apt-get update -qq
@@ -47,7 +47,14 @@ systemctl enable hostapd dnsmasq
 systemctl restart dhcpcd
 systemctl start hostapd dnsmasq
 
-echo "[6/6] Setting SETUP_MODE = True in config.py..."
-sed -i 's/^SETUP_MODE\s*=.*/SETUP_MODE = True/' "$CONFIG_FILE"
+echo "[6/6] Setting SETUP_MODE = True in runtime config..."
+python3 - <<EOF
+import sys
+
+sys.path.insert(0, "${APP_DIR}")
+import config_manager
+
+config_manager.write_config({"SETUP_MODE": True})
+EOF
 
 echo "Done. Connect to the 'MetroClock-Setup' WiFi network and open http://192.168.4.1"
