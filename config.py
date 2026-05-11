@@ -88,6 +88,10 @@ CLOCK_FACE = "digital_matrix"
 CLOCK_WIDGET_LAYOUT = "horizontal"
 # Widget shown in clock+widget mode.
 CLOCK_WIDGET_SOURCE = "weather"
+# 1 = clock + one widget pane, 2 = clock + two widget panes
+CLOCK_WIDGET_COUNT = 1
+# Secondary widget used when CLOCK_WIDGET_COUNT=2.
+CLOCK_WIDGET_SOURCE_SECONDARY = "stocks"
 # 24-hour vs 12-hour clock display.
 CLOCK_USE_24H = False
 
@@ -140,6 +144,8 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_FACE",
     "CLOCK_WIDGET_LAYOUT",
     "CLOCK_WIDGET_SOURCE",
+    "CLOCK_WIDGET_COUNT",
+    "CLOCK_WIDGET_SOURCE_SECONDARY",
     "CLOCK_USE_24H",
 }
 

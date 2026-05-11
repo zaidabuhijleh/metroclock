@@ -94,6 +94,17 @@ class ClockWidget(Widget):
         source = str(getattr(config, "CLOCK_WIDGET_SOURCE", "weather") or "weather").strip().lower()
         return source if source in self.WIDGET_SOURCES else "weather"
 
+    def _widget_source_secondary(self):
+        source = str(getattr(config, "CLOCK_WIDGET_SOURCE_SECONDARY", "stocks") or "stocks").strip().lower()
+        return source if source in self.WIDGET_SOURCES else "stocks"
+
+    def _widget_count(self):
+        try:
+            count = int(getattr(config, "CLOCK_WIDGET_COUNT", 1))
+        except Exception:
+            count = 1
+        return 2 if count >= 2 else 1
+
     def _use_24h(self):
         return bool(getattr(config, "CLOCK_USE_24H", False))
 
@@ -107,17 +118,31 @@ class ClockWidget(Widget):
 
         now = time.time()
         layout = self._layout()
-        source = self._resolve_supported_source(self._widget_source(), layout)
+        widget_count = self._widget_count()
+        primary_req = self._widget_source()
+        secondary_req = self._widget_source_secondary()
 
-        if source == "metro":
+        sources_to_update = set()
+        if layout == "vertical":
+            # Focused side pane.
+            sources_to_update.add(self._resolve_supported_source(primary_req, "vertical"))
+            # Optional secondary horizontal strip in two-widget mode.
+            if widget_count == 2:
+                sources_to_update.add(self._resolve_supported_source(secondary_req, "horizontal"))
+        else:
+            sources_to_update.add(self._resolve_supported_source(primary_req, "horizontal"))
+            if widget_count == 2:
+                sources_to_update.add(self._resolve_supported_source(secondary_req, "horizontal"))
+
+        if "metro" in sources_to_update:
             self.metro.update()
-        elif source == "weather":
+        if "weather" in sources_to_update:
             self.weather.update()
-        elif source == "flight":
+        if "flight" in sources_to_update:
             self.flight.update()
-        elif source == "sports":
+        if "sports" in sources_to_update:
             self.sports.update()
-        elif source == "stocks":
+        if "stocks" in sources_to_update:
             self.stocks.update()
             # Compact clock views depend on 1D data for price + delta display.
             for sym in self._stock_symbols():
@@ -153,16 +178,49 @@ class ClockWidget(Widget):
             return self.canvas
 
         layout = self._layout()
-        source = self._resolve_supported_source(self._widget_source(), layout)
+        widget_count = self._widget_count()
+        primary_req = self._widget_source()
+        secondary_req = self._widget_source_secondary()
 
         if layout == "vertical":
-            clock_w = int(round(self.width * 2 / 3))
-            widget_w = self.width - clock_w
+            # Wider side pane than before for clearer focused widget rendering.
+            side_w = int(round(self.width * 0.5))
+            left_w = self.width - side_w
+            side_source = self._resolve_supported_source(primary_req, "vertical")
 
-            face = self._render_clock_face(clock_w, self.height, "vertical")
-            self.canvas.paste(face, (0, 0))
-            draw.line((clock_w, 0, clock_w, self.height - 1), fill=self.COLOR_DIVIDER)
-            self._draw_widget_region(draw, clock_w + 1, 0, max(1, widget_w - 1), self.height, source, layout)
+            if widget_count == 2 and left_w >= 12 and self.height >= 12:
+                # Left area becomes clock (top) + horizontal mini-widget (bottom).
+                left_clock_h = int(round(self.height * 2 / 3))
+                left_bottom_h = self.height - left_clock_h
+
+                face = self._render_clock_face(left_w, left_clock_h, "vertical")
+                self.canvas.paste(face, (0, 0))
+                draw.line((0, left_clock_h, left_w - 1, left_clock_h), fill=self.COLOR_DIVIDER)
+
+                bottom_source = self._resolve_supported_source(secondary_req, "horizontal")
+                self._draw_widget_region(
+                    draw,
+                    0,
+                    left_clock_h + 1,
+                    left_w,
+                    max(1, left_bottom_h - 1),
+                    bottom_source,
+                    focused=False,
+                )
+            else:
+                face = self._render_clock_face(left_w, self.height, "vertical")
+                self.canvas.paste(face, (0, 0))
+
+            draw.line((left_w, 0, left_w, self.height - 1), fill=self.COLOR_DIVIDER)
+            self._draw_widget_region(
+                draw,
+                left_w + 1,
+                0,
+                max(1, side_w - 1),
+                self.height,
+                side_source,
+                focused=True,
+            )
         else:
             clock_h = int(round(self.height * 2 / 3))
             widget_h = self.height - clock_h
@@ -170,7 +228,43 @@ class ClockWidget(Widget):
             face = self._render_clock_face(self.width, clock_h, "horizontal")
             self.canvas.paste(face, (0, 0))
             draw.line((0, clock_h, self.width - 1, clock_h), fill=self.COLOR_DIVIDER)
-            self._draw_widget_region(draw, 0, clock_h + 1, self.width, max(1, widget_h - 1), source, layout)
+
+            if widget_count == 2 and self.width >= 16:
+                left_w = self.width // 2
+                right_w = self.width - left_w
+                source_a = self._resolve_supported_source(primary_req, "horizontal")
+                source_b = self._resolve_supported_source(secondary_req, "horizontal")
+
+                self._draw_widget_region(
+                    draw,
+                    0,
+                    clock_h + 1,
+                    left_w,
+                    max(1, widget_h - 1),
+                    source_a,
+                    focused=False,
+                )
+                draw.line((left_w, clock_h + 1, left_w, self.height - 1), fill=self.COLOR_DIVIDER)
+                self._draw_widget_region(
+                    draw,
+                    left_w + 1,
+                    clock_h + 1,
+                    max(1, right_w - 1),
+                    max(1, widget_h - 1),
+                    source_b,
+                    focused=False,
+                )
+            else:
+                source = self._resolve_supported_source(primary_req, "horizontal")
+                self._draw_widget_region(
+                    draw,
+                    0,
+                    clock_h + 1,
+                    self.width,
+                    max(1, widget_h - 1),
+                    source,
+                    focused=False,
+                )
 
         return self.canvas
 
@@ -245,14 +339,13 @@ class ClockWidget(Widget):
                         continue
                     px = x0 + (cursor + gx) * cell
                     py = y0 + gy * cell
-                    color = self.COLOR_MAIN if (gx + gy + now.second) % 3 else self.COLOR_ACCENT
-                    draw.rectangle((px, py, px + dot - 1, py + dot - 1), fill=color)
+                    draw.rectangle((px, py, px + dot - 1, py + dot - 1), fill=self.COLOR_MAIN)
             cursor += 4
 
         if variant == "full" and h >= 28:
             date_label = now.strftime("%a %b %d").upper()
             dw = int(self.font_small.getlength(date_label))
-            draw.text((max(0, (w - dw) // 2), h - 7), date_label, font=self.font_small, fill=self.COLOR_DIM)
+            draw.text((max(0, (w - dw) // 2), h - 6), date_label, font=self.font_small, fill=self.COLOR_ACCENT)
             if ampm:
                 draw.text((1, 1), ampm, font=self.font_small, fill=self.COLOR_ACCENT_2)
 
@@ -283,7 +376,7 @@ class ClockWidget(Widget):
         spacing = max(1, w // 32)
         total_non_digit = colon_w + spacing * 3
         digit_w = max(4, (w - total_non_digit) // digit_count)
-        digit_h = max(8, h - (8 if variant == "full" else 3))
+        digit_h = max(8, h - (10 if variant == "full" else 3))
         thickness = max(1, digit_w // 5)
         total_w = digit_w * digit_count + total_non_digit
         x = max(0, (w - total_w) // 2)
@@ -307,7 +400,7 @@ class ClockWidget(Widget):
         if variant == "full" and h >= 28:
             sub = now.strftime("%a %m/%d").upper()
             sw = int(self.font_small.getlength(sub))
-            draw.text(((w - sw) // 2, h - 7), sub, font=self.font_small, fill=self.COLOR_DIM)
+            draw.text(((w - sw) // 2, h - 6), sub, font=self.font_small, fill=self.COLOR_DIM)
             if ampm:
                 draw.text((w - int(self.font_small.getlength(ampm)) - 1, 1), ampm, font=self.font_small, fill=self.COLOR_ACCENT_2)
 
@@ -386,15 +479,21 @@ class ClockWidget(Widget):
 
     # --------------------------------------------------------------- widget region
 
-    def _resolve_supported_source(self, requested, layout):
-        if layout == "vertical":
-            return requested if requested in {"stocks", "weather"} else "weather"
-        # horizontal layout: all except ambient
-        if requested == "ambient":
-            return "weather"
-        return requested
+    def _resolve_supported_source(self, requested, slot):
+        source = str(requested or "").strip().lower()
+        if source not in self.WIDGET_SOURCES:
+            source = "weather"
 
-    def _draw_widget_region(self, draw, x, y, w, h, source, layout):
+        if slot == "vertical":
+            # Focused side pane: weather + stocks only.
+            return source if source in {"stocks", "weather"} else "weather"
+
+        # Horizontal mini pane: support all except ambient.
+        if source == "ambient":
+            return "weather"
+        return source
+
+    def _draw_widget_region(self, draw, x, y, w, h, source, focused=False):
         if w <= 0 or h <= 0:
             return
 
@@ -402,10 +501,10 @@ class ClockWidget(Widget):
             self._draw_widget_metro(draw, x, y, w, h)
             return
         if source == "weather":
-            self._draw_widget_weather(draw, x, y, w, h, focused=(layout == "vertical"))
+            self._draw_widget_weather(draw, x, y, w, h, focused=focused)
             return
         if source == "stocks":
-            self._draw_widget_stocks(draw, x, y, w, h, focused=(layout == "vertical"))
+            self._draw_widget_stocks(draw, x, y, w, h, focused=focused)
             return
         if source == "flight":
             self._draw_widget_flight(draw, x, y, w, h)
