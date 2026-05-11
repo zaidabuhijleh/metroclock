@@ -1,22 +1,142 @@
-name: release-please
+name: version-tag
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      masterBuildNumber:
+        description: "Override base like 1.0 (or 1.0.X)"
+        required: false
+        type: string
+      isRelease:
+        description: "Override release mode: true (stable) or false (alpha)"
+        required: false
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 permissions:
   contents: write
-  pull-requests: write
-  issues: write
 
 jobs:
-  release-please:
+  tag-build:
     runs-on: ubuntu-latest
+    concurrency:
+      group: version-tag-main
+      cancel-in-progress: false
     steps:
-      - name: Run release-please
-        uses: googleapis/release-please-action@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          config-file: .release-please-config.json
-          manifest-file: .release-please-manifest.json
+          fetch-depth: 0
+
+      - name: Compute next tag
+        id: compute
+        shell: bash
+        env:
+          MASTER_BUILD_NUMBER_INPUT: ${{ github.event.inputs.masterBuildNumber }}
+          IS_RELEASE_INPUT: ${{ github.event.inputs.isRelease }}
+          MASTER_BUILD_NUMBER_VAR: ${{ vars.MASTER_BUILD_NUMBER }}
+          IS_RELEASE_VAR: ${{ vars.IS_RELEASE }}
+        run: |
+          set -euo pipefail
+
+          master_build="${MASTER_BUILD_NUMBER_INPUT:-}"
+          if [ -z "$master_build" ]; then
+            master_build="${MASTER_BUILD_NUMBER_VAR:-}"
+          fi
+
+          if [ -z "$master_build" ]; then
+            echo "::error::Set repo variable MASTER_BUILD_NUMBER to something like 1.0 or 1.0.X"
+            exit 1
+          fi
+
+          if [[ ! "$master_build" =~ ^([0-9]+)\.([0-9]+)(\.X)?$ ]]; then
+            echo "::error::masterBuildNumber must match <major>.<minor> or <major>.<minor>.X (example: 1.0 or 1.0.X). Got: $master_build"
+            exit 1
+          fi
+
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          base="${major}.${minor}"
+
+          is_release_raw="${IS_RELEASE_INPUT:-}"
+          if [ -z "$is_release_raw" ]; then
+            is_release_raw="${IS_RELEASE_VAR:-}"
+          fi
+          if [ -z "$is_release_raw" ]; then
+            echo "::error::Set repo variable IS_RELEASE to true or false (or provide workflow input)."
+            exit 1
+          fi
+
+          is_release="$(printf '%s' "$is_release_raw" | tr '[:upper:]' '[:lower:]')"
+          if [ "$is_release" != "true" ] && [ "$is_release" != "false" ]; then
+            echo "::error::IS_RELEASE must be true or false. Got: $is_release_raw"
+            exit 1
+          fi
+
+          base_escaped="${base//./\\.}"
+          last_rev="$(
+            git tag -l "v${base}.*" \
+            | sed -nE "s/^v${base_escaped}\.([0-9]+)(-alpha)?$/\\1/p" \
+            | sort -n \
+            | tail -n1
+          )"
+          if [ -z "$last_rev" ]; then
+            last_rev=0
+          fi
+          rev=$((last_rev + 1))
+          version="${base}.${rev}"
+
+          tag="v${version}"
+          prerelease="false"
+          if [ "$is_release" = "false" ]; then
+            tag="${tag}-alpha"
+            prerelease="true"
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "is_release=${is_release}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+
+          echo "Computed tag: ${tag}"
+
+      - name: Create and push tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.compute.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists locally, skipping creation."
+            exit 0
+          fi
+          git tag "${tag}"
+          git push origin "${tag}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.compute.outputs.tag }}"
+          prerelease_flag=""
+          if [ "${{ steps.compute.outputs.prerelease }}" = "true" ]; then
+            prerelease_flag="--prerelease"
+          fi
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists, skipping creation."
+            exit 0
+          fi
+
+          gh release create "${tag}" \
+            ${prerelease_flag} \
+            --title "${tag}" \
+            --notes "Automated release for ${tag}"
