@@ -1,13 +1,18 @@
 [Unit]
 Description=MetroClock LED Display
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 /home/pi/metroclock/main.py
-WorkingDirectory=/home/pi/metroclock
+Type=simple
+User=root
+WorkingDirectory=/home/zaid/metroclock
+ExecStart=/usr/bin/python3 /home/zaid/metroclock/main.py
 Restart=always
 RestartSec=5
-User=root
+Environment=PYTHONUNBUFFERED=1
+Environment=METROCLOCK_CONFIG_PATH=/etc/metroclock/config.json
+EnvironmentFile=-/etc/metroclock/secrets.env
 
 [Install]
 WantedBy=multi-user.target
