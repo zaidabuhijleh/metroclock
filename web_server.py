@@ -142,14 +142,15 @@ def _get_app_version():
         except Exception:
             pass
 
-        try:
-            with open(os.path.join(app_dir, "VERSION"), "r", encoding="utf-8") as f:
-                file_ver = f.read().strip()
-            if file_ver:
-                _app_version = file_ver
-                return _app_version
-        except Exception:
-            pass
+        for filename in ("version.txt", "VERSION"):
+            try:
+                with open(os.path.join(app_dir, filename), "r", encoding="utf-8") as f:
+                    file_ver = f.read().strip()
+                if file_ver:
+                    _app_version = file_ver
+                    return _app_version
+            except Exception:
+                pass
 
         _app_version = "dev"
         return _app_version
