@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       masterBuildNumber:
-        description: "Override pattern like 1.0.X"
+        description: "Override base like 1.0 (or 1.0.X)"
         required: false
         type: string
       isRelease:
@@ -40,7 +40,6 @@ jobs:
           MASTER_BUILD_NUMBER_INPUT: ${{ github.event.inputs.masterBuildNumber }}
           IS_RELEASE_INPUT: ${{ github.event.inputs.isRelease }}
           MASTER_BUILD_NUMBER_VAR: ${{ vars.MASTER_BUILD_NUMBER }}
-          MASTER_BUILD_NUMBER_LEGACY_VAR: ${{ vars.MATER_BUILD_NUMBER }}
           IS_RELEASE_VAR: ${{ vars.IS_RELEASE }}
         run: |
           set -euo pipefail
@@ -49,17 +48,14 @@ jobs:
           if [ -z "$master_build" ]; then
             master_build="${MASTER_BUILD_NUMBER_VAR:-}"
           fi
-          if [ -z "$master_build" ]; then
-            master_build="${MASTER_BUILD_NUMBER_LEGACY_VAR:-}"
-          fi
 
           if [ -z "$master_build" ]; then
-            echo "::error::Set repo variable MASTER_BUILD_NUMBER (or MATER_BUILD_NUMBER) to something like 1.0.X"
+            echo "::error::Set repo variable MASTER_BUILD_NUMBER to something like 1.0 or 1.0.X"
             exit 1
           fi
 
-          if [[ ! "$master_build" =~ ^([0-9]+)\.([0-9]+)\.X$ ]]; then
-            echo "::error::masterBuildNumber must match <major>.<minor>.X (example: 1.0.X). Got: $master_build"
+          if [[ ! "$master_build" =~ ^([0-9]+)\.([0-9]+)(\.X)?$ ]]; then
+            echo "::error::masterBuildNumber must match <major>.<minor> or <major>.<minor>.X (example: 1.0 or 1.0.X). Got: $master_build"
             exit 1
           fi
 
