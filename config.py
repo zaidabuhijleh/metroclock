@@ -78,6 +78,13 @@ STOCKS_FOCUS_TIMEFRAME = "1D"
 STOCKS_FOCUS_ROTATE_SECONDS = 8  # seconds per stock in focus view
 STOCKS_TICKER_SPEED = 25  # ticker scroll speed in pixels/sec
 
+# --- STOCKS ---
+STOCKS_SYMBOLS = "AAPL,TSLA,NVDA,SPY"
+STOCKS_VIEW_MODE = "ticker"
+STOCKS_FOCUS_TIMEFRAME = "1D"
+STOCKS_FOCUS_ROTATE_SECONDS = 8        # seconds per stock in focus view
+STOCKS_TICKER_SPEED = 25               # ticker scroll speed in pixels/sec
+
 # --- COLORS ---
 COLOR_WHITE = (255, 255, 255)
 COLOR_GREY = (100, 100, 100)
