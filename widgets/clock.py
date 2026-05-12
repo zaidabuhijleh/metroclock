@@ -547,7 +547,20 @@ class ClockWidget(Widget):
         code = str(getattr(config, "WMATA_STATION_CODE", "") or "").split(",")[0].strip().upper()
         return code or "WMATA"
 
-    def _draw_scrolling_text_clipped(self, x, y, w, h, text, color, key, speed=16.0):
+    def _draw_scrolling_text_clipped(
+        self,
+        x,
+        y,
+        w,
+        h,
+        text,
+        color,
+        key,
+        speed=16.0,
+        always_scroll=False,
+        wrap=True,
+        align="center",
+    ):
         if w <= 1 or h <= 1:
             return
 
@@ -560,8 +573,15 @@ class ClockWidget(Widget):
         text_w = int(self.font_small.getlength(txt))
         y_text = max(0, (h - 6) // 2)
 
-        if text_w <= max(1, w - 2):
-            rd.text((max(1, (w - text_w) // 2), y_text), txt, font=self.font_small, fill=color)
+        visible_w = max(1, w - 2)
+        if not always_scroll and text_w <= visible_w:
+            if align == "left":
+                text_x = 1
+            elif align == "right":
+                text_x = max(1, w - text_w - 1)
+            else:
+                text_x = max(1, (w - text_w) // 2)
+            rd.text((text_x, y_text), txt, font=self.font_small, fill=color)
             self.canvas.paste(region, (x, y))
             return
 
@@ -575,12 +595,20 @@ class ClockWidget(Widget):
         gap = 10
         cycle = text_w + gap
         offset = self._scroll_offsets.get(key, 0.0)
-        offset = (offset + dt * speed) % cycle
+        if wrap:
+            offset = (offset + dt * speed) % cycle
+        else:
+            max_offset = max(0.0, float(text_w - visible_w))
+            offset = min(max_offset, offset + dt * speed)
         self._scroll_offsets[key] = offset
 
-        start_x = w - int(offset)
-        rd.text((start_x, y_text), txt, font=self.font_small, fill=color)
-        rd.text((start_x - cycle, y_text), txt, font=self.font_small, fill=color)
+        if wrap:
+            start_x = w - int(offset)
+            rd.text((start_x, y_text), txt, font=self.font_small, fill=color)
+            rd.text((start_x - cycle, y_text), txt, font=self.font_small, fill=color)
+        else:
+            start_x = 1 - int(offset)
+            rd.text((start_x, y_text), txt, font=self.font_small, fill=color)
         self.canvas.paste(region, (x, y))
 
     def _draw_widget_metro(self, draw, x, y, w, h):
@@ -593,10 +621,36 @@ class ClockWidget(Widget):
         line = str(row.get("Line", "--")).upper()
         mins = str(row.get("Min", "--"))
         dest = str(row.get("Destination", "Train") or "Train")
-        station = self._current_metro_station_label()
-        text = f"{station} {line} {mins}M TO {dest.upper()}"
+
         line_color = self.metro._line_color(line) if hasattr(self.metro, "_line_color") else self.COLOR_ACCENT
-        self._draw_scrolling_text_clipped(x, y, w, h, text, line_color, key=f"metro:{station}:{line}:{dest}:{mins}", speed=14.0)
+        line_label = (line[:2] or "?").upper()
+        line_label_w = int(self.font_small.getlength(line_label))
+
+        # Fixed left segment for line ID, like the main metro row "icon + static line".
+        left_w = min(max(8, line_label_w + 4), max(8, w // 3))
+        left_w = min(left_w, max(1, w - 6))
+        right_w = max(1, w - left_w)
+
+        line_x = x + max(1, (left_w - line_label_w) // 2)
+        line_y = y + max(0, (h - 6) // 2)
+        draw.text((line_x, line_y), line_label, font=self.font_small, fill=line_color)
+
+        mins_label = f"{mins}M" if mins.isdigit() else mins
+        scroll_text = f"{dest.upper()} {mins_label}".strip()
+        scroll_speed = float(getattr(self.metro, "scroll_speed", 20))
+        self._draw_scrolling_text_clipped(
+            x + left_w,
+            y,
+            right_w,
+            h,
+            scroll_text,
+            self.COLOR_MAIN,
+            key=f"metro-mini:{line}:{dest}:{mins}",
+            speed=scroll_speed,
+            always_scroll=False,
+            wrap=False,
+            align="left",
+        )
 
     def _weather_data(self):
         preview = web_server.get_weather_preview()
