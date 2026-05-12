@@ -497,8 +497,8 @@ class ClockWidget(Widget):
             source = "weather"
 
         if slot == "vertical":
-            # Focused side pane: weather + stocks only.
-            return source if source in {"stocks", "weather"} else "weather"
+            # Focused side pane: weather + stocks + sports.
+            return source if source in {"stocks", "weather", "sports"} else "weather"
 
         # Horizontal mini pane: support all except ambient.
         if source == "ambient":
