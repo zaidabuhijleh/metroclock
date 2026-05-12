@@ -54,6 +54,14 @@ class ClockWidget(Widget):
     FACE_OPTIONS = {"digital_matrix", "digital_segment", "analog_ring", "analog_compass"}
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient"}
+    MINI_WIDGET_MIN_FRACTION = {
+        "metro": 0.50,
+        "stocks": 0.50,
+        "weather": 0.33,
+        "flight": 0.33,
+        "sports": 0.40,
+        "ambient": 0.33,
+    }
 
     def __init__(self, width, height, metro_widget, weather_widget, flight_widget, sports_widget, stocks_widget):
         super().__init__(width, height)
@@ -229,10 +237,9 @@ class ClockWidget(Widget):
             self.canvas.paste(face, (0, 0))
 
             if widget_count == 2 and self.width >= 16:
-                left_w = self.width // 2
-                right_w = self.width - left_w
                 source_a = self._resolve_supported_source(primary_req, "horizontal")
                 source_b = self._resolve_supported_source(secondary_req, "horizontal")
+                left_w, right_w = self._two_widget_widths(self.width, source_a, source_b)
 
                 self._draw_widget_region(
                     draw,
@@ -498,6 +505,50 @@ class ClockWidget(Widget):
             return "weather"
         return source
 
+    def _mini_widget_min_fraction(self, source):
+        key = str(source or "").strip().lower()
+        raw = self.MINI_WIDGET_MIN_FRACTION.get(key, 0.33)
+        try:
+            value = float(raw)
+        except Exception:
+            value = 0.33
+        return max(0.2, min(0.8, value))
+
+    def _two_widget_widths(self, total_w, source_a, source_b):
+        if total_w <= 2:
+            left_w = max(1, total_w // 2)
+            return left_w, max(1, total_w - left_w)
+
+        frac_a = self._mini_widget_min_fraction(source_a)
+        frac_b = self._mini_widget_min_fraction(source_b)
+
+        min_a = max(1, int(math.ceil(total_w * frac_a)))
+        min_b = max(1, int(math.ceil(total_w * frac_b)))
+
+        if min_a + min_b > total_w:
+            # If both minimums cannot fit, keep relative intent and normalize.
+            total_min = float(min_a + min_b)
+            left_w = int(round(total_w * (min_a / total_min)))
+            left_w = max(1, min(total_w - 1, left_w))
+            return left_w, total_w - left_w
+
+        left_w = min_a
+        right_w = min_b
+        remaining = total_w - left_w - right_w
+        if remaining <= 0:
+            return left_w, right_w
+
+        # Give spare room to whichever widget benefits more from width.
+        if frac_a > frac_b:
+            left_w += remaining
+        elif frac_b > frac_a:
+            right_w += remaining
+        else:
+            left_w += remaining // 2
+            right_w += remaining - (remaining // 2)
+
+        return left_w, right_w
+
     def _draw_widget_region(self, draw, x, y, w, h, source, focused=False):
         if w <= 0 or h <= 0:
             return
@@ -712,8 +763,11 @@ class ClockWidget(Widget):
                 draw.text((x + max(0, (w - lw) // 2), y + h - 7), lbl, font=self.font_small, fill=self.COLOR_ACCENT)
             return
 
-        text = f"{temp}\N{DEGREE SIGN} {label}"
-        self._draw_scrolling_text_clipped(x, y, w, h, text, self.COLOR_MAIN, key=f"weather:{temp}:{label}", speed=14.0)
+        unit_raw = str(getattr(config, "WEATHER_UNITS", "metric") or "metric").strip().lower()
+        unit_suffix = "F" if unit_raw in {"imperial", "f", "fahrenheit"} else "C"
+        text = f"{temp}\N{DEGREE SIGN}{unit_suffix}"
+        fit = self._fit_text(text, max(0, w - 2), self.font_small)
+        draw.text((x + max(1, (w - int(self.font_small.getlength(fit))) // 2), y + max(0, (h - 6) // 2)), fit, font=self.font_small, fill=self.COLOR_MAIN)
 
     def _stock_symbols(self):
         if hasattr(self.stocks, "_symbols"):
