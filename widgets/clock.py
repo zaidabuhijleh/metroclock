@@ -200,10 +200,11 @@ class ClockWidget(Widget):
 
             if widget_count == 2 and left_w >= 12 and self.height >= 12:
                 # Left area becomes clock (top) + horizontal mini-widget (bottom).
-                left_clock_h = max(1, min(self.height - 1, int(round(self.height * 2 / 3))))
+                split_ratio = 0.75 if self._face() == "digital_segment" else (2 / 3)
+                left_clock_h = max(1, min(self.height - 1, int(round(self.height * split_ratio))))
                 left_bottom_h = self.height - left_clock_h
 
-                face = self._render_clock_face(left_w, left_clock_h, "vertical")
+                face = self._render_clock_face(left_w, left_clock_h, "vertical_split_top")
                 self.canvas.paste(face, (0, 0))
 
                 bottom_source = self._resolve_supported_source(secondary_req, "horizontal")
@@ -217,7 +218,7 @@ class ClockWidget(Widget):
                     focused=False,
                 )
             else:
-                face = self._render_clock_face(left_w, self.height, "vertical")
+                face = self._render_clock_face(left_w, self.height, "vertical_focus")
                 self.canvas.paste(face, (0, 0))
 
             self._draw_widget_region(
@@ -383,16 +384,23 @@ class ClockWidget(Widget):
         now, hour, ampm = self._time_parts()
         time_text = f"{hour:02d}{now.minute:02d}"
 
+        is_focus_single = variant == "vertical_focus"
+        is_focus_split = variant == "vertical_split_top"
+        show_date = (variant == "full") or is_focus_single
+
         digit_count = 4
-        colon_w = max(1, w // 40)
-        spacing = max(1, w // 32)
+        colon_w = max(1, w // 44)
+        spacing = 1 if (is_focus_single or is_focus_split) else max(1, w // 32)
         total_non_digit = colon_w + spacing * 3
         digit_w = max(4, (w - total_non_digit) // digit_count)
-        digit_h = max(8, h - (10 if variant == "full" else 3))
+        date_reserve = 7 if (show_date and h >= 24) else 0
+        top_reserve = 0 if (is_focus_single or is_focus_split) else 1
+        digit_h = max(8, h - date_reserve - top_reserve)
         thickness = max(1, digit_w // 5)
         total_w = digit_w * digit_count + total_non_digit
         x = max(0, (w - total_w) // 2)
-        y = max(0, (h - digit_h) // 2 - (1 if variant == "full" else 0))
+        clock_h = max(1, h - date_reserve)
+        y = max(0, (clock_h - digit_h) // 2 - (1 if variant == "full" else 0))
 
         off = (18, 24, 36)
 
@@ -409,11 +417,15 @@ class ClockWidget(Widget):
             else:
                 x += spacing
 
-        if variant == "full" and h >= 28:
-            sub = now.strftime("%a %m/%d").upper()
+        if show_date and h >= 24:
+            if is_focus_single:
+                sub = now.strftime("%b %d").upper().replace(" 0", " ")
+            else:
+                sub = now.strftime("%a %m/%d").upper()
             sw = int(self.font_small.getlength(sub))
-            draw.text(((w - sw) // 2, h - 6), sub, font=self.font_small, fill=self.COLOR_DIM)
-            if ampm:
+            date_color = self.COLOR_ACCENT if is_focus_single else self.COLOR_DIM
+            draw.text(((w - sw) // 2, h - 6), sub, font=self.font_small, fill=date_color)
+            if ampm and variant == "full":
                 draw.text((w - int(self.font_small.getlength(ampm)) - 1, 1), ampm, font=self.font_small, fill=self.COLOR_ACCENT_2)
 
     def _draw_analog_base(self, draw, w, h, ring_color):
@@ -567,7 +579,7 @@ class ClockWidget(Widget):
                 self._draw_widget_flight(draw, x, y, w, h)
                 return
             if source == "sports":
-                self._draw_widget_sports(draw, x, y, w, h)
+                self._draw_widget_sports(draw, x, y, w, h, focused=focused)
                 return
 
             txt = self._fit_text(source.upper(), max(0, w - 2), self.font_small)
@@ -845,7 +857,7 @@ class ClockWidget(Widget):
         text = f"{flight_no} {status}"
         self._draw_scrolling_text_clipped(x, y, w, h, text, self.COLOR_MAIN, key=f"flight:{text}", speed=14.0)
 
-    def _draw_widget_sports(self, draw, x, y, w, h):
+    def _draw_widget_sports(self, draw, x, y, w, h, focused=False):
         games = getattr(self.sports, "games", []) or []
         if not games:
             draw.text((x + 1, y + max(0, (h - 6) // 2)), "NO GAMES", font=self.font_small, fill=self.COLOR_DIM)
@@ -855,6 +867,43 @@ class ClockWidget(Widget):
         game = games[idx]
         away = game.get("away", {})
         home = game.get("home", {})
+
+        if focused:
+            status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else "LIVE"
+            status_fit = self._fit_text(status, max(1, w - 2), self.font_small)
+            status_w = int(self.font_small.getlength(status_fit))
+            draw.text((x + max(0, (w - status_w) // 2), y + 1), status_fit, font=self.font_small, fill=self.COLOR_DIM)
+
+            status_band_h = 8
+            row_gap = 2
+            row_h = max(8, (h - status_band_h - row_gap) // 2)
+            away_y = y + status_band_h
+            home_y = away_y + row_h
+            bar_w = 2
+
+            def draw_team_row(team, other, side, row_y):
+                team_color = tuple(team.get("color") or self.COLOR_ACCENT)
+                draw.rectangle((x, row_y + 1, x + bar_w - 1, min(y + h - 1, row_y + 7)), fill=team_color)
+
+                score = str(team.get("score", 0))
+                score_w = int(self.font_tall.getlength(score))
+                score_x = x + w - score_w - 1
+                draw.text((score_x, row_y), score, font=self.font_tall, fill=self.COLOR_MAIN)
+
+                name_x = x + bar_w + 2
+                name_max_w = max(1, score_x - name_x - 1)
+                name = self._fit_text(str(team.get("abbr", "---")), name_max_w, self.font_tall)
+                draw.text((name_x, row_y), name, font=self.font_tall, fill=team_color)
+
+                if game.get("possession") == side and hasattr(self.sports, "_draw_possession_arrow"):
+                    arrow_x = name_x + int(self.font_tall.getlength(name)) + 1
+                    if arrow_x + 3 < score_x:
+                        self.sports._draw_possession_arrow(draw, arrow_x, row_y + 2)
+
+            draw_team_row(away, home, "away", away_y)
+            draw_team_row(home, away, "home", home_y)
+            return
+
         status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else ""
         text = f"{away.get('abbr', 'AWY')} {away.get('score', 0)}-{home.get('score', 0)} {home.get('abbr', 'HME')} {status}"
         self._draw_scrolling_text_clipped(x, y, w, h, text, self.COLOR_MAIN, key=f"sports:{text}", speed=14.0)
