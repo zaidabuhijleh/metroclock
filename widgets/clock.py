@@ -670,6 +670,7 @@ class ClockWidget(Widget):
         speed=16.0,
         always_scroll=False,
         wrap=True,
+        restart_on_end=True,
         align="center",
     ):
         if w <= 1 or h <= 1:
@@ -714,7 +715,12 @@ class ClockWidget(Widget):
             offset = (offset + step) % cycle
         else:
             max_offset = max(0.0, float(text_w - visible_w))
-            offset = min(max_offset, offset + step)
+            offset = offset + step
+            if offset > max_offset:
+                if restart_on_end:
+                    offset = 0.0
+                else:
+                    offset = max_offset
         self._scroll_offsets[key] = offset
 
         if wrap:
@@ -958,34 +964,22 @@ class ClockWidget(Widget):
 
         away_abbr = str(away.get("abbr", "AWY")).upper()
         home_abbr = str(home.get("abbr", "HME")).upper()
-        score = f"{away.get('score', 0)}-{home.get('score', 0)}"
         status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else ""
-        matchup = f"{away_abbr}/{home_abbr}"
+        scroll_text = f"{away_abbr} v. {home_abbr} {status}".strip()
+        game_id = str(game.get("id", ""))
 
-        matchup_w = int(self.font_small.getlength(matchup))
-        left_w = min(max(10, matchup_w + 4), max(10, w // 3))
-        left_w = min(left_w, max(1, w - 6))
-        right_w = max(1, w - left_w)
-
-        draw.text(
-            (x + max(1, (left_w - matchup_w) // 2), y + max(0, (h - 6) // 2)),
-            matchup,
-            font=self.font_small,
-            fill=self.COLOR_ACCENT,
-        )
-
-        scroll_text = f"{score} {status}".strip()
         self._draw_scrolling_text_clipped(
-            x + left_w,
+            x,
             y,
-            right_w,
+            w,
             h,
             scroll_text,
             self.COLOR_MAIN,
-            key=f"sports-mini:{matchup}:{score}:{status}",
+            key=f"sports-mini:{game_id}:{scroll_text}",
             speed=12.0,
             always_scroll=False,
             wrap=False,
+            restart_on_end=False,
             align="left",
         )
 
