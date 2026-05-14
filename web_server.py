@@ -12,10 +12,8 @@ from flask import Flask, jsonify, request, send_from_directory
 
 API_VERSION = "1.0"
 
-CLOCK_FONT_STYLE_OPTIONS = ("matrix", "segment", "outline", "block")
-CLOCK_SIZE_MIN = 0.75
-CLOCK_SIZE_MAX = 1.5
-CLOCK_SIZE_STEP = 0.05
+CLOCK_FONT_STYLE_OPTIONS = ("matrix", "segment")
+CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
 
 WRITE_ENDPOINTS = {
     "/api/settings",
@@ -312,9 +310,7 @@ def api_clock_styles():
         "clock_size": {
             "key": "CLOCK_SIZE",
             "default": 1.0,
-            "min": CLOCK_SIZE_MIN,
-            "max": CLOCK_SIZE_MAX,
-            "step": CLOCK_SIZE_STEP,
+            "options": list(CLOCK_SIZE_OPTIONS),
         },
         "clock_overlays": {
             "show_date_key": "CLOCK_SHOW_DATE",

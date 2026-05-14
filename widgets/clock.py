@@ -61,7 +61,8 @@ class ClockWidget(Widget):
     COLOR_DOWN = (239, 97, 97)
     COLOR_DIVIDER = (48, 62, 90)
 
-    FONT_STYLE_OPTIONS = {"matrix", "segment", "outline", "block"}
+    FONT_STYLE_OPTIONS = {"matrix", "segment"}
+    CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient"}
     MINI_WIDGET_MIN_FRACTION = {
@@ -112,7 +113,14 @@ class ClockWidget(Widget):
             value = float(raw)
         except Exception:
             value = 1.0
-        return max(0.75, min(1.5, value))
+        best = self.CLOCK_SIZE_OPTIONS[0]
+        best_dist = abs(value - best)
+        for option in self.CLOCK_SIZE_OPTIONS:
+            dist = abs(value - option)
+            if dist < best_dist:
+                best = option
+                best_dist = dist
+        return best
 
     def _show_date(self):
         return bool(getattr(config, "CLOCK_SHOW_DATE", True))
@@ -332,8 +340,6 @@ class ClockWidget(Widget):
             renderer = {
                 "matrix": self._draw_face_digital_matrix,
                 "segment": self._draw_face_digital_segment,
-                "outline": self._draw_face_digital_outline,
-                "block": self._draw_face_digital_block,
             }.get(style, self._draw_face_digital_matrix)
             renderer(d, w, h, variant, theme)
         except Exception:
@@ -360,51 +366,68 @@ class ClockWidget(Widget):
             return f"{hour:02d}:{now.minute:02d}:{now.second:02d}"
         return f"{hour:02d}:{now.minute:02d}"
 
+    def _overlay_band_height(self, h, variant, enabled):
+        if not enabled:
+            return 0
+        if variant not in {"full", "vertical_focus"}:
+            return 0
+        if h < 20:
+            return 0
+        return 6
+
     def _clock_layout_metrics(self, w, h, variant):
-        scale = self._clock_size()
-        focus_variant = variant in {"vertical_focus", "vertical_split_top"}
-        show_date = self._show_date() and ((variant == "full") or (variant == "vertical_focus"))
+        style = self._font_style()
+        size = self._clock_size()
+        show_top_overlay = self._show_ampm() and (not self._use_24h())
+        show_bottom_overlay = self._show_date()
+        top_band = self._overlay_band_height(h, variant, show_top_overlay)
+        bottom_band = self._overlay_band_height(h, variant, show_bottom_overlay)
 
-        date_reserve = 7 if (show_date and h >= 24) else 0
-        top_reserve = 0 if focus_variant else 1
-        available_h = max(8, h - date_reserve - top_reserve)
+        clock_top = top_band
+        clock_bottom = max(clock_top + 1, h - bottom_band)
+        available_h = max(6, clock_bottom - clock_top)
+        available_w = max(12, w - 2)
 
-        spacing = max(1, int(round(1 + (scale - 1.0) * 1.5)))
-        colon_w = max(1, int(round(1 + scale)))
-        total_non_digit = colon_w + spacing * 3
-        available_w = max(20, w - 2)
-        max_digit_w = max(4, (available_w - total_non_digit) // 4)
-        max_digit_h = max(8, available_h)
-        base_digit_w = max(4, int(round(max_digit_w * 0.8)))
-        base_digit_h = max(8, int(round(max_digit_h * 0.8)))
+        spacing = 1
+        colon_w = 1 if style == "matrix" else 2
+        slot_w = max(2, (available_w - colon_w - (spacing * 3)) // 4)
+        slot_h = max(6, available_h)
 
-        digit_w = max(4, min(max_digit_w, int(round(base_digit_w * scale))))
-        digit_h = max(8, min(max_digit_h, int(round(base_digit_h * scale))))
+        raw_digit_w = max(2, int(round(slot_w * size)))
+        raw_digit_h = max(6, int(round(slot_h * size)))
+        min_digit_w = 3 if style == "matrix" else 4
+        min_digit_h = 6 if style == "matrix" else 8
 
-        total_w = digit_w * 4 + total_non_digit
+        digit_w = min(slot_w, max(min_digit_w if slot_w >= min_digit_w else slot_w, raw_digit_w))
+        digit_h = min(slot_h, max(min_digit_h if slot_h >= min_digit_h else slot_h, raw_digit_h))
+
+        total_w = digit_w * 4 + colon_w + (spacing * 3)
         x0 = max(0, (w - total_w) // 2)
-        clock_h = max(1, h - date_reserve)
-        y0 = max(0, (clock_h - digit_h) // 2 - (1 if variant == "full" else 0))
+        y0 = clock_top + max(0, (available_h - digit_h) // 2)
         return {
-            "scale": scale,
-            "show_date": show_date,
-            "date_reserve": date_reserve,
+            "size": size,
             "spacing": spacing,
             "colon_w": colon_w,
             "digit_w": digit_w,
             "digit_h": digit_h,
             "x0": x0,
             "y0": y0,
+            "top_band": top_band,
+            "bottom_band": bottom_band,
+            "clock_top": clock_top,
+            "clock_bottom": clock_bottom,
         }
 
-    def _draw_clock_overlays(self, draw, w, h, variant, ampm, theme, date_text):
-        if self._show_date() and ((variant == "full") or (variant == "vertical_focus")) and h >= 24:
+    def _draw_clock_overlays(self, draw, w, h, variant, ampm, theme, date_text, metrics):
+        if self._show_date() and metrics["bottom_band"] > 0:
             dw = int(self.font_small.getlength(date_text))
-            draw.text((max(0, (w - dw) // 2), h - 6), date_text, font=self.font_small, fill=theme.accent)
+            date_y = h - metrics["bottom_band"] + max(0, (metrics["bottom_band"] - 6) // 2)
+            draw.text((max(0, (w - dw) // 2), date_y), date_text, font=self.font_small, fill=theme.accent)
 
-        if self._show_ampm() and ampm and not self._use_24h():
-            if variant == "full":
-                draw.text((1, 1), ampm, font=self.font_small, fill=theme.accent_2)
+        if self._show_ampm() and ampm and not self._use_24h() and metrics["top_band"] > 0:
+            aw = int(self.font_small.getlength(ampm))
+            ampm_y = max(0, (metrics["top_band"] - 6) // 2)
+            draw.text((max(0, (w - aw) // 2), ampm_y), ampm, font=self.font_small, fill=theme.accent_2)
 
     def _draw_face_digital_matrix(self, draw, w, h, variant, theme):
         now, hour, ampm = self._time_parts()
@@ -444,25 +467,33 @@ class ClockWidget(Widget):
             ampm,
             theme,
             now.strftime("%a %b %d").upper(),
+            metrics,
         )
 
     def _draw_seven_seg_digit(self, draw, x, y, dw, dh, thickness, digit, on, off):
         segs = SEGMENT_MAP.get(digit, set())
+        thickness = max(1, min(thickness, max(1, min(dw // 3, dh // 4))))
         half = dh // 2
+        mid_top = max(y + thickness, y + half - thickness // 2)
+        mid_bottom = min(y + dh - thickness - 1, mid_top + thickness - 1)
+        upper_end = max(y + thickness, mid_top - 1)
+        lower_start = min(y + dh - thickness - 1, mid_bottom + 1)
 
         def col(seg):
             return on if seg in segs else off
 
         # Horizontal segments
         draw.rectangle((x + thickness, y, x + dw - thickness - 1, y + thickness - 1), fill=col("a"))
-        draw.rectangle((x + thickness, y + half - thickness // 2, x + dw - thickness - 1, y + half + thickness // 2 - 1), fill=col("g"))
+        draw.rectangle((x + thickness, mid_top, x + dw - thickness - 1, mid_bottom), fill=col("g"))
         draw.rectangle((x + thickness, y + dh - thickness, x + dw - thickness - 1, y + dh - 1), fill=col("d"))
 
         # Vertical segments
-        draw.rectangle((x, y + thickness, x + thickness - 1, y + half - 1), fill=col("f"))
-        draw.rectangle((x + dw - thickness, y + thickness, x + dw - 1, y + half - 1), fill=col("b"))
-        draw.rectangle((x, y + half, x + thickness - 1, y + dh - thickness - 1), fill=col("e"))
-        draw.rectangle((x + dw - thickness, y + half, x + dw - 1, y + dh - thickness - 1), fill=col("c"))
+        if upper_end >= y + thickness:
+            draw.rectangle((x, y + thickness, x + thickness - 1, upper_end), fill=col("f"))
+            draw.rectangle((x + dw - thickness, y + thickness, x + dw - 1, upper_end), fill=col("b"))
+        if y + dh - thickness - 1 >= lower_start:
+            draw.rectangle((x, lower_start, x + thickness - 1, y + dh - thickness - 1), fill=col("e"))
+            draw.rectangle((x + dw - thickness, lower_start, x + dw - 1, y + dh - thickness - 1), fill=col("c"))
 
     def _draw_face_digital_segment(self, draw, w, h, variant, theme):
         now, hour, ampm = self._time_parts()
@@ -509,77 +540,7 @@ class ClockWidget(Widget):
             ampm,
             theme,
             now.strftime("%a %m/%d").upper(),
-        )
-
-    def _draw_face_digital_outline(self, draw, w, h, variant, theme):
-        now, hour, ampm = self._time_parts()
-        digits = f"{hour:02d}{now.minute:02d}"
-        metrics = self._clock_layout_metrics(w, h, variant)
-        thickness = max(1, metrics["digit_w"] // 8)
-
-        for digit_index, ch in enumerate(digits):
-            x = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
-            if digit_index >= 2:
-                x += metrics["colon_w"] + metrics["spacing"]
-            draw.rectangle(
-                (x, metrics["y0"], x + metrics["digit_w"] - 1, metrics["y0"] + metrics["digit_h"] - 1),
-                outline=theme.dim,
-                width=thickness,
-            )
-            tw = int(self.font_tall.getlength(ch))
-            draw.text(
-                (x + max(0, (metrics["digit_w"] - tw) // 2), metrics["y0"] + max(0, (metrics["digit_h"] - 10) // 2)),
-                ch,
-                font=self.font_tall,
-                fill=theme.primary,
-            )
-
-        blink_on = (time.time() % 1.0) > 0.25
-        if blink_on:
-            colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
-            cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
-            draw.rectangle((cx, metrics["y0"] + metrics["digit_h"] // 3, cx + 1, metrics["y0"] + metrics["digit_h"] // 3 + 1), fill=theme.accent_2)
-            draw.rectangle((cx, metrics["y0"] + (metrics["digit_h"] * 2) // 3, cx + 1, metrics["y0"] + (metrics["digit_h"] * 2) // 3 + 1), fill=theme.accent_2)
-
-        self._draw_clock_overlays(
-            draw,
-            w,
-            h,
-            variant,
-            ampm,
-            theme,
-            now.strftime("%a %b %d").upper(),
-        )
-
-    def _draw_face_digital_block(self, draw, w, h, variant, theme):
-        now, hour, ampm = self._time_parts()
-        text = f"{hour:02d}:{now.minute:02d}"
-        metrics = self._clock_layout_metrics(w, h, variant)
-
-        box_h = max(8, min(metrics["digit_h"] + 2, h - 2))
-        pad_x = max(1, int(2 * metrics["scale"]))
-        pad_y = max(1, metrics["y0"] - 1)
-        draw.rounded_rectangle((1, pad_y, w - 2, min(h - 1, pad_y + box_h)), radius=2, fill=theme.dim)
-        inner = (2, pad_y + 1, w - 3, min(h - 2, pad_y + box_h - 1))
-        draw.rounded_rectangle(inner, radius=2, fill=theme.bg)
-
-        tw = int(self.font_tall.getlength(text))
-        tx = max(pad_x, (w - tw) // 2)
-        ty = pad_y + max(0, (box_h - 10) // 2)
-        draw.text((tx, ty), text, font=self.font_tall, fill=theme.primary)
-
-        colon_x = tx + int(self.font_tall.getlength(f"{hour:02d}"))
-        if (time.time() % 1.0) <= 0.25:
-            draw.rectangle((colon_x, ty, colon_x + 2, ty + 8), fill=theme.bg)
-
-        self._draw_clock_overlays(
-            draw,
-            w,
-            h,
-            variant,
-            ampm,
-            theme,
-            now.strftime("%a %m/%d").upper(),
+            metrics,
         )
 
     # --------------------------------------------------------------- widget region

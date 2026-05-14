@@ -506,12 +506,14 @@
       <select id="clock-font-style">
         <option value="matrix">Matrix</option>
         <option value="segment">Segment</option>
-        <option value="outline">Outline</option>
-        <option value="block">Block</option>
       </select>
 
       <label>Clock Size</label>
-      <input type="number" id="clock-size" min="0.75" max="1.5" step="0.05" />
+      <select id="clock-size">
+        <option value="0.5">Small</option>
+        <option value="0.75">Medium</option>
+        <option value="1">Large</option>
+      </select>
 
       <label>Primary Color (#RRGGBB)</label>
       <input type="text" id="clock-color-primary" placeholder="Optional override" />
@@ -1074,6 +1076,22 @@ let selectedClockWidgetCount = 1;
 let selectedClockUse24h = false;
 let selectedClockShowDate = true;
 let selectedClockShowAmpm = true;
+const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
+
+function normalizeClockSize(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1.0;
+  let best = CLOCK_SIZE_OPTIONS[0];
+  let bestDist = Math.abs(numeric - best);
+  for (const option of CLOCK_SIZE_OPTIONS) {
+    const dist = Math.abs(numeric - option);
+    if (dist < bestDist) {
+      best = option;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
 
 function parseCsvSet(raw) {
   return new Set(
@@ -1255,12 +1273,10 @@ async function init() {
     setActiveMode(data.display_mode);
 
     // Clock
-    selectedClockFontStyle = ["matrix", "segment", "outline", "block"].includes(data.CLOCK_FONT_STYLE)
+    selectedClockFontStyle = ["matrix", "segment"].includes(data.CLOCK_FONT_STYLE)
       ? data.CLOCK_FONT_STYLE
       : "matrix";
-    selectedClockSize = Number(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
-    if (!Number.isFinite(selectedClockSize)) selectedClockSize = 1.0;
-    selectedClockSize = Math.max(0.75, Math.min(1.5, selectedClockSize));
+    selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";
     selectedClockWidgetSource = ["metro", "weather", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE)
       ? data.CLOCK_WIDGET_SOURCE
@@ -1273,7 +1289,7 @@ async function init() {
     selectedClockShowDate = data.CLOCK_SHOW_DATE !== false;
     selectedClockShowAmpm = data.CLOCK_SHOW_AMPM !== false;
     document.getElementById("clock-font-style").value = selectedClockFontStyle;
-    document.getElementById("clock-size").value = selectedClockSize.toFixed(2);
+    document.getElementById("clock-size").value = String(selectedClockSize);
     document.getElementById("clock-color-primary").value = data.CLOCK_COLOR_PRIMARY || "";
     document.getElementById("clock-color-accent").value = data.CLOCK_COLOR_ACCENT || "";
     document.getElementById("clock-color-accent-2").value = data.CLOCK_COLOR_ACCENT_2 || "";
@@ -1754,9 +1770,7 @@ async function saveSettings(payload) {
 
 async function saveClock() {
   selectedClockFontStyle = document.getElementById("clock-font-style").value;
-  selectedClockSize = Number(document.getElementById("clock-size").value);
-  if (!Number.isFinite(selectedClockSize)) selectedClockSize = 1.0;
-  selectedClockSize = Math.max(0.75, Math.min(1.5, selectedClockSize));
+  selectedClockSize = normalizeClockSize(document.getElementById("clock-size").value);
   selectedClockLayout = document.getElementById("clock-widget-layout").value;
   selectedClockWidgetCount = Number(document.getElementById("clock-widget-count").value) >= 2 ? 2 : 1;
   selectedClockWidgetSource = document.getElementById("clock-widget-source").value;

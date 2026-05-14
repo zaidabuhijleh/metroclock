@@ -81,10 +81,10 @@ STOCKS_TICKER_SPEED = 25  # ticker scroll speed in pixels/sec
 
 # --- CLOCK ---
 # Font style options:
-#   matrix, segment, outline, block
+#   matrix, segment
 CLOCK_FONT_STYLE = "matrix"
 # One sizing control for all styles.
-CLOCK_SIZE = 1.0  # 0.75 .. 1.5
+CLOCK_SIZE = 1.0  # 0.5, 0.75, 1.0
 CLOCK_COLOR_PRIMARY = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT_2 = ""  # Optional #RRGGBB override
