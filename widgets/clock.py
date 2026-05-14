@@ -91,6 +91,10 @@ class ClockWidget(Widget):
         self._last_ticker_step = time.time()
         self._scroll_offsets = {}
         self._scroll_last_ts = {}
+        self._metro_mini_hold_key = None
+        self._metro_mini_hold_started = 0.0
+        self._sports_mini_hold_key = None
+        self._sports_mini_hold_started = 0.0
 
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
@@ -225,10 +229,6 @@ class ClockWidget(Widget):
                     pass
 
         if now - self._last_widget_rotate >= self._widget_rotate_seconds:
-            trains = getattr(self.metro, "trains", []) or []
-            if trains:
-                self._metro_idx = (self._metro_idx + 1) % len(trains)
-
             symbols = self._stock_symbols()
             if symbols:
                 self._stock_idx = (self._stock_idx + 1) % len(symbols)
@@ -673,12 +673,13 @@ class ClockWidget(Widget):
         restart_on_end=True,
         align="center",
     ):
+        state = {"at_end": False, "scrolling": False}
         if w <= 1 or h <= 1:
-            return
+            return state
 
         txt = str(text or "").strip()
         if not txt:
-            return
+            return state
 
         region = Image.new("RGB", (w, h), self.COLOR_BG)
         rd = ImageDraw.Draw(region)
@@ -695,7 +696,9 @@ class ClockWidget(Widget):
                 text_x = max(1, (w - text_w) // 2)
             rd.text((text_x, y_text), txt, font=self.font_small, fill=color)
             self.canvas.paste(region, (x, y))
-            return
+            return state
+
+        state["scrolling"] = True
 
         now = time.time()
         last_ts = self._scroll_last_ts.get(key, now)
@@ -717,10 +720,13 @@ class ClockWidget(Widget):
             max_offset = max(0.0, float(text_w - visible_w))
             offset = offset + step
             if offset > max_offset:
+                state["at_end"] = True
                 if restart_on_end:
                     offset = 0.0
                 else:
                     offset = max_offset
+            elif max_offset <= 0.0:
+                state["at_end"] = True
         self._scroll_offsets[key] = offset
 
         if wrap:
@@ -731,6 +737,7 @@ class ClockWidget(Widget):
             start_x = 1 - int(offset)
             rd.text((start_x, y_text), txt, font=self.font_small, fill=color)
         self.canvas.paste(region, (x, y))
+        return state
 
     def _draw_widget_metro(self, draw, x, y, w, h):
         trains = getattr(self.metro, "trains", []) or []
@@ -759,19 +766,48 @@ class ClockWidget(Widget):
         mins_label = f"{mins}M" if mins.isdigit() else mins
         scroll_text = f"{dest.upper()} {mins_label}".strip()
         scroll_speed = float(getattr(self.metro, "scroll_speed", 20))
-        self._draw_scrolling_text_clipped(
+        scroll_key = f"metro-mini:{line}:{dest}:{mins}"
+        scroll_state = self._draw_scrolling_text_clipped(
             x + left_w,
             y,
             right_w,
             h,
             scroll_text,
             self.COLOR_MAIN,
-            key=f"metro-mini:{line}:{dest}:{mins}",
+            key=scroll_key,
             speed=scroll_speed,
             always_scroll=False,
             wrap=False,
+            restart_on_end=False,
             align="left",
         )
+        if not scroll_state.get("scrolling"):
+            # If row text fits, still rotate through trains on a timer.
+            now = time.time()
+            if len(trains) > 1:
+                if self._metro_mini_hold_key != "metro-static":
+                    self._metro_mini_hold_key = "metro-static"
+                    self._metro_mini_hold_started = now
+                elif now - self._metro_mini_hold_started >= self._widget_rotate_seconds:
+                    self._metro_idx = (self._metro_idx + 1) % len(trains)
+                    self._metro_mini_hold_started = now
+            return
+
+        if scroll_state.get("at_end"):
+            now = time.time()
+            if self._metro_mini_hold_key != scroll_key:
+                self._metro_mini_hold_key = scroll_key
+                self._metro_mini_hold_started = now
+            elif now - self._metro_mini_hold_started >= 1.2:
+                if len(trains) > 1:
+                    self._metro_idx = (self._metro_idx + 1) % len(trains)
+                # Reset pass for same or next row.
+                self._scroll_offsets[scroll_key] = 0.0
+                self._metro_mini_hold_key = None
+                self._metro_mini_hold_started = 0.0
+        else:
+            self._metro_mini_hold_key = None
+            self._metro_mini_hold_started = 0.0
 
     def _weather_data(self):
         preview = web_server.get_weather_preview()
@@ -967,21 +1003,39 @@ class ClockWidget(Widget):
         status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else ""
         scroll_text = f"{away_abbr} v. {home_abbr} {status}".strip()
         game_id = str(game.get("id", ""))
+        scroll_key = f"sports-mini:{game_id}:{scroll_text}"
 
-        self._draw_scrolling_text_clipped(
+        scroll_state = self._draw_scrolling_text_clipped(
             x,
             y,
             w,
             h,
             scroll_text,
             self.COLOR_MAIN,
-            key=f"sports-mini:{game_id}:{scroll_text}",
+            key=scroll_key,
             speed=12.0,
             always_scroll=False,
             wrap=False,
             restart_on_end=False,
             align="left",
         )
+        if scroll_state.get("at_end"):
+            now = time.time()
+            if self._sports_mini_hold_key != scroll_key:
+                self._sports_mini_hold_key = scroll_key
+                self._sports_mini_hold_started = now
+            elif now - self._sports_mini_hold_started >= 1.2:
+                if len(games) > 1:
+                    self.sports.current_game_index = (idx + 1) % len(games)
+                    if hasattr(self.sports, "last_rotate"):
+                        self.sports.last_rotate = now
+                # Restart pass for same/next game.
+                self._scroll_offsets[scroll_key] = 0.0
+                self._sports_mini_hold_key = None
+                self._sports_mini_hold_started = 0.0
+        else:
+            self._sports_mini_hold_key = None
+            self._sports_mini_hold_started = 0.0
 
     # --------------------------------------------------------------- utils
 
