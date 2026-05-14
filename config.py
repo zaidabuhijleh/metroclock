@@ -80,16 +80,18 @@ STOCKS_FOCUS_ROTATE_SECONDS = 8  # seconds per stock in focus view
 STOCKS_TICKER_SPEED = 25  # ticker scroll speed in pixels/sec
 
 # --- CLOCK ---
-# Face options:
-#   digital_matrix, digital_segment, digital_outline, digital_block
-CLOCK_FACE = "digital_matrix"
-CLOCK_FONT_STYLE = "classic"  # classic, rounded, square
-CLOCK_SIZE_SCALE = 1.0  # 0.75 .. 1.5
+# Font style options:
+#   matrix, segment, outline, block
+CLOCK_FONT_STYLE = "matrix"
+# One sizing control for all styles.
+CLOCK_SIZE = 1.0  # 0.75 .. 1.5
 CLOCK_COLOR_PRIMARY = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT_2 = ""  # Optional #RRGGBB override
 CLOCK_COLOR_DIM = ""  # Optional #RRGGBB override
 CLOCK_COLOR_BG = ""  # Optional #RRGGBB override
+CLOCK_SHOW_DATE = True
+CLOCK_SHOW_AMPM = True
 # "horizontal" -> clock top 2/3, widget bottom 1/3
 # "vertical"   -> clock left 2/3, widget right 1/3
 CLOCK_WIDGET_LAYOUT = "horizontal"
@@ -148,14 +150,15 @@ RUNTIME_EDITABLE_FIELDS = {
     "STOCKS_FOCUS_TIMEFRAME",
     "STOCKS_FOCUS_ROTATE_SECONDS",
     "STOCKS_TICKER_SPEED",
-    "CLOCK_FACE",
     "CLOCK_FONT_STYLE",
-    "CLOCK_SIZE_SCALE",
+    "CLOCK_SIZE",
     "CLOCK_COLOR_PRIMARY",
     "CLOCK_COLOR_ACCENT",
     "CLOCK_COLOR_ACCENT_2",
     "CLOCK_COLOR_DIM",
     "CLOCK_COLOR_BG",
+    "CLOCK_SHOW_DATE",
+    "CLOCK_SHOW_AMPM",
     "CLOCK_WIDGET_LAYOUT",
     "CLOCK_WIDGET_SOURCE",
     "CLOCK_WIDGET_COUNT",
@@ -237,6 +240,10 @@ def _load_runtime_overrides(path):
 
 def _apply_runtime_overrides():
     file_overrides = _load_runtime_overrides(RUNTIME_CONFIG_PATH)
+    # Backward compatibility: migrate legacy clock size key.
+    if "CLOCK_SIZE" not in file_overrides and "CLOCK_SIZE_SCALE" in file_overrides:
+        file_overrides["CLOCK_SIZE"] = file_overrides["CLOCK_SIZE_SCALE"]
+
     for key in RUNTIME_EDITABLE_FIELDS:
         if key not in file_overrides or key not in globals():
             continue

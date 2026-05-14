@@ -12,16 +12,10 @@ from flask import Flask, jsonify, request, send_from_directory
 
 API_VERSION = "1.0"
 
-CLOCK_FACE_OPTIONS = (
-    "digital_matrix",
-    "digital_segment",
-    "digital_outline",
-    "digital_block",
-)
-CLOCK_FONT_STYLE_OPTIONS = ("classic", "rounded", "square")
-CLOCK_SIZE_SCALE_MIN = 0.75
-CLOCK_SIZE_SCALE_MAX = 1.5
-CLOCK_SIZE_SCALE_STEP = 0.05
+CLOCK_FONT_STYLE_OPTIONS = ("matrix", "segment", "outline", "block")
+CLOCK_SIZE_MIN = 0.75
+CLOCK_SIZE_MAX = 1.5
+CLOCK_SIZE_STEP = 0.05
 
 WRITE_ENDPOINTS = {
     "/api/settings",
@@ -310,22 +304,25 @@ def api_settings_get():
 @app.route("/api/clock/styles")
 def api_clock_styles():
     return jsonify({
-        "clock_face": {
-            "key": "CLOCK_FACE",
-            "default": "digital_matrix",
-            "options": list(CLOCK_FACE_OPTIONS),
-        },
         "clock_font_style": {
             "key": "CLOCK_FONT_STYLE",
-            "default": "classic",
+            "default": "matrix",
             "options": list(CLOCK_FONT_STYLE_OPTIONS),
         },
-        "clock_size_scale": {
-            "key": "CLOCK_SIZE_SCALE",
+        "clock_size": {
+            "key": "CLOCK_SIZE",
             "default": 1.0,
-            "min": CLOCK_SIZE_SCALE_MIN,
-            "max": CLOCK_SIZE_SCALE_MAX,
-            "step": CLOCK_SIZE_SCALE_STEP,
+            "min": CLOCK_SIZE_MIN,
+            "max": CLOCK_SIZE_MAX,
+            "step": CLOCK_SIZE_STEP,
+        },
+        "clock_overlays": {
+            "show_date_key": "CLOCK_SHOW_DATE",
+            "show_ampm_key": "CLOCK_SHOW_AMPM",
+            "defaults": {
+                "show_date": True,
+                "show_ampm": True,
+            },
         },
         "clock_color_overrides": {
             "format": "#RRGGBB",

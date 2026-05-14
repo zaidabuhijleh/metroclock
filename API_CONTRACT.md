@@ -39,9 +39,9 @@ Primary device status payload. Includes:
 ### `GET /api/clock/styles`
 
 - Returns app-facing metadata for dynamic clock customization controls:
-  - `CLOCK_FACE` options/default
   - `CLOCK_FONT_STYLE` options/default
-  - `CLOCK_SIZE_SCALE` min/max/step/default
+  - `CLOCK_SIZE` min/max/step/default
+  - `CLOCK_SHOW_DATE` and `CLOCK_SHOW_AMPM` metadata/defaults
   - Clock color override keys + expected `#RRGGBB` format
 
 ## Write Endpoints

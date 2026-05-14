@@ -61,8 +61,7 @@ class ClockWidget(Widget):
     COLOR_DOWN = (239, 97, 97)
     COLOR_DIVIDER = (48, 62, 90)
 
-    FACE_OPTIONS = {"digital_matrix", "digital_segment", "digital_outline", "digital_block"}
-    FONT_STYLE_OPTIONS = {"classic", "rounded", "square"}
+    FONT_STYLE_OPTIONS = {"matrix", "segment", "outline", "block"}
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient"}
     MINI_WIDGET_MIN_FRACTION = {
@@ -103,20 +102,23 @@ class ClockWidget(Widget):
 
     # --------------------------------------------------------------- config
 
-    def _face(self):
-        face = str(getattr(config, "CLOCK_FACE", "digital_matrix") or "digital_matrix").strip().lower()
-        return face if face in self.FACE_OPTIONS else "digital_matrix"
-
     def _font_style(self):
-        style = str(getattr(config, "CLOCK_FONT_STYLE", "classic") or "classic").strip().lower()
-        return style if style in self.FONT_STYLE_OPTIONS else "classic"
+        style = str(getattr(config, "CLOCK_FONT_STYLE", "matrix") or "matrix").strip().lower()
+        return style if style in self.FONT_STYLE_OPTIONS else "matrix"
 
-    def _clock_size_scale(self):
+    def _clock_size(self):
+        raw = getattr(config, "CLOCK_SIZE", getattr(config, "CLOCK_SIZE_SCALE", 1.0))
         try:
-            value = float(getattr(config, "CLOCK_SIZE_SCALE", 1.0))
+            value = float(raw)
         except Exception:
             value = 1.0
         return max(0.75, min(1.5, value))
+
+    def _show_date(self):
+        return bool(getattr(config, "CLOCK_SHOW_DATE", True))
+
+    def _show_ampm(self):
+        return bool(getattr(config, "CLOCK_SHOW_AMPM", True))
 
     def _parse_color_override(self, raw):
         txt = str(raw or "").strip()
@@ -245,7 +247,7 @@ class ClockWidget(Widget):
 
             if widget_count == 2 and left_w >= 12 and self.height >= 12:
                 # Left area becomes clock (top) + horizontal mini-widget (bottom).
-                split_ratio = 0.75 if self._face() == "digital_segment" else (2 / 3)
+                split_ratio = 2 / 3
                 left_clock_h = max(1, min(self.height - 1, int(round(self.height * split_ratio))))
                 left_bottom_h = self.height - left_clock_h
 
@@ -324,15 +326,15 @@ class ClockWidget(Widget):
     def _render_clock_face(self, w, h, variant, theme):
         img = Image.new("RGB", (max(1, w), max(1, h)), theme.bg)
         d = ImageDraw.Draw(img)
-        face = self._face()
+        style = self._font_style()
 
         try:
             renderer = {
-                "digital_matrix": self._draw_face_digital_matrix,
-                "digital_segment": self._draw_face_digital_segment,
-                "digital_outline": self._draw_face_digital_outline,
-                "digital_block": self._draw_face_digital_block,
-            }.get(face, self._draw_face_digital_matrix)
+                "matrix": self._draw_face_digital_matrix,
+                "segment": self._draw_face_digital_segment,
+                "outline": self._draw_face_digital_outline,
+                "block": self._draw_face_digital_block,
+            }.get(style, self._draw_face_digital_matrix)
             renderer(d, w, h, variant, theme)
         except Exception:
             # Keep clock mode alive even if one face errors in an edge case.
@@ -358,54 +360,91 @@ class ClockWidget(Widget):
             return f"{hour:02d}:{now.minute:02d}:{now.second:02d}"
         return f"{hour:02d}:{now.minute:02d}"
 
+    def _clock_layout_metrics(self, w, h, variant):
+        scale = self._clock_size()
+        focus_variant = variant in {"vertical_focus", "vertical_split_top"}
+        show_date = self._show_date() and ((variant == "full") or (variant == "vertical_focus"))
+
+        date_reserve = 7 if (show_date and h >= 24) else 0
+        top_reserve = 0 if focus_variant else 1
+        available_h = max(8, h - date_reserve - top_reserve)
+
+        spacing = max(1, int(round(1 + (scale - 1.0) * 1.5)))
+        colon_w = max(1, int(round(1 + scale)))
+        total_non_digit = colon_w + spacing * 3
+        available_w = max(20, w - 2)
+        max_digit_w = max(4, (available_w - total_non_digit) // 4)
+        max_digit_h = max(8, available_h)
+        base_digit_w = max(4, int(round(max_digit_w * 0.8)))
+        base_digit_h = max(8, int(round(max_digit_h * 0.8)))
+
+        digit_w = max(4, min(max_digit_w, int(round(base_digit_w * scale))))
+        digit_h = max(8, min(max_digit_h, int(round(base_digit_h * scale))))
+
+        total_w = digit_w * 4 + total_non_digit
+        x0 = max(0, (w - total_w) // 2)
+        clock_h = max(1, h - date_reserve)
+        y0 = max(0, (clock_h - digit_h) // 2 - (1 if variant == "full" else 0))
+        return {
+            "scale": scale,
+            "show_date": show_date,
+            "date_reserve": date_reserve,
+            "spacing": spacing,
+            "colon_w": colon_w,
+            "digit_w": digit_w,
+            "digit_h": digit_h,
+            "x0": x0,
+            "y0": y0,
+        }
+
+    def _draw_clock_overlays(self, draw, w, h, variant, ampm, theme, date_text):
+        if self._show_date() and ((variant == "full") or (variant == "vertical_focus")) and h >= 24:
+            dw = int(self.font_small.getlength(date_text))
+            draw.text((max(0, (w - dw) // 2), h - 6), date_text, font=self.font_small, fill=theme.accent)
+
+        if self._show_ampm() and ampm and not self._use_24h():
+            if variant == "full":
+                draw.text((1, 1), ampm, font=self.font_small, fill=theme.accent_2)
+
     def _draw_face_digital_matrix(self, draw, w, h, variant, theme):
         now, hour, ampm = self._time_parts()
-        text = f"{hour:02d}:{now.minute:02d}"
-        scale = self._clock_size_scale()
-
-        columns = 0
-        for ch in text:
-            columns += 1 if ch == ":" else 3
-            columns += 1
-        columns -= 1
-
-        rows = 5
-        cell = max(1, int(min(w // max(1, columns), h // (rows + 2)) * scale))
+        digits = f"{hour:02d}{now.minute:02d}"
+        metrics = self._clock_layout_metrics(w, h, variant)
+        cell = max(1, min(metrics["digit_w"] // 3, metrics["digit_h"] // 5))
         dot = max(1, cell - 1)
-        total_w = columns * cell
-        total_h = rows * cell
-        x0 = max(0, (w - total_w) // 2)
-        y0 = max(0, (h - total_h) // 2 - (1 if variant == "full" else 0))
+        total_h = cell * 5
+        y0 = max(0, metrics["y0"] + (metrics["digit_h"] - total_h) // 2)
+        blink_on = (time.time() % 1.0) > 0.25
 
-        cursor = 0
-        for ch in text:
-            if ch == ":":
-                cx = x0 + cursor * cell
-                upper = y0 + cell
-                lower = y0 + (rows - 2) * cell
-                blink_on = (time.time() % 1.0) > 0.25
-                if blink_on:
-                    draw.rectangle((cx, upper, cx + dot - 1, upper + dot - 1), fill=theme.accent_2)
-                    draw.rectangle((cx, lower, cx + dot - 1, lower + dot - 1), fill=theme.accent_2)
-                cursor += 2
-                continue
-
+        for digit_index, ch in enumerate(digits):
+            digit_left = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
+            if digit_index >= 2:
+                digit_left += metrics["colon_w"] + metrics["spacing"]
             glyph = DOT_DIGITS.get(ch, DOT_DIGITS["0"])
+            gx_off = max(0, (metrics["digit_w"] - cell * 3) // 2)
             for gy, row in enumerate(glyph):
                 for gx, val in enumerate(row):
                     if val != "1":
                         continue
-                    px = x0 + (cursor + gx) * cell
+                    px = digit_left + gx_off + gx * cell
                     py = y0 + gy * cell
                     draw.rectangle((px, py, px + dot - 1, py + dot - 1), fill=theme.primary)
-            cursor += 4
 
-        if variant == "full" and h >= 28:
-            date_label = now.strftime("%a %b %d").upper()
-            dw = int(self.font_small.getlength(date_label))
-            draw.text((max(0, (w - dw) // 2), h - 6), date_label, font=self.font_small, fill=theme.accent)
-            if ampm:
-                draw.text((1, 1), ampm, font=self.font_small, fill=theme.accent_2)
+        colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
+        colon_x = colon_left + max(0, (metrics["colon_w"] - dot) // 2)
+        if blink_on:
+            draw.rectangle((colon_x, y0 + cell, colon_x + dot - 1, y0 + cell + dot - 1), fill=theme.accent_2)
+            draw.rectangle((colon_x, y0 + (cell * 3), colon_x + dot - 1, y0 + (cell * 3) + dot - 1), fill=theme.accent_2)
+
+        self._draw_clock_overlays(
+            draw,
+            w,
+            h,
+            variant,
+            ampm,
+            theme,
+            now.strftime("%a %b %d").upper(),
+        )
 
     def _draw_seven_seg_digit(self, draw, x, y, dw, dh, thickness, digit, on, off):
         segs = SEGMENT_MAP.get(digit, set())
@@ -427,99 +466,101 @@ class ClockWidget(Widget):
 
     def _draw_face_digital_segment(self, draw, w, h, variant, theme):
         now, hour, ampm = self._time_parts()
-        time_text = f"{hour:02d}{now.minute:02d}"
-        scale = self._clock_size_scale()
-
-        is_focus_single = variant == "vertical_focus"
-        is_focus_split = variant == "vertical_split_top"
-        show_date = (variant == "full") or is_focus_single
-
-        digit_count = 4
-        colon_w = max(1, w // 44)
-        spacing = 1 if (is_focus_single or is_focus_split) else max(1, w // 32)
-        total_non_digit = colon_w + spacing * 3
-        digit_w = max(4, int(((w - total_non_digit) // digit_count) * scale))
-        date_reserve = 7 if (show_date and h >= 24) else 0
-        top_reserve = 0 if (is_focus_single or is_focus_split) else 1
-        digit_h = max(8, int((h - date_reserve - top_reserve) * scale))
-        thickness = max(1, digit_w // (6 if self._font_style() == "rounded" else 5))
-        total_w = digit_w * digit_count + total_non_digit
-        x = max(0, (w - total_w) // 2)
-        clock_h = max(1, h - date_reserve)
-        y = max(0, (clock_h - digit_h) // 2 - (1 if variant == "full" else 0))
-
+        digits = f"{hour:02d}{now.minute:02d}"
+        metrics = self._clock_layout_metrics(w, h, variant)
         off = tuple(max(0, c // 4) for c in theme.dim)
+        thickness = max(1, metrics["digit_w"] // 5)
 
-        for idx, ch in enumerate(time_text):
-            self._draw_seven_seg_digit(draw, x, y, digit_w, digit_h, thickness, ch, theme.primary, off)
-            x += digit_w
-            if idx == 1:
-                cx = x + spacing // 2
-                blink_on = (time.time() % 1.0) > 0.25
-                if blink_on:
-                    draw.rectangle((cx, y + digit_h // 3, cx + colon_w - 1, y + digit_h // 3 + colon_w - 1), fill=theme.accent_2)
-                    draw.rectangle((cx, y + (digit_h * 2) // 3, cx + colon_w - 1, y + (digit_h * 2) // 3 + colon_w - 1), fill=theme.accent_2)
-                x += colon_w + spacing
-            else:
-                x += spacing
+        for digit_index, ch in enumerate(digits):
+            x = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
+            if digit_index >= 2:
+                x += metrics["colon_w"] + metrics["spacing"]
+            self._draw_seven_seg_digit(
+                draw,
+                x,
+                metrics["y0"],
+                metrics["digit_w"],
+                metrics["digit_h"],
+                thickness,
+                ch,
+                theme.primary,
+                off,
+            )
 
-        if show_date and h >= 24:
-            if is_focus_single:
-                sub = now.strftime("%b %d").upper().replace(" 0", " ")
-            else:
-                sub = now.strftime("%a %m/%d").upper()
-            sw = int(self.font_small.getlength(sub))
-            date_color = theme.accent if is_focus_single else theme.dim
-            draw.text(((w - sw) // 2, h - 6), sub, font=self.font_small, fill=date_color)
-            if ampm and variant == "full":
-                draw.text((w - int(self.font_small.getlength(ampm)) - 1, 1), ampm, font=self.font_small, fill=theme.accent_2)
+        blink_on = (time.time() % 1.0) > 0.25
+        if blink_on:
+            colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
+            cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
+            dot = max(1, metrics["colon_w"])
+            draw.rectangle(
+                (cx, metrics["y0"] + metrics["digit_h"] // 3, cx + dot - 1, metrics["y0"] + metrics["digit_h"] // 3 + dot - 1),
+                fill=theme.accent_2,
+            )
+            draw.rectangle(
+                (cx, metrics["y0"] + (metrics["digit_h"] * 2) // 3, cx + dot - 1, metrics["y0"] + (metrics["digit_h"] * 2) // 3 + dot - 1),
+                fill=theme.accent_2,
+            )
+
+        self._draw_clock_overlays(
+            draw,
+            w,
+            h,
+            variant,
+            ampm,
+            theme,
+            now.strftime("%a %m/%d").upper(),
+        )
 
     def _draw_face_digital_outline(self, draw, w, h, variant, theme):
         now, hour, ampm = self._time_parts()
-        text = f"{hour:02d}{now.minute:02d}"
-        scale = self._clock_size_scale()
-        thickness = 1 if self._font_style() != "square" else 2
+        digits = f"{hour:02d}{now.minute:02d}"
+        metrics = self._clock_layout_metrics(w, h, variant)
+        thickness = max(1, metrics["digit_w"] // 8)
 
-        digit_count = 4
-        colon_w = 2
-        spacing = max(1, int(2 * scale))
-        digit_w = max(6, int(((w - colon_w - spacing * 3) // digit_count) * scale))
-        digit_h = max(10, int((h - 7) * scale))
-        total_w = digit_w * digit_count + colon_w + spacing * 3
-        x = max(0, (w - total_w) // 2)
-        y = max(0, (h - digit_h) // 2 - (1 if variant == "full" else 0))
-
-        for idx, ch in enumerate(text):
-            draw.rectangle((x, y, x + digit_w - 1, y + digit_h - 1), outline=theme.dim, width=thickness)
+        for digit_index, ch in enumerate(digits):
+            x = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
+            if digit_index >= 2:
+                x += metrics["colon_w"] + metrics["spacing"]
+            draw.rectangle(
+                (x, metrics["y0"], x + metrics["digit_w"] - 1, metrics["y0"] + metrics["digit_h"] - 1),
+                outline=theme.dim,
+                width=thickness,
+            )
             tw = int(self.font_tall.getlength(ch))
-            draw.text((x + max(0, (digit_w - tw) // 2), y + max(0, (digit_h - 10) // 2)), ch, font=self.font_tall, fill=theme.primary)
-            x += digit_w
-            if idx == 1:
-                blink_on = (time.time() % 1.0) > 0.25
-                if blink_on:
-                    draw.rectangle((x, y + digit_h // 3, x + colon_w - 1, y + digit_h // 3 + 1), fill=theme.accent_2)
-                    draw.rectangle((x, y + (digit_h * 2) // 3, x + colon_w - 1, y + (digit_h * 2) // 3 + 1), fill=theme.accent_2)
-                x += colon_w + spacing
-            else:
-                x += spacing
+            draw.text(
+                (x + max(0, (metrics["digit_w"] - tw) // 2), metrics["y0"] + max(0, (metrics["digit_h"] - 10) // 2)),
+                ch,
+                font=self.font_tall,
+                fill=theme.primary,
+            )
 
-        if variant == "full" and h >= 28:
-            date_label = now.strftime("%a %b %d").upper()
-            dw = int(self.font_small.getlength(date_label))
-            draw.text((max(0, (w - dw) // 2), h - 6), date_label, font=self.font_small, fill=theme.accent)
-            if ampm:
-                draw.text((1, 1), ampm, font=self.font_small, fill=theme.accent_2)
+        blink_on = (time.time() % 1.0) > 0.25
+        if blink_on:
+            colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
+            cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
+            draw.rectangle((cx, metrics["y0"] + metrics["digit_h"] // 3, cx + 1, metrics["y0"] + metrics["digit_h"] // 3 + 1), fill=theme.accent_2)
+            draw.rectangle((cx, metrics["y0"] + (metrics["digit_h"] * 2) // 3, cx + 1, metrics["y0"] + (metrics["digit_h"] * 2) // 3 + 1), fill=theme.accent_2)
+
+        self._draw_clock_overlays(
+            draw,
+            w,
+            h,
+            variant,
+            ampm,
+            theme,
+            now.strftime("%a %b %d").upper(),
+        )
 
     def _draw_face_digital_block(self, draw, w, h, variant, theme):
         now, hour, ampm = self._time_parts()
         text = f"{hour:02d}:{now.minute:02d}"
-        scale = self._clock_size_scale()
+        metrics = self._clock_layout_metrics(w, h, variant)
 
-        box_h = max(8, int(min(h - 2, 13 * scale)))
-        pad_x = max(1, int(2 * scale))
-        pad_y = max(1, (h - box_h) // 2 - (1 if variant == "full" else 0))
-        draw.rounded_rectangle((1, pad_y, w - 2, pad_y + box_h), radius=2, fill=theme.dim)
-        inner = (2, pad_y + 1, w - 3, pad_y + box_h - 1)
+        box_h = max(8, min(metrics["digit_h"] + 2, h - 2))
+        pad_x = max(1, int(2 * metrics["scale"]))
+        pad_y = max(1, metrics["y0"] - 1)
+        draw.rounded_rectangle((1, pad_y, w - 2, min(h - 1, pad_y + box_h)), radius=2, fill=theme.dim)
+        inner = (2, pad_y + 1, w - 3, min(h - 2, pad_y + box_h - 1))
         draw.rounded_rectangle(inner, radius=2, fill=theme.bg)
 
         tw = int(self.font_tall.getlength(text))
@@ -531,12 +572,15 @@ class ClockWidget(Widget):
         if (time.time() % 1.0) <= 0.25:
             draw.rectangle((colon_x, ty, colon_x + 2, ty + 8), fill=theme.bg)
 
-        if variant == "full" and h >= 28:
-            sub = now.strftime("%a %m/%d").upper()
-            sw = int(self.font_small.getlength(sub))
-            draw.text((max(0, (w - sw) // 2), h - 6), sub, font=self.font_small, fill=theme.accent)
-            if ampm:
-                draw.text((w - int(self.font_small.getlength(ampm)) - 1, 1), ampm, font=self.font_small, fill=theme.accent_2)
+        self._draw_clock_overlays(
+            draw,
+            w,
+            h,
+            variant,
+            ampm,
+            theme,
+            now.strftime("%a %m/%d").upper(),
+        )
 
     # --------------------------------------------------------------- widget region
 
