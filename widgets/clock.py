@@ -122,6 +122,12 @@ class ClockWidget(Widget):
                 best_dist = dist
         return best
 
+    def _effective_clock_size(self):
+        # Clock+widget mode always uses small clock sizing for readability balance.
+        if web_server.get_display_mode() == "clock_widget":
+            return 0.5
+        return self._clock_size()
+
     def _show_date(self):
         return bool(getattr(config, "CLOCK_SHOW_DATE", True))
 
@@ -377,7 +383,7 @@ class ClockWidget(Widget):
 
     def _clock_layout_metrics(self, w, h, variant):
         style = self._font_style()
-        size = self._clock_size()
+        size = self._effective_clock_size()
         show_top_overlay = self._show_ampm() and (not self._use_24h())
         show_bottom_overlay = self._show_date()
         top_band = self._overlay_band_height(h, variant, show_top_overlay)
@@ -700,11 +706,15 @@ class ClockWidget(Widget):
         gap = 10
         cycle = text_w + gap
         offset = self._scroll_offsets.get(key, 0.0)
+        step = max(0.0, dt * speed)
+        # Keep per-frame movement bounded so transient frame drops do not
+        # cause large multi-pixel jumps that look choppy on the matrix.
+        step = min(step, 1.0)
         if wrap:
-            offset = (offset + dt * speed) % cycle
+            offset = (offset + step) % cycle
         else:
             max_offset = max(0.0, float(text_w - visible_w))
-            offset = min(max_offset, offset + dt * speed)
+            offset = min(max_offset, offset + step)
         self._scroll_offsets[key] = offset
 
         if wrap:
@@ -946,9 +956,38 @@ class ClockWidget(Widget):
             draw_team_row(home, away, "home", home_y)
             return
 
+        away_abbr = str(away.get("abbr", "AWY")).upper()
+        home_abbr = str(home.get("abbr", "HME")).upper()
+        score = f"{away.get('score', 0)}-{home.get('score', 0)}"
         status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else ""
-        text = f"{away.get('abbr', 'AWY')} {away.get('score', 0)}-{home.get('score', 0)} {home.get('abbr', 'HME')} {status}"
-        self._draw_scrolling_text_clipped(x, y, w, h, text, self.COLOR_MAIN, key=f"sports:{text}", speed=14.0)
+        matchup = f"{away_abbr}/{home_abbr}"
+
+        matchup_w = int(self.font_small.getlength(matchup))
+        left_w = min(max(10, matchup_w + 4), max(10, w // 3))
+        left_w = min(left_w, max(1, w - 6))
+        right_w = max(1, w - left_w)
+
+        draw.text(
+            (x + max(1, (left_w - matchup_w) // 2), y + max(0, (h - 6) // 2)),
+            matchup,
+            font=self.font_small,
+            fill=self.COLOR_ACCENT,
+        )
+
+        scroll_text = f"{score} {status}".strip()
+        self._draw_scrolling_text_clipped(
+            x + left_w,
+            y,
+            right_w,
+            h,
+            scroll_text,
+            self.COLOR_MAIN,
+            key=f"sports-mini:{matchup}:{score}:{status}",
+            speed=12.0,
+            always_scroll=False,
+            wrap=False,
+            align="left",
+        )
 
     # --------------------------------------------------------------- utils
 

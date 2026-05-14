@@ -514,6 +514,7 @@
         <option value="0.75">M</option>
         <option value="1">L</option>
       </select>
+      <p id="clock-size-lock-hint" class="hint" style="display:none;">Clock+Widget mode uses Small size automatically.</p>
 
       <label>Primary Color (#RRGGBB)</label>
       <input type="text" id="clock-color-primary" placeholder="Optional override" />
@@ -1069,6 +1070,7 @@ let selectedTtcLineFilters = new Set();
 let selectedMetroTransition = "slide";
 let selectedClockFontStyle = "matrix";
 let selectedClockSize = 1.0;
+let selectedClockSizeBeforeWidget = 1.0;
 let selectedClockLayout = "horizontal";
 let selectedClockWidgetSource = "weather";
 let selectedClockWidgetSourceSecondary = "stocks";
@@ -1076,6 +1078,7 @@ let selectedClockWidgetCount = 1;
 let selectedClockUse24h = false;
 let selectedClockShowDate = true;
 let selectedClockShowAmpm = true;
+let currentDisplayMode = "clock";
 const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
 
 function normalizeClockSize(value) {
@@ -1091,6 +1094,25 @@ function normalizeClockSize(value) {
     }
   }
   return best;
+}
+
+function updateClockSizeControl(mode) {
+  const sizeEl = document.getElementById("clock-size");
+  const hintEl = document.getElementById("clock-size-lock-hint");
+  const locked = mode === "clock_widget";
+  if (locked) {
+    selectedClockSizeBeforeWidget = normalizeClockSize(selectedClockSizeBeforeWidget || sizeEl.value || selectedClockSize);
+    selectedClockSize = 0.5;
+    sizeEl.value = "0.5";
+    sizeEl.disabled = true;
+    if (hintEl) hintEl.style.display = "";
+    return;
+  }
+  sizeEl.disabled = false;
+  const restore = normalizeClockSize(selectedClockSizeBeforeWidget || selectedClockSize || 1.0);
+  selectedClockSize = restore;
+  sizeEl.value = String(restore);
+  if (hintEl) hintEl.style.display = "none";
 }
 
 function parseCsvSet(raw) {
@@ -1270,7 +1292,8 @@ async function init() {
     document.getElementById("sys-port").textContent = data.WEB_SERVER_PORT || "—";
 
     // Mode buttons
-    setActiveMode(data.display_mode);
+    currentDisplayMode = String(data.display_mode || "clock");
+    setActiveMode(currentDisplayMode);
 
     // Clock
     selectedClockFontStyle = ["matrix", "segment"].includes(data.CLOCK_FONT_STYLE)
@@ -1290,6 +1313,7 @@ async function init() {
     selectedClockShowAmpm = data.CLOCK_SHOW_AMPM !== false;
     document.getElementById("clock-font-style").value = selectedClockFontStyle;
     document.getElementById("clock-size").value = String(selectedClockSize);
+    selectedClockSizeBeforeWidget = selectedClockSize;
     document.getElementById("clock-color-primary").value = data.CLOCK_COLOR_PRIMARY || "";
     document.getElementById("clock-color-accent").value = data.CLOCK_COLOR_ACCENT || "";
     document.getElementById("clock-color-accent-2").value = data.CLOCK_COLOR_ACCENT_2 || "";
@@ -1302,6 +1326,7 @@ async function init() {
     document.getElementById("clock-format").value = selectedClockUse24h ? "24h" : "12h";
     document.getElementById("clock-show-date").value = selectedClockShowDate ? "on" : "off";
     document.getElementById("clock-show-ampm").value = selectedClockShowAmpm ? "on" : "off";
+    updateClockSizeControl(currentDisplayMode);
 
     // Metro
     selectedMetroSystem = ["wmata", "nyc", "ttc"].includes(String(data.METRO_SYSTEM || "").toLowerCase())
@@ -1730,7 +1755,9 @@ async function switchMode(mode) {
     });
     const data = await res.json();
     if (data.ok) {
+      currentDisplayMode = mode;
       setActiveMode(mode);
+      updateClockSizeControl(mode);
       document.getElementById("sys-mode").textContent = mode;
       toast("Mode switched to " + mode);
     } else {
@@ -1770,7 +1797,14 @@ async function saveSettings(payload) {
 
 async function saveClock() {
   selectedClockFontStyle = document.getElementById("clock-font-style").value;
-  selectedClockSize = normalizeClockSize(document.getElementById("clock-size").value);
+  const lockClockSize = currentDisplayMode === "clock_widget";
+  selectedClockSize = lockClockSize
+    ? 0.5
+    : normalizeClockSize(document.getElementById("clock-size").value);
+  if (!lockClockSize) {
+    selectedClockSizeBeforeWidget = selectedClockSize;
+  }
+  document.getElementById("clock-size").value = String(selectedClockSize);
   selectedClockLayout = document.getElementById("clock-widget-layout").value;
   selectedClockWidgetCount = Number(document.getElementById("clock-widget-count").value) >= 2 ? 2 : 1;
   selectedClockWidgetSource = document.getElementById("clock-widget-source").value;
