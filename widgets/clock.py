@@ -12,20 +12,6 @@ from core.widget import Widget
 from widgets import icons
 
 
-DOT_DIGITS = {
-    "0": ("111", "101", "101", "101", "111"),
-    "1": ("010", "110", "010", "010", "111"),
-    "2": ("111", "001", "111", "100", "111"),
-    "3": ("111", "001", "111", "001", "111"),
-    "4": ("101", "101", "111", "001", "001"),
-    "5": ("111", "100", "111", "001", "111"),
-    "6": ("111", "100", "111", "101", "111"),
-    "7": ("111", "001", "010", "100", "100"),
-    "8": ("111", "101", "111", "101", "111"),
-    "9": ("111", "101", "111", "001", "111"),
-}
-
-
 SEGMENT_MAP = {
     "0": {"a", "b", "c", "d", "e", "f"},
     "1": {"b", "c"},
@@ -428,6 +414,7 @@ class ClockWidget(Widget):
         if self._show_date() and metrics["bottom_band"] > 0:
             dw = int(self.font_small.getlength(date_text))
             date_y = h - metrics["bottom_band"] + max(0, (metrics["bottom_band"] - 6) // 2)
+            date_y = min(h - 6, date_y + 1)
             draw.text((max(0, (w - dw) // 2), date_y), date_text, font=self.font_small, fill=theme.accent)
 
         if self._show_ampm() and ampm and not self._use_24h() and metrics["top_band"] > 0:
@@ -435,108 +422,112 @@ class ClockWidget(Widget):
             ampm_y = max(0, (metrics["top_band"] - 6) // 2)
             draw.text((max(0, (w - aw) // 2), ampm_y), ampm, font=self.font_small, fill=theme.accent_2)
 
-    def _draw_face_digital_matrix(self, draw, w, h, variant, theme):
-        now, hour, ampm = self._time_parts()
-        digits = f"{hour:02d}{now.minute:02d}"
-        metrics = self._clock_layout_metrics(w, h, variant)
-        cell = max(1, min(metrics["digit_w"] // 3, metrics["digit_h"] // 5))
-        dot = max(1, cell - 1)
-        total_h = cell * 5
-        y0 = max(0, metrics["y0"] + (metrics["digit_h"] - total_h) // 2)
-        blink_on = (time.time() % 1.0) > 0.25
-
-        for digit_index, ch in enumerate(digits):
-            digit_left = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
-            if digit_index >= 2:
-                digit_left += metrics["colon_w"] + metrics["spacing"]
-            glyph = DOT_DIGITS.get(ch, DOT_DIGITS["0"])
-            gx_off = max(0, (metrics["digit_w"] - cell * 3) // 2)
-            for gy, row in enumerate(glyph):
-                for gx, val in enumerate(row):
-                    if val != "1":
-                        continue
-                    px = digit_left + gx_off + gx * cell
-                    py = y0 + gy * cell
-                    draw.rectangle((px, py, px + dot - 1, py + dot - 1), fill=theme.primary)
-
-        colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
-        colon_x = colon_left + max(0, (metrics["colon_w"] - dot) // 2)
-        if blink_on:
-            draw.rectangle((colon_x, y0 + cell, colon_x + dot - 1, y0 + cell + dot - 1), fill=theme.accent_2)
-            draw.rectangle((colon_x, y0 + (cell * 3), colon_x + dot - 1, y0 + (cell * 3) + dot - 1), fill=theme.accent_2)
-
-        self._draw_clock_overlays(
-            draw,
-            w,
-            h,
-            variant,
-            ampm,
-            theme,
-            now.strftime("%a %b %d").upper(),
-            metrics,
-        )
-
-    def _draw_seven_seg_digit(self, draw, x, y, dw, dh, thickness, digit, on, off):
-        segs = SEGMENT_MAP.get(digit, set())
+    def _segment_rects_for_digit(self, x, y, dw, dh, thickness, digit):
         thickness = max(1, min(thickness, max(1, min(dw // 3, dh // 4))))
         half = dh // 2
         mid_top = max(y + thickness, y + half - thickness // 2)
         mid_bottom = min(y + dh - thickness - 1, mid_top + thickness - 1)
         upper_end = max(y + thickness, mid_top - 1)
         lower_start = min(y + dh - thickness - 1, mid_bottom + 1)
-
-        def col(seg):
-            return on if seg in segs else off
-
-        # Horizontal segments
-        draw.rectangle((x + thickness, y, x + dw - thickness - 1, y + thickness - 1), fill=col("a"))
-        draw.rectangle((x + thickness, mid_top, x + dw - thickness - 1, mid_bottom), fill=col("g"))
-        draw.rectangle((x + thickness, y + dh - thickness, x + dw - thickness - 1, y + dh - 1), fill=col("d"))
-
-        # Vertical segments
+        rects = {
+            "a": (x + thickness, y, x + dw - thickness - 1, y + thickness - 1),
+            "g": (x + thickness, mid_top, x + dw - thickness - 1, mid_bottom),
+            "d": (x + thickness, y + dh - thickness, x + dw - thickness - 1, y + dh - 1),
+        }
         if upper_end >= y + thickness:
-            draw.rectangle((x, y + thickness, x + thickness - 1, upper_end), fill=col("f"))
-            draw.rectangle((x + dw - thickness, y + thickness, x + dw - 1, upper_end), fill=col("b"))
+            rects["f"] = (x, y + thickness, x + thickness - 1, upper_end)
+            rects["b"] = (x + dw - thickness, y + thickness, x + dw - 1, upper_end)
         if y + dh - thickness - 1 >= lower_start:
-            draw.rectangle((x, lower_start, x + thickness - 1, y + dh - thickness - 1), fill=col("e"))
-            draw.rectangle((x + dw - thickness, lower_start, x + dw - 1, y + dh - thickness - 1), fill=col("c"))
+            rects["e"] = (x, lower_start, x + thickness - 1, y + dh - thickness - 1)
+            c_end = y + dh - thickness - 1
+            # Make "4" feel slightly taller by extending the lower-right stem
+            # by one size unit (thickness scales with font size preset).
+            if str(digit) == "4":
+                c_end = min(y + dh - 1, c_end + thickness)
+            rects["c"] = (x + dw - thickness, lower_start, x + dw - 1, c_end)
+        return rects, thickness
 
-    def _draw_face_digital_segment(self, draw, w, h, variant, theme):
+    def _draw_dotted_segment(self, draw, rect, color, dot_size):
+        x1, y1, x2, y2 = rect
+        if x2 < x1 or y2 < y1:
+            return
+        w = x2 - x1 + 1
+        h = y2 - y1 + 1
+        dot = max(1, min(dot_size, w, h))
+        step = dot + 1
+
+        if w >= h:
+            y_start = y1 + max(0, (h - dot) // 2)
+            positions = []
+            pos = x1
+            end_pos = x2 - dot + 1
+            while pos <= end_pos:
+                positions.append(pos)
+                pos += step
+            if not positions:
+                positions = [x1]
+            elif positions[-1] < end_pos:
+                positions.append(end_pos)
+            for px in positions:
+                draw.rectangle((px, y_start, min(x2, px + dot - 1), min(y2, y_start + dot - 1)), fill=color)
+            return
+
+        x_start = x1 + max(0, (w - dot) // 2)
+        positions = []
+        pos = y1
+        end_pos = y2 - dot + 1
+        while pos <= end_pos:
+            positions.append(pos)
+            pos += step
+        if not positions:
+            positions = [y1]
+        elif positions[-1] < end_pos:
+            positions.append(end_pos)
+        for py in positions:
+            draw.rectangle((x_start, py, min(x2, x_start + dot - 1), min(y2, py + dot - 1)), fill=color)
+
+    def _draw_segment_digit(self, draw, x, y, dw, dh, digit, on, off, style):
+        rects, thickness = self._segment_rects_for_digit(x, y, dw, dh, max(1, dw // 5), digit)
+        segs = SEGMENT_MAP.get(digit, set())
+        dot_size = max(1, thickness - 1)
+
+        for seg, rect in rects.items():
+            lit = seg in segs
+            if style == "matrix":
+                if not lit:
+                    continue
+                self._draw_dotted_segment(draw, rect, on, dot_size)
+                continue
+            color = on if lit else off
+            draw.rectangle(rect, fill=color)
+
+    def _draw_colon(self, draw, x, y, digit_h, theme, style):
+        blink_on = (time.time() % 1.0) > 0.25
+        if not blink_on:
+            return
+        if style == "matrix":
+            dot = 1
+        else:
+            dot = 2
+        draw.rectangle((x, y + digit_h // 3, x + dot - 1, y + digit_h // 3 + dot - 1), fill=theme.accent_2)
+        draw.rectangle((x, y + (digit_h * 2) // 3, x + dot - 1, y + (digit_h * 2) // 3 + dot - 1), fill=theme.accent_2)
+
+    def _draw_face_digital_common(self, draw, w, h, variant, theme, style):
         now, hour, ampm = self._time_parts()
         digits = f"{hour:02d}{now.minute:02d}"
         metrics = self._clock_layout_metrics(w, h, variant)
         off = tuple(max(0, c // 4) for c in theme.dim)
-        thickness = max(1, metrics["digit_w"] // 5)
+        date_text = now.strftime("%a %b %d").upper() if style == "matrix" else now.strftime("%a %m/%d").upper()
 
         for digit_index, ch in enumerate(digits):
             x = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
             if digit_index >= 2:
                 x += metrics["colon_w"] + metrics["spacing"]
-            self._draw_seven_seg_digit(
-                draw,
-                x,
-                metrics["y0"],
-                metrics["digit_w"],
-                metrics["digit_h"],
-                thickness,
-                ch,
-                theme.primary,
-                off,
-            )
+            self._draw_segment_digit(draw, x, metrics["y0"], metrics["digit_w"], metrics["digit_h"], ch, theme.primary, off, style)
 
-        blink_on = (time.time() % 1.0) > 0.25
-        if blink_on:
-            colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
-            cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
-            dot = max(1, metrics["colon_w"])
-            draw.rectangle(
-                (cx, metrics["y0"] + metrics["digit_h"] // 3, cx + dot - 1, metrics["y0"] + metrics["digit_h"] // 3 + dot - 1),
-                fill=theme.accent_2,
-            )
-            draw.rectangle(
-                (cx, metrics["y0"] + (metrics["digit_h"] * 2) // 3, cx + dot - 1, metrics["y0"] + (metrics["digit_h"] * 2) // 3 + dot - 1),
-                fill=theme.accent_2,
-            )
+        colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
+        cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
+        self._draw_colon(draw, cx, metrics["y0"], metrics["digit_h"], theme, style)
 
         self._draw_clock_overlays(
             draw,
@@ -545,9 +536,15 @@ class ClockWidget(Widget):
             variant,
             ampm,
             theme,
-            now.strftime("%a %m/%d").upper(),
+            date_text,
             metrics,
         )
+
+    def _draw_face_digital_matrix(self, draw, w, h, variant, theme):
+        self._draw_face_digital_common(draw, w, h, variant, theme, "matrix")
+
+    def _draw_face_digital_segment(self, draw, w, h, variant, theme):
+        self._draw_face_digital_common(draw, w, h, variant, theme, "segment")
 
     # --------------------------------------------------------------- widget region
 
