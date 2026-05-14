@@ -49,6 +49,22 @@ class ClockWidget(Widget):
 
     FONT_STYLE_OPTIONS = {"matrix", "segment"}
     CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
+    FONT_LINE_SHAPES = {
+        "matrix": {
+            "thickness_ratio": 0.20,
+            "draw_unlit": False,
+            "colon_size": 1,
+            "horizontal": {"mode": "units", "unit_w": 1, "unit_h": 1, "gap": 1, "scale_with_thickness": True},
+            "vertical": {"mode": "units", "unit_w": 1, "unit_h": 1, "gap": 1, "scale_with_thickness": True},
+        },
+        "segment": {
+            "thickness_ratio": 0.25,
+            "draw_unlit": True,
+            "colon_size": 2,
+            "horizontal": {"mode": "solid"},
+            "vertical": {"mode": "solid"},
+        },
+    }
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient"}
     MINI_WIDGET_MIN_FRACTION = {
@@ -367,8 +383,36 @@ class ClockWidget(Widget):
             return 0
         return 6
 
+    def _font_line_profile(self, style):
+        fallback = self.FONT_LINE_SHAPES["segment"]
+        profile = self.FONT_LINE_SHAPES.get(style, fallback)
+
+        try:
+            thickness_ratio = float(profile.get("thickness_ratio", fallback["thickness_ratio"]))
+        except Exception:
+            thickness_ratio = float(fallback["thickness_ratio"])
+        thickness_ratio = max(0.08, min(0.45, thickness_ratio))
+
+        try:
+            colon_size = int(profile.get("colon_size", fallback["colon_size"]))
+        except Exception:
+            colon_size = int(fallback["colon_size"])
+        colon_size = max(1, colon_size)
+
+        horizontal = dict(profile.get("horizontal") or fallback.get("horizontal") or {"mode": "solid"})
+        vertical = dict(profile.get("vertical") or fallback.get("vertical") or {"mode": "solid"})
+
+        return {
+            "thickness_ratio": thickness_ratio,
+            "draw_unlit": bool(profile.get("draw_unlit", fallback.get("draw_unlit", True))),
+            "colon_size": colon_size,
+            "horizontal": horizontal,
+            "vertical": vertical,
+        }
+
     def _clock_layout_metrics(self, w, h, variant):
         style = self._font_style()
+        profile = self._font_line_profile(style)
         size = self._effective_clock_size()
         show_top_overlay = self._show_ampm() and (not self._use_24h())
         show_bottom_overlay = self._show_date()
@@ -381,7 +425,7 @@ class ClockWidget(Widget):
         available_w = max(12, w - 2)
 
         spacing = 1
-        colon_w = 1 if style == "matrix" else 2
+        colon_w = profile["colon_size"]
         slot_w = max(2, (available_w - colon_w - (spacing * 3)) // 4)
         slot_h = max(6, available_h)
 
@@ -447,68 +491,94 @@ class ClockWidget(Widget):
             rects["c"] = (x + dw - thickness, lower_start, x + dw - 1, c_end)
         return rects, thickness
 
-    def _draw_dotted_segment(self, draw, rect, color, dot_size):
+    def _draw_line_shape(self, draw, rect, color, shape, thickness):
         x1, y1, x2, y2 = rect
         if x2 < x1 or y2 < y1:
             return
+        mode = str((shape or {}).get("mode", "solid")).strip().lower()
+        if mode != "units":
+            draw.rectangle(rect, fill=color)
+            return
+
         w = x2 - x1 + 1
         h = y2 - y1 + 1
-        dot = max(1, min(dot_size, w, h))
-        step = dot + 1
+        try:
+            unit_w = int((shape or {}).get("unit_w", 1))
+        except Exception:
+            unit_w = 1
+        try:
+            unit_h = int((shape or {}).get("unit_h", 1))
+        except Exception:
+            unit_h = 1
+        try:
+            gap = int((shape or {}).get("gap", 1))
+        except Exception:
+            gap = 1
+
+        if bool((shape or {}).get("scale_with_thickness", False)):
+            scale = max(1, thickness)
+            unit_w *= scale
+            unit_h *= scale
+
+        unit_w = max(1, min(unit_w, w))
+        unit_h = max(1, min(unit_h, h))
+        gap = max(0, gap)
+        step_x = max(1, unit_w + gap)
+        step_y = max(1, unit_h + gap)
 
         if w >= h:
-            y_start = y1 + max(0, (h - dot) // 2)
+            y_start = y1 + max(0, (h - unit_h) // 2)
             positions = []
             pos = x1
-            end_pos = x2 - dot + 1
+            end_pos = x2 - unit_w + 1
             while pos <= end_pos:
                 positions.append(pos)
-                pos += step
+                pos += step_x
             if not positions:
                 positions = [x1]
             elif positions[-1] < end_pos:
                 positions.append(end_pos)
             for px in positions:
-                draw.rectangle((px, y_start, min(x2, px + dot - 1), min(y2, y_start + dot - 1)), fill=color)
+                draw.rectangle((px, y_start, min(x2, px + unit_w - 1), min(y2, y_start + unit_h - 1)), fill=color)
             return
 
-        x_start = x1 + max(0, (w - dot) // 2)
+        x_start = x1 + max(0, (w - unit_w) // 2)
         positions = []
         pos = y1
-        end_pos = y2 - dot + 1
+        end_pos = y2 - unit_h + 1
         while pos <= end_pos:
             positions.append(pos)
-            pos += step
+            pos += step_y
         if not positions:
             positions = [y1]
         elif positions[-1] < end_pos:
             positions.append(end_pos)
         for py in positions:
-            draw.rectangle((x_start, py, min(x2, x_start + dot - 1), min(y2, py + dot - 1)), fill=color)
+            draw.rectangle((x_start, py, min(x2, x_start + unit_w - 1), min(y2, py + unit_h - 1)), fill=color)
 
     def _draw_segment_digit(self, draw, x, y, dw, dh, digit, on, off, style):
-        rects, thickness = self._segment_rects_for_digit(x, y, dw, dh, max(1, dw // 5), digit)
+        profile = self._font_line_profile(style)
+        base_thickness = max(1, int(round(min(dw, dh) * profile["thickness_ratio"])))
+        rects, thickness = self._segment_rects_for_digit(x, y, dw, dh, base_thickness, digit)
         segs = SEGMENT_MAP.get(digit, set())
-        dot_size = max(1, thickness - 1)
+        draw_unlit = profile["draw_unlit"]
 
         for seg, rect in rects.items():
             lit = seg in segs
-            if style == "matrix":
-                if not lit:
-                    continue
-                self._draw_dotted_segment(draw, rect, on, dot_size)
+            if not lit and not draw_unlit:
                 continue
             color = on if lit else off
-            draw.rectangle(rect, fill=color)
+            rect_w = rect[2] - rect[0] + 1
+            rect_h = rect[3] - rect[1] + 1
+            line_shape = profile["horizontal"] if rect_w >= rect_h else profile["vertical"]
+            self._draw_line_shape(draw, rect, color, line_shape, thickness)
 
     def _draw_colon(self, draw, x, y, digit_h, theme, style):
         blink_on = (time.time() % 1.0) > 0.25
         if not blink_on:
             return
-        if style == "matrix":
-            dot = 1
-        else:
-            dot = 2
+        profile = self._font_line_profile(style)
+        dot = max(1, profile["colon_size"])
         draw.rectangle((x, y + digit_h // 3, x + dot - 1, y + digit_h // 3 + dot - 1), fill=theme.accent_2)
         draw.rectangle((x, y + (digit_h * 2) // 3, x + dot - 1, y + (digit_h * 2) // 3 + dot - 1), fill=theme.accent_2)
 
