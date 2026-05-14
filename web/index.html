@@ -506,9 +506,30 @@
       <select id="clock-face">
         <option value="digital_matrix">Digital Matrix</option>
         <option value="digital_segment">Digital Segment</option>
-        <option value="analog_ring">Analog Ring</option>
-        <option value="analog_compass">Analog Compass</option>
+        <option value="digital_outline">Digital Outline</option>
+        <option value="digital_block">Digital Block</option>
       </select>
+
+      <label>Font Style</label>
+      <select id="clock-font-style">
+        <option value="classic">Classic</option>
+        <option value="rounded">Rounded</option>
+        <option value="square">Square</option>
+      </select>
+
+      <label>Size Scale</label>
+      <input type="number" id="clock-size-scale" min="0.75" max="1.5" step="0.05" />
+
+      <label>Primary Color (#RRGGBB)</label>
+      <input type="text" id="clock-color-primary" placeholder="Optional override" />
+      <label>Accent Color (#RRGGBB)</label>
+      <input type="text" id="clock-color-accent" placeholder="Optional override" />
+      <label>Accent 2 Color (#RRGGBB)</label>
+      <input type="text" id="clock-color-accent-2" placeholder="Optional override" />
+      <label>Dim Color (#RRGGBB)</label>
+      <input type="text" id="clock-color-dim" placeholder="Optional override" />
+      <label>Background Color (#RRGGBB)</label>
+      <input type="text" id="clock-color-bg" placeholder="Optional override" />
 
       <label>Clock Format</label>
       <select id="clock-format">
@@ -1040,6 +1061,8 @@ let selectedNycLineFilters = new Set();
 let selectedTtcLineFilters = new Set();
 let selectedMetroTransition = "slide";
 let selectedClockFace = "digital_matrix";
+let selectedClockFontStyle = "classic";
+let selectedClockSizeScale = 1.0;
 let selectedClockLayout = "horizontal";
 let selectedClockWidgetSource = "weather";
 let selectedClockWidgetSourceSecondary = "stocks";
@@ -1226,9 +1249,15 @@ async function init() {
     setActiveMode(data.display_mode);
 
     // Clock
-    selectedClockFace = ["digital_matrix", "digital_segment", "analog_ring", "analog_compass"].includes(data.CLOCK_FACE)
+    selectedClockFace = ["digital_matrix", "digital_segment", "digital_outline", "digital_block"].includes(data.CLOCK_FACE)
       ? data.CLOCK_FACE
       : "digital_matrix";
+    selectedClockFontStyle = ["classic", "rounded", "square"].includes(data.CLOCK_FONT_STYLE)
+      ? data.CLOCK_FONT_STYLE
+      : "classic";
+    selectedClockSizeScale = Number(data.CLOCK_SIZE_SCALE);
+    if (!Number.isFinite(selectedClockSizeScale)) selectedClockSizeScale = 1.0;
+    selectedClockSizeScale = Math.max(0.75, Math.min(1.5, selectedClockSizeScale));
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";
     selectedClockWidgetSource = ["metro", "weather", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE)
       ? data.CLOCK_WIDGET_SOURCE
@@ -1239,6 +1268,13 @@ async function init() {
     selectedClockWidgetCount = Number(data.CLOCK_WIDGET_COUNT) >= 2 ? 2 : 1;
     selectedClockUse24h = data.CLOCK_USE_24H === true;
     document.getElementById("clock-face").value = selectedClockFace;
+    document.getElementById("clock-font-style").value = selectedClockFontStyle;
+    document.getElementById("clock-size-scale").value = selectedClockSizeScale.toFixed(2);
+    document.getElementById("clock-color-primary").value = data.CLOCK_COLOR_PRIMARY || "";
+    document.getElementById("clock-color-accent").value = data.CLOCK_COLOR_ACCENT || "";
+    document.getElementById("clock-color-accent-2").value = data.CLOCK_COLOR_ACCENT_2 || "";
+    document.getElementById("clock-color-dim").value = data.CLOCK_COLOR_DIM || "";
+    document.getElementById("clock-color-bg").value = data.CLOCK_COLOR_BG || "";
     document.getElementById("clock-widget-layout").value = selectedClockLayout;
     document.getElementById("clock-widget-count").value = String(selectedClockWidgetCount);
     document.getElementById("clock-widget-source").value = selectedClockWidgetSource;
@@ -1712,14 +1748,31 @@ async function saveSettings(payload) {
 
 async function saveClock() {
   selectedClockFace = document.getElementById("clock-face").value;
+  selectedClockFontStyle = document.getElementById("clock-font-style").value;
+  selectedClockSizeScale = Number(document.getElementById("clock-size-scale").value);
+  if (!Number.isFinite(selectedClockSizeScale)) selectedClockSizeScale = 1.0;
+  selectedClockSizeScale = Math.max(0.75, Math.min(1.5, selectedClockSizeScale));
   selectedClockLayout = document.getElementById("clock-widget-layout").value;
   selectedClockWidgetCount = Number(document.getElementById("clock-widget-count").value) >= 2 ? 2 : 1;
   selectedClockWidgetSource = document.getElementById("clock-widget-source").value;
   selectedClockWidgetSourceSecondary = document.getElementById("clock-widget-source-secondary").value;
   selectedClockUse24h = document.getElementById("clock-format").value === "24h";
 
+  const clockColorPrimary = document.getElementById("clock-color-primary").value.trim();
+  const clockColorAccent = document.getElementById("clock-color-accent").value.trim();
+  const clockColorAccent2 = document.getElementById("clock-color-accent-2").value.trim();
+  const clockColorDim = document.getElementById("clock-color-dim").value.trim();
+  const clockColorBg = document.getElementById("clock-color-bg").value.trim();
+
   const payload = {
     CLOCK_FACE: selectedClockFace,
+    CLOCK_FONT_STYLE: selectedClockFontStyle,
+    CLOCK_SIZE_SCALE: selectedClockSizeScale,
+    CLOCK_COLOR_PRIMARY: clockColorPrimary,
+    CLOCK_COLOR_ACCENT: clockColorAccent,
+    CLOCK_COLOR_ACCENT_2: clockColorAccent2,
+    CLOCK_COLOR_DIM: clockColorDim,
+    CLOCK_COLOR_BG: clockColorBg,
     CLOCK_WIDGET_LAYOUT: selectedClockLayout,
     CLOCK_WIDGET_COUNT: selectedClockWidgetCount,
     CLOCK_WIDGET_SOURCE: selectedClockWidgetSource,

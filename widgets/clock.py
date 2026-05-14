@@ -1,6 +1,7 @@
 import importlib
 import math
 import time
+from dataclasses import dataclass
 from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
@@ -39,6 +40,15 @@ SEGMENT_MAP = {
 }
 
 
+@dataclass
+class ClockTheme:
+    bg: tuple[int, int, int]
+    primary: tuple[int, int, int]
+    accent: tuple[int, int, int]
+    accent_2: tuple[int, int, int]
+    dim: tuple[int, int, int]
+
+
 class ClockWidget(Widget):
     """Home clock with optional compact widget pane."""
 
@@ -51,7 +61,8 @@ class ClockWidget(Widget):
     COLOR_DOWN = (239, 97, 97)
     COLOR_DIVIDER = (48, 62, 90)
 
-    FACE_OPTIONS = {"digital_matrix", "digital_segment", "analog_ring", "analog_compass"}
+    FACE_OPTIONS = {"digital_matrix", "digital_segment", "digital_outline", "digital_block"}
+    FONT_STYLE_OPTIONS = {"classic", "rounded", "square"}
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient"}
     MINI_WIDGET_MIN_FRACTION = {
@@ -95,6 +106,39 @@ class ClockWidget(Widget):
     def _face(self):
         face = str(getattr(config, "CLOCK_FACE", "digital_matrix") or "digital_matrix").strip().lower()
         return face if face in self.FACE_OPTIONS else "digital_matrix"
+
+    def _font_style(self):
+        style = str(getattr(config, "CLOCK_FONT_STYLE", "classic") or "classic").strip().lower()
+        return style if style in self.FONT_STYLE_OPTIONS else "classic"
+
+    def _clock_size_scale(self):
+        try:
+            value = float(getattr(config, "CLOCK_SIZE_SCALE", 1.0))
+        except Exception:
+            value = 1.0
+        return max(0.75, min(1.5, value))
+
+    def _parse_color_override(self, raw):
+        txt = str(raw or "").strip()
+        if not txt:
+            return None
+        if txt.startswith("#"):
+            txt = txt[1:]
+        if len(txt) != 6:
+            return None
+        try:
+            return (int(txt[0:2], 16), int(txt[2:4], 16), int(txt[4:6], 16))
+        except Exception:
+            return None
+
+    def _clock_theme(self):
+        return ClockTheme(
+            bg=self._parse_color_override(getattr(config, "CLOCK_COLOR_BG", "")) or self.COLOR_BG,
+            primary=self._parse_color_override(getattr(config, "CLOCK_COLOR_PRIMARY", "")) or self.COLOR_MAIN,
+            accent=self._parse_color_override(getattr(config, "CLOCK_COLOR_ACCENT", "")) or self.COLOR_ACCENT,
+            accent_2=self._parse_color_override(getattr(config, "CLOCK_COLOR_ACCENT_2", "")) or self.COLOR_ACCENT_2,
+            dim=self._parse_color_override(getattr(config, "CLOCK_COLOR_DIM", "")) or self.COLOR_DIM,
+        )
 
     def _layout(self):
         layout = str(getattr(config, "CLOCK_WIDGET_LAYOUT", "horizontal") or "horizontal").strip().lower()
@@ -178,12 +222,13 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- draw
 
     def draw(self):
-        self.canvas = Image.new("RGB", (self.width, self.height), self.COLOR_BG)
+        theme = self._clock_theme()
+        self.canvas = Image.new("RGB", (self.width, self.height), theme.bg)
         draw = ImageDraw.Draw(self.canvas)
 
         mode = web_server.get_display_mode()
         if mode == "clock":
-            face = self._render_clock_face(self.width, self.height, "full")
+            face = self._render_clock_face(self.width, self.height, "full", theme)
             self.canvas.paste(face, (0, 0))
             return self.canvas
 
@@ -204,7 +249,7 @@ class ClockWidget(Widget):
                 left_clock_h = max(1, min(self.height - 1, int(round(self.height * split_ratio))))
                 left_bottom_h = self.height - left_clock_h
 
-                face = self._render_clock_face(left_w, left_clock_h, "vertical_split_top")
+                face = self._render_clock_face(left_w, left_clock_h, "vertical_split_top", theme)
                 self.canvas.paste(face, (0, 0))
 
                 bottom_source = self._resolve_supported_source(secondary_req, "horizontal")
@@ -218,7 +263,7 @@ class ClockWidget(Widget):
                     focused=False,
                 )
             else:
-                face = self._render_clock_face(left_w, self.height, "vertical_focus")
+                face = self._render_clock_face(left_w, self.height, "vertical_focus", theme)
                 self.canvas.paste(face, (0, 0))
 
             self._draw_widget_region(
@@ -234,7 +279,7 @@ class ClockWidget(Widget):
             clock_h = max(1, min(self.height - 1, int(round(self.height * 2 / 3))))
             widget_h = self.height - clock_h
 
-            face = self._render_clock_face(self.width, clock_h, "horizontal")
+            face = self._render_clock_face(self.width, clock_h, "horizontal", theme)
             self.canvas.paste(face, (0, 0))
 
             if widget_count == 2 and self.width >= 16:
@@ -276,26 +321,25 @@ class ClockWidget(Widget):
 
     # --------------------------------------------------------------- clock faces
 
-    def _render_clock_face(self, w, h, variant):
-        img = Image.new("RGB", (max(1, w), max(1, h)), self.COLOR_BG)
+    def _render_clock_face(self, w, h, variant, theme):
+        img = Image.new("RGB", (max(1, w), max(1, h)), theme.bg)
         d = ImageDraw.Draw(img)
         face = self._face()
 
         try:
-            if face == "digital_matrix":
-                self._draw_face_digital_matrix(d, w, h, variant)
-            elif face == "digital_segment":
-                self._draw_face_digital_segment(d, w, h, variant)
-            elif face == "analog_ring":
-                self._draw_face_analog_ring(d, w, h, variant)
-            else:
-                self._draw_face_analog_compass(d, w, h, variant)
+            renderer = {
+                "digital_matrix": self._draw_face_digital_matrix,
+                "digital_segment": self._draw_face_digital_segment,
+                "digital_outline": self._draw_face_digital_outline,
+                "digital_block": self._draw_face_digital_block,
+            }.get(face, self._draw_face_digital_matrix)
+            renderer(d, w, h, variant, theme)
         except Exception:
             # Keep clock mode alive even if one face errors in an edge case.
             try:
-                self._draw_face_digital_matrix(d, w, h, variant)
+                self._draw_face_digital_matrix(d, w, h, variant, theme)
             except Exception:
-                d.text((1, 1), self._time_text(False), font=self.font_small, fill=self.COLOR_MAIN)
+                d.text((1, 1), self._time_text(False), font=self.font_small, fill=theme.primary)
 
         return img
 
@@ -314,9 +358,10 @@ class ClockWidget(Widget):
             return f"{hour:02d}:{now.minute:02d}:{now.second:02d}"
         return f"{hour:02d}:{now.minute:02d}"
 
-    def _draw_face_digital_matrix(self, draw, w, h, variant):
+    def _draw_face_digital_matrix(self, draw, w, h, variant, theme):
         now, hour, ampm = self._time_parts()
         text = f"{hour:02d}:{now.minute:02d}"
+        scale = self._clock_size_scale()
 
         columns = 0
         for ch in text:
@@ -325,7 +370,7 @@ class ClockWidget(Widget):
         columns -= 1
 
         rows = 5
-        cell = max(1, min(w // max(1, columns), h // (rows + 2)))
+        cell = max(1, int(min(w // max(1, columns), h // (rows + 2)) * scale))
         dot = max(1, cell - 1)
         total_w = columns * cell
         total_h = rows * cell
@@ -340,8 +385,8 @@ class ClockWidget(Widget):
                 lower = y0 + (rows - 2) * cell
                 blink_on = (time.time() % 1.0) > 0.25
                 if blink_on:
-                    draw.rectangle((cx, upper, cx + dot - 1, upper + dot - 1), fill=self.COLOR_ACCENT_2)
-                    draw.rectangle((cx, lower, cx + dot - 1, lower + dot - 1), fill=self.COLOR_ACCENT_2)
+                    draw.rectangle((cx, upper, cx + dot - 1, upper + dot - 1), fill=theme.accent_2)
+                    draw.rectangle((cx, lower, cx + dot - 1, lower + dot - 1), fill=theme.accent_2)
                 cursor += 2
                 continue
 
@@ -352,15 +397,15 @@ class ClockWidget(Widget):
                         continue
                     px = x0 + (cursor + gx) * cell
                     py = y0 + gy * cell
-                    draw.rectangle((px, py, px + dot - 1, py + dot - 1), fill=self.COLOR_MAIN)
+                    draw.rectangle((px, py, px + dot - 1, py + dot - 1), fill=theme.primary)
             cursor += 4
 
         if variant == "full" and h >= 28:
             date_label = now.strftime("%a %b %d").upper()
             dw = int(self.font_small.getlength(date_label))
-            draw.text((max(0, (w - dw) // 2), h - 6), date_label, font=self.font_small, fill=self.COLOR_ACCENT)
+            draw.text((max(0, (w - dw) // 2), h - 6), date_label, font=self.font_small, fill=theme.accent)
             if ampm:
-                draw.text((1, 1), ampm, font=self.font_small, fill=self.COLOR_ACCENT_2)
+                draw.text((1, 1), ampm, font=self.font_small, fill=theme.accent_2)
 
     def _draw_seven_seg_digit(self, draw, x, y, dw, dh, thickness, digit, on, off):
         segs = SEGMENT_MAP.get(digit, set())
@@ -380,9 +425,10 @@ class ClockWidget(Widget):
         draw.rectangle((x, y + half, x + thickness - 1, y + dh - thickness - 1), fill=col("e"))
         draw.rectangle((x + dw - thickness, y + half, x + dw - 1, y + dh - thickness - 1), fill=col("c"))
 
-    def _draw_face_digital_segment(self, draw, w, h, variant):
+    def _draw_face_digital_segment(self, draw, w, h, variant, theme):
         now, hour, ampm = self._time_parts()
         time_text = f"{hour:02d}{now.minute:02d}"
+        scale = self._clock_size_scale()
 
         is_focus_single = variant == "vertical_focus"
         is_focus_split = variant == "vertical_split_top"
@@ -392,27 +438,27 @@ class ClockWidget(Widget):
         colon_w = max(1, w // 44)
         spacing = 1 if (is_focus_single or is_focus_split) else max(1, w // 32)
         total_non_digit = colon_w + spacing * 3
-        digit_w = max(4, (w - total_non_digit) // digit_count)
+        digit_w = max(4, int(((w - total_non_digit) // digit_count) * scale))
         date_reserve = 7 if (show_date and h >= 24) else 0
         top_reserve = 0 if (is_focus_single or is_focus_split) else 1
-        digit_h = max(8, h - date_reserve - top_reserve)
-        thickness = max(1, digit_w // 5)
+        digit_h = max(8, int((h - date_reserve - top_reserve) * scale))
+        thickness = max(1, digit_w // (6 if self._font_style() == "rounded" else 5))
         total_w = digit_w * digit_count + total_non_digit
         x = max(0, (w - total_w) // 2)
         clock_h = max(1, h - date_reserve)
         y = max(0, (clock_h - digit_h) // 2 - (1 if variant == "full" else 0))
 
-        off = (18, 24, 36)
+        off = tuple(max(0, c // 4) for c in theme.dim)
 
         for idx, ch in enumerate(time_text):
-            self._draw_seven_seg_digit(draw, x, y, digit_w, digit_h, thickness, ch, self.COLOR_MAIN, off)
+            self._draw_seven_seg_digit(draw, x, y, digit_w, digit_h, thickness, ch, theme.primary, off)
             x += digit_w
             if idx == 1:
                 cx = x + spacing // 2
                 blink_on = (time.time() % 1.0) > 0.25
                 if blink_on:
-                    draw.rectangle((cx, y + digit_h // 3, cx + colon_w - 1, y + digit_h // 3 + colon_w - 1), fill=self.COLOR_ACCENT_2)
-                    draw.rectangle((cx, y + (digit_h * 2) // 3, cx + colon_w - 1, y + (digit_h * 2) // 3 + colon_w - 1), fill=self.COLOR_ACCENT_2)
+                    draw.rectangle((cx, y + digit_h // 3, cx + colon_w - 1, y + digit_h // 3 + colon_w - 1), fill=theme.accent_2)
+                    draw.rectangle((cx, y + (digit_h * 2) // 3, cx + colon_w - 1, y + (digit_h * 2) // 3 + colon_w - 1), fill=theme.accent_2)
                 x += colon_w + spacing
             else:
                 x += spacing
@@ -423,83 +469,74 @@ class ClockWidget(Widget):
             else:
                 sub = now.strftime("%a %m/%d").upper()
             sw = int(self.font_small.getlength(sub))
-            date_color = self.COLOR_ACCENT if is_focus_single else self.COLOR_DIM
+            date_color = theme.accent if is_focus_single else theme.dim
             draw.text(((w - sw) // 2, h - 6), sub, font=self.font_small, fill=date_color)
             if ampm and variant == "full":
-                draw.text((w - int(self.font_small.getlength(ampm)) - 1, 1), ampm, font=self.font_small, fill=self.COLOR_ACCENT_2)
+                draw.text((w - int(self.font_small.getlength(ampm)) - 1, 1), ampm, font=self.font_small, fill=theme.accent_2)
 
-    def _draw_analog_base(self, draw, w, h, ring_color):
-        cx = w // 2
-        cy = h // 2
-        radius = max(5, min(w, h) // 2 - 2)
-        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline=ring_color)
-        return cx, cy, radius
+    def _draw_face_digital_outline(self, draw, w, h, variant, theme):
+        now, hour, ampm = self._time_parts()
+        text = f"{hour:02d}{now.minute:02d}"
+        scale = self._clock_size_scale()
+        thickness = 1 if self._font_style() != "square" else 2
 
-    def _draw_clock_hands(self, draw, cx, cy, radius):
-        now = datetime.now()
-        sec = now.second + now.microsecond / 1_000_000.0
-        minute = now.minute + sec / 60.0
-        hour = (now.hour % 12) + minute / 60.0
+        digit_count = 4
+        colon_w = 2
+        spacing = max(1, int(2 * scale))
+        digit_w = max(6, int(((w - colon_w - spacing * 3) // digit_count) * scale))
+        digit_h = max(10, int((h - 7) * scale))
+        total_w = digit_w * digit_count + colon_w + spacing * 3
+        x = max(0, (w - total_w) // 2)
+        y = max(0, (h - digit_h) // 2 - (1 if variant == "full" else 0))
 
-        hour_angle = math.radians(hour * 30.0 - 90.0)
-        min_angle = math.radians(minute * 6.0 - 90.0)
-        sec_angle = math.radians(sec * 6.0 - 90.0)
-
-        hx = int(cx + math.cos(hour_angle) * (radius * 0.55))
-        hy = int(cy + math.sin(hour_angle) * (radius * 0.55))
-        mx = int(cx + math.cos(min_angle) * (radius * 0.78))
-        my = int(cy + math.sin(min_angle) * (radius * 0.78))
-        sx = int(cx + math.cos(sec_angle) * (radius * 0.9))
-        sy = int(cy + math.sin(sec_angle) * (radius * 0.9))
-
-        draw.line((cx, cy, hx, hy), fill=self.COLOR_MAIN, width=2)
-        draw.line((cx, cy, mx, my), fill=self.COLOR_ACCENT, width=1)
-        draw.line((cx, cy, sx, sy), fill=self.COLOR_ACCENT_2, width=1)
-        draw.point((cx, cy), fill=self.COLOR_MAIN)
-
-    def _draw_face_analog_ring(self, draw, w, h, variant):
-        cx, cy, radius = self._draw_analog_base(draw, w, h, self.COLOR_ACCENT)
-
-        for i in range(60):
-            angle = math.radians(i * 6 - 90)
-            outer = radius
-            inner = radius - (3 if i % 5 == 0 else 1)
-            x1 = int(cx + math.cos(angle) * inner)
-            y1 = int(cy + math.sin(angle) * inner)
-            x2 = int(cx + math.cos(angle) * outer)
-            y2 = int(cy + math.sin(angle) * outer)
-            draw.line((x1, y1, x2, y2), fill=self.COLOR_DIM if i % 5 else self.COLOR_MAIN)
-
-        self._draw_clock_hands(draw, cx, cy, radius - 1)
+        for idx, ch in enumerate(text):
+            draw.rectangle((x, y, x + digit_w - 1, y + digit_h - 1), outline=theme.dim, width=thickness)
+            tw = int(self.font_tall.getlength(ch))
+            draw.text((x + max(0, (digit_w - tw) // 2), y + max(0, (digit_h - 10) // 2)), ch, font=self.font_tall, fill=theme.primary)
+            x += digit_w
+            if idx == 1:
+                blink_on = (time.time() % 1.0) > 0.25
+                if blink_on:
+                    draw.rectangle((x, y + digit_h // 3, x + colon_w - 1, y + digit_h // 3 + 1), fill=theme.accent_2)
+                    draw.rectangle((x, y + (digit_h * 2) // 3, x + colon_w - 1, y + (digit_h * 2) // 3 + 1), fill=theme.accent_2)
+                x += colon_w + spacing
+            else:
+                x += spacing
 
         if variant == "full" and h >= 28:
-            now = datetime.now()
-            d = now.strftime("%a").upper()
-            draw.text((1, 1), d, font=self.font_small, fill=self.COLOR_DIM)
+            date_label = now.strftime("%a %b %d").upper()
+            dw = int(self.font_small.getlength(date_label))
+            draw.text((max(0, (w - dw) // 2), h - 6), date_label, font=self.font_small, fill=theme.accent)
+            if ampm:
+                draw.text((1, 1), ampm, font=self.font_small, fill=theme.accent_2)
 
-    def _draw_face_analog_compass(self, draw, w, h, variant):
-        cx, cy, radius = self._draw_analog_base(draw, w, h, self.COLOR_DIM)
+    def _draw_face_digital_block(self, draw, w, h, variant, theme):
+        now, hour, ampm = self._time_parts()
+        text = f"{hour:02d}:{now.minute:02d}"
+        scale = self._clock_size_scale()
 
-        # Cardinal marks
-        marks = [("12", 0), ("3", 90), ("6", 180), ("9", 270)]
-        for label, deg in marks:
-            angle = math.radians(deg - 90)
-            tx = int(cx + math.cos(angle) * (radius - 2))
-            ty = int(cy + math.sin(angle) * (radius - 2))
-            lw = int(self.font_small.getlength(label))
-            draw.text((tx - lw // 2, ty - 3), label, font=self.font_small, fill=self.COLOR_DIM)
+        box_h = max(8, int(min(h - 2, 13 * scale)))
+        pad_x = max(1, int(2 * scale))
+        pad_y = max(1, (h - box_h) // 2 - (1 if variant == "full" else 0))
+        draw.rounded_rectangle((1, pad_y, w - 2, pad_y + box_h), radius=2, fill=theme.dim)
+        inner = (2, pad_y + 1, w - 3, pad_y + box_h - 1)
+        draw.rounded_rectangle(inner, radius=2, fill=theme.bg)
 
-        # Inner crosshair
-        draw.line((cx - radius + 2, cy, cx + radius - 2, cy), fill=(24, 30, 45))
-        draw.line((cx, cy - radius + 2, cx, cy + radius - 2), fill=(24, 30, 45))
+        tw = int(self.font_tall.getlength(text))
+        tx = max(pad_x, (w - tw) // 2)
+        ty = pad_y + max(0, (box_h - 10) // 2)
+        draw.text((tx, ty), text, font=self.font_tall, fill=theme.primary)
 
-        self._draw_clock_hands(draw, cx, cy, radius - 2)
-        draw.ellipse((cx - 1, cy - 1, cx + 1, cy + 1), fill=self.COLOR_ACCENT_2)
+        colon_x = tx + int(self.font_tall.getlength(f"{hour:02d}"))
+        if (time.time() % 1.0) <= 0.25:
+            draw.rectangle((colon_x, ty, colon_x + 2, ty + 8), fill=theme.bg)
 
         if variant == "full" and h >= 28:
-            t = self._time_text(include_seconds=False)
-            tw = int(self.font_small.getlength(t))
-            draw.text((max(0, (w - tw) // 2), h - 7), t, font=self.font_small, fill=self.COLOR_DIM)
+            sub = now.strftime("%a %m/%d").upper()
+            sw = int(self.font_small.getlength(sub))
+            draw.text((max(0, (w - sw) // 2), h - 6), sub, font=self.font_small, fill=theme.accent)
+            if ampm:
+                draw.text((w - int(self.font_small.getlength(ampm)) - 1, 1), ampm, font=self.font_small, fill=theme.accent_2)
 
     # --------------------------------------------------------------- widget region
 

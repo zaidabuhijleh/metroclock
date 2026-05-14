@@ -81,8 +81,15 @@ STOCKS_TICKER_SPEED = 25  # ticker scroll speed in pixels/sec
 
 # --- CLOCK ---
 # Face options:
-#   digital_matrix, digital_segment, analog_ring, analog_compass
+#   digital_matrix, digital_segment, digital_outline, digital_block
 CLOCK_FACE = "digital_matrix"
+CLOCK_FONT_STYLE = "classic"  # classic, rounded, square
+CLOCK_SIZE_SCALE = 1.0  # 0.75 .. 1.5
+CLOCK_COLOR_PRIMARY = ""  # Optional #RRGGBB override
+CLOCK_COLOR_ACCENT = ""  # Optional #RRGGBB override
+CLOCK_COLOR_ACCENT_2 = ""  # Optional #RRGGBB override
+CLOCK_COLOR_DIM = ""  # Optional #RRGGBB override
+CLOCK_COLOR_BG = ""  # Optional #RRGGBB override
 # "horizontal" -> clock top 2/3, widget bottom 1/3
 # "vertical"   -> clock left 2/3, widget right 1/3
 CLOCK_WIDGET_LAYOUT = "horizontal"
@@ -142,6 +149,13 @@ RUNTIME_EDITABLE_FIELDS = {
     "STOCKS_FOCUS_ROTATE_SECONDS",
     "STOCKS_TICKER_SPEED",
     "CLOCK_FACE",
+    "CLOCK_FONT_STYLE",
+    "CLOCK_SIZE_SCALE",
+    "CLOCK_COLOR_PRIMARY",
+    "CLOCK_COLOR_ACCENT",
+    "CLOCK_COLOR_ACCENT_2",
+    "CLOCK_COLOR_DIM",
+    "CLOCK_COLOR_BG",
     "CLOCK_WIDGET_LAYOUT",
     "CLOCK_WIDGET_SOURCE",
     "CLOCK_WIDGET_COUNT",

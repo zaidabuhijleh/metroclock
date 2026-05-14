@@ -12,6 +12,17 @@ from flask import Flask, jsonify, request, send_from_directory
 
 API_VERSION = "1.0"
 
+CLOCK_FACE_OPTIONS = (
+    "digital_matrix",
+    "digital_segment",
+    "digital_outline",
+    "digital_block",
+)
+CLOCK_FONT_STYLE_OPTIONS = ("classic", "rounded", "square")
+CLOCK_SIZE_SCALE_MIN = 0.75
+CLOCK_SIZE_SCALE_MAX = 1.5
+CLOCK_SIZE_SCALE_STEP = 0.05
+
 WRITE_ENDPOINTS = {
     "/api/settings",
     "/api/mode",
@@ -294,6 +305,40 @@ def api_status():
 def api_settings_get():
     cfg = config_manager.read_config()
     return jsonify(_mask_config(cfg))
+
+
+@app.route("/api/clock/styles")
+def api_clock_styles():
+    return jsonify({
+        "clock_face": {
+            "key": "CLOCK_FACE",
+            "default": "digital_matrix",
+            "options": list(CLOCK_FACE_OPTIONS),
+        },
+        "clock_font_style": {
+            "key": "CLOCK_FONT_STYLE",
+            "default": "classic",
+            "options": list(CLOCK_FONT_STYLE_OPTIONS),
+        },
+        "clock_size_scale": {
+            "key": "CLOCK_SIZE_SCALE",
+            "default": 1.0,
+            "min": CLOCK_SIZE_SCALE_MIN,
+            "max": CLOCK_SIZE_SCALE_MAX,
+            "step": CLOCK_SIZE_SCALE_STEP,
+        },
+        "clock_color_overrides": {
+            "format": "#RRGGBB",
+            "allow_empty": True,
+            "keys": [
+                "CLOCK_COLOR_PRIMARY",
+                "CLOCK_COLOR_ACCENT",
+                "CLOCK_COLOR_ACCENT_2",
+                "CLOCK_COLOR_DIM",
+                "CLOCK_COLOR_BG",
+            ],
+        },
+    })
 
 
 @app.route("/api/settings", methods=["POST"])
