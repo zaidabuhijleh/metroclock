@@ -1070,7 +1070,8 @@ class ClockWidget(Widget):
         status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else ""
         scroll_text = f"{away_abbr} v. {home_abbr} {status}".strip()
         game_id = str(game.get("id", ""))
-        scroll_key = f"sports-mini:{game_id}:{scroll_text}"
+        stable_id = game_id or f"{away_abbr}-{home_abbr}"
+        scroll_key = f"sports-mini:{stable_id}"
 
         scroll_state = self._draw_scrolling_text_clipped(
             x,
@@ -1080,12 +1081,26 @@ class ClockWidget(Widget):
             scroll_text,
             self.COLOR_MAIN,
             key=scroll_key,
-            speed=12.0,
+            speed=20.0,
             always_scroll=False,
             wrap=False,
             restart_on_end=False,
             align="left",
         )
+        if not scroll_state.get("scrolling"):
+            # If the line fits without scrolling, still rotate games on a timer.
+            now = time.time()
+            if len(games) > 1:
+                if self._sports_mini_hold_key != "sports-static":
+                    self._sports_mini_hold_key = "sports-static"
+                    self._sports_mini_hold_started = now
+                elif now - self._sports_mini_hold_started >= self._widget_rotate_seconds:
+                    self.sports.current_game_index = (idx + 1) % len(games)
+                    if hasattr(self.sports, "last_rotate"):
+                        self.sports.last_rotate = now
+                    self._sports_mini_hold_started = now
+            return
+
         if scroll_state.get("at_end"):
             now = time.time()
             if self._sports_mini_hold_key != scroll_key:
