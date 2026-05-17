@@ -3,28 +3,8 @@ import traceback
 import config
 import web_server
 from core.display import Display
-try:
-    from widgets.weather import WeatherWidget
-except Exception as exc:
-    WeatherWidget = None
-    print(f"Weather widget disabled: {exc}")
-try:
-    from widgets.flight import FlightWidget
-except Exception as exc:
-    FlightWidget = None
-    print(f"Flight widget disabled: {exc}")
 from widgets.ambient import AmbientWidget
 from widgets.clock import ClockWidget
-try:
-    from widgets.sports import SportsWidget
-except Exception as exc:
-    SportsWidget = None
-    print(f"Sports widget disabled: {exc}")
-try:
-    from widgets.stocks import StocksWidget
-except Exception as exc:
-    StocksWidget = None
-    print(f"Stocks widget disabled: {exc}")
 
 def _pwm_bits_for_mode(mode: str) -> int:
     defaults = {
@@ -51,11 +31,11 @@ def main():
     active_pwm_bits = None
 
     metro = None
-    weather = WeatherWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if WeatherWidget else None
-    flight = FlightWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if FlightWidget else None
+    weather = None
+    flight = None
     ambient = AmbientWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
-    sports = SportsWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if SportsWidget else None
-    stocks = StocksWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if StocksWidget else None
+    sports = None
+    stocks = None
     clock = ClockWidget(
         config.MATRIX_WIDTH,
         config.MATRIX_HEIGHT,
