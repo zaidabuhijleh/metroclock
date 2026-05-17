@@ -3,12 +3,28 @@ import traceback
 import config
 import web_server
 from core.display import Display
-from widgets.weather import WeatherWidget
-from widgets.flight import FlightWidget
+try:
+    from widgets.weather import WeatherWidget
+except Exception as exc:
+    WeatherWidget = None
+    print(f"Weather widget disabled: {exc}")
+try:
+    from widgets.flight import FlightWidget
+except Exception as exc:
+    FlightWidget = None
+    print(f"Flight widget disabled: {exc}")
 from widgets.ambient import AmbientWidget
 from widgets.clock import ClockWidget
-from widgets.sports import SportsWidget
-from widgets.stocks import StocksWidget
+try:
+    from widgets.sports import SportsWidget
+except Exception as exc:
+    SportsWidget = None
+    print(f"Sports widget disabled: {exc}")
+try:
+    from widgets.stocks import StocksWidget
+except Exception as exc:
+    StocksWidget = None
+    print(f"Stocks widget disabled: {exc}")
 
 def _pwm_bits_for_mode(mode: str) -> int:
     defaults = {
@@ -35,11 +51,11 @@ def main():
     active_pwm_bits = None
 
     metro = None
-    weather = WeatherWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
-    flight = FlightWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
+    weather = WeatherWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if WeatherWidget else None
+    flight = FlightWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if FlightWidget else None
     ambient = AmbientWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
-    sports = SportsWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
-    stocks = StocksWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
+    sports = SportsWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if SportsWidget else None
+    stocks = StocksWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if StocksWidget else None
     clock = ClockWidget(
         config.MATRIX_WIDTH,
         config.MATRIX_HEIGHT,
@@ -75,20 +91,36 @@ def main():
                     clock.update()
                     img = clock.draw()
                 elif mode == "weather":
-                    weather.update()
-                    img = weather.draw()
+                    if weather is not None:
+                        weather.update()
+                        img = weather.draw()
+                    else:
+                        clock.update()
+                        img = clock.draw()
                 elif mode == "flight":
-                    flight.update()
-                    img = flight.draw()
+                    if flight is not None:
+                        flight.update()
+                        img = flight.draw()
+                    else:
+                        clock.update()
+                        img = clock.draw()
                 elif mode == "ambient":
                     ambient.update()
                     img = ambient.draw()
                 elif mode == "sports":
-                    sports.update()
-                    img = sports.draw()
+                    if sports is not None:
+                        sports.update()
+                        img = sports.draw()
+                    else:
+                        clock.update()
+                        img = clock.draw()
                 elif mode == "stocks":
-                    stocks.update()
-                    img = stocks.draw()
+                    if stocks is not None:
+                        stocks.update()
+                        img = stocks.draw()
+                    else:
+                        clock.update()
+                        img = clock.draw()
                 elif mode == "clock":
                     clock.update()
                     img = clock.draw()
