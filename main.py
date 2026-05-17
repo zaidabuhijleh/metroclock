@@ -3,11 +3,6 @@ import traceback
 import config
 import web_server
 from core.display import Display
-try:
-    from widgets.metro import MetroWidget
-except Exception as exc:
-    MetroWidget = None
-    print(f"Metro widget disabled: {exc}")
 from widgets.weather import WeatherWidget
 from widgets.flight import FlightWidget
 from widgets.ambient import AmbientWidget
@@ -39,7 +34,7 @@ def main():
     display = None
     active_pwm_bits = None
 
-    metro = MetroWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT) if MetroWidget else None
+    metro = None
     weather = WeatherWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
     flight = FlightWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
     ambient = AmbientWidget(config.MATRIX_WIDTH, config.MATRIX_HEIGHT)
@@ -77,12 +72,8 @@ def main():
                 display.set_brightness(web_server.get_brightness())
 
                 if mode == "metro":
-                    if metro is not None:
-                        metro.update()
-                        img = metro.draw()
-                    else:
-                        clock.update()
-                        img = clock.draw()
+                    clock.update()
+                    img = clock.draw()
                 elif mode == "weather":
                     weather.update()
                     img = weather.draw()
