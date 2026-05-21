@@ -2,4 +2,10 @@ requests
 Pillow
 flask
 gtfs-realtime-bindings
-rpi-rgb-led-matrix
+
+# rgbmatrix is NOT installed via pip.
+# Install from source on the Pi:
+#   git clone https://github.com/hzeller/rpi-rgb-led-matrix.git
+#   cd rpi-rgb-led-matrix/bindings/python
+#   make build-python PYTHON=$(which python3)
+#   sudo make install-python PYTHON=$(which python3)
