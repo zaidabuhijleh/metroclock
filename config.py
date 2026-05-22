@@ -95,12 +95,28 @@ CLOCK_SHOW_AMPM = True
 # "horizontal" -> clock top 2/3, widget bottom 1/3
 # "vertical"   -> clock left 2/3, widget right 1/3
 CLOCK_WIDGET_LAYOUT = "horizontal"
+# Layout preset for clock+widget mode.
+# "auto"                -> infer from CLOCK_WIDGET_LAYOUT + CLOCK_WIDGET_COUNT
+# "horizontal_single"   -> top 6x2 clock + bottom 6x1 widget
+# "horizontal_single_top" -> top 6x1 widget + bottom 6x2 clock
+# "horizontal_split"    -> top 6x2 clock + two bottom mini widgets
+# "vertical_focus"      -> left 3x3 clock + right 3x3 focus widget
+# "vertical_split_focus"-> left 3x2 clock + left-bottom mini + right focus widget
+# "vertical_split_focus_top" -> left-top mini + left 3x2 clock + right focus widget
+CLOCK_WIDGET_PRESET = "auto"
 # Widget shown in clock+widget mode.
 CLOCK_WIDGET_SOURCE = "weather"
 # 1 = clock + one widget pane, 2 = clock + two widget panes
 CLOCK_WIDGET_COUNT = 1
 # Secondary widget used when CLOCK_WIDGET_COUNT=2.
 CLOCK_WIDGET_SOURCE_SECONDARY = "stocks"
+# Legacy mini-widget text motion style fallback.
+# "metro"  -> single-pass scroll with hold (like metro destination rows)
+# "ticker" -> continuous wrap-around ticker scroll
+CLOCK_WIDGET_SCROLL_MODE = "metro"
+# Per-pane mini-widget text motion style.
+CLOCK_WIDGET_SCROLL_MODE_PRIMARY = "metro"
+CLOCK_WIDGET_SCROLL_MODE_SECONDARY = "metro"
 # 24-hour vs 12-hour clock display.
 CLOCK_USE_24H = False
 
@@ -160,9 +176,13 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_SHOW_DATE",
     "CLOCK_SHOW_AMPM",
     "CLOCK_WIDGET_LAYOUT",
+    "CLOCK_WIDGET_PRESET",
     "CLOCK_WIDGET_SOURCE",
     "CLOCK_WIDGET_COUNT",
     "CLOCK_WIDGET_SOURCE_SECONDARY",
+    "CLOCK_WIDGET_SCROLL_MODE",
+    "CLOCK_WIDGET_SCROLL_MODE_PRIMARY",
+    "CLOCK_WIDGET_SCROLL_MODE_SECONDARY",
     "CLOCK_USE_24H",
 }
 
@@ -243,6 +263,10 @@ def _apply_runtime_overrides():
     # Backward compatibility: migrate legacy clock size key.
     if "CLOCK_SIZE" not in file_overrides and "CLOCK_SIZE_SCALE" in file_overrides:
         file_overrides["CLOCK_SIZE"] = file_overrides["CLOCK_SIZE_SCALE"]
+    if "CLOCK_WIDGET_SCROLL_MODE_PRIMARY" not in file_overrides and "CLOCK_WIDGET_SCROLL_MODE" in file_overrides:
+        file_overrides["CLOCK_WIDGET_SCROLL_MODE_PRIMARY"] = file_overrides["CLOCK_WIDGET_SCROLL_MODE"]
+    if "CLOCK_WIDGET_SCROLL_MODE_SECONDARY" not in file_overrides and "CLOCK_WIDGET_SCROLL_MODE" in file_overrides:
+        file_overrides["CLOCK_WIDGET_SCROLL_MODE_SECONDARY"] = file_overrides["CLOCK_WIDGET_SCROLL_MODE"]
 
     for key in RUNTIME_EDITABLE_FIELDS:
         if key not in file_overrides or key not in globals():

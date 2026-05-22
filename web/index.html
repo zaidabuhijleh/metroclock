@@ -544,6 +544,18 @@
         <option value="off">Off</option>
       </select>
 
+      <label>Clock+Widget Preset</label>
+      <select id="clock-widget-preset">
+        <option value="auto">Auto (Use Layout + Widget Count)</option>
+        <option value="horizontal_single">Top Clock + Bottom Widget</option>
+        <option value="horizontal_single_top">Top Widget + Bottom Clock</option>
+        <option value="horizontal_split">Top Clock + Split Bottom Widgets</option>
+        <option value="vertical_focus">Left Clock + Right Focus Widget</option>
+        <option value="vertical_split_focus">Left Clock Stack + Right Focus Widget</option>
+        <option value="vertical_split_focus_top">Left Mini + Left Clock + Right Focus Widget</option>
+      </select>
+      <p class="hint">Auto follows layout + widget count controls below. Explicit presets lock them.</p>
+
       <label>Clock+Widget Layout</label>
       <select id="clock-widget-layout">
         <option value="horizontal">Top 2/3 Clock + Bottom 1/3 Widget</option>
@@ -573,6 +585,22 @@
         <option value="sports">Sports</option>
         <option value="flight">Flight</option>
       </select>
+
+      <div id="clock-widget-scroll-primary-wrap" style="display:none;">
+        <label>Primary Widget Scroll Mode</label>
+        <select id="clock-widget-scroll-mode-primary">
+          <option value="metro">Metro Scroll</option>
+          <option value="ticker">Ticker Scroll</option>
+        </select>
+      </div>
+
+      <div id="clock-widget-scroll-secondary-wrap" style="display:none;">
+        <label>Secondary Widget Scroll Mode (2-widget mode)</label>
+        <select id="clock-widget-scroll-mode-secondary">
+          <option value="metro">Metro Scroll</option>
+          <option value="ticker">Ticker Scroll</option>
+        </select>
+      </div>
 
       <p class="hint">Vertical focus pane supports Weather + Stocks + Sports. Horizontal mini panes support all except Ambient.</p>
       <button class="btn btn-primary" onclick="saveClock()">Save Clock Settings</button>
@@ -1070,15 +1098,29 @@ let selectedMetroTransition = "slide";
 let selectedClockFontStyle = "matrix";
 let selectedClockSize = 1.0;
 let selectedClockSizeBeforeWidget = 1.0;
+let selectedClockWidgetPreset = "auto";
 let selectedClockLayout = "horizontal";
 let selectedClockWidgetSource = "weather";
 let selectedClockWidgetSourceSecondary = "stocks";
 let selectedClockWidgetCount = 1;
+let selectedClockWidgetScrollModePrimary = "metro";
+let selectedClockWidgetScrollModeSecondary = "metro";
 let selectedClockUse24h = false;
 let selectedClockShowDate = true;
 let selectedClockShowAmpm = true;
 let currentDisplayMode = "clock";
 const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
+const CLOCK_WIDGET_PRESET_OPTIONS = [
+  "auto",
+  "horizontal_single",
+  "horizontal_single_top",
+  "horizontal_split",
+  "vertical_focus",
+  "vertical_split_focus",
+  "vertical_split_focus_top"
+];
+const CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ["metro", "ticker"];
+const CLOCK_SCROLLABLE_WIDGET_SOURCES = new Set(["metro", "stocks", "sports", "flight"]);
 
 function normalizeClockSize(value) {
   const numeric = Number(value);
@@ -1093,6 +1135,47 @@ function normalizeClockSize(value) {
     }
   }
   return best;
+}
+
+function normalizeClockWidgetScrollMode(value, fallback = "metro") {
+  const raw = String(value || fallback).trim().toLowerCase();
+  return CLOCK_WIDGET_SCROLL_MODE_OPTIONS.includes(raw) ? raw : fallback;
+}
+
+function normalizeClockWidgetPreset(value, fallback = "auto") {
+  const raw = String(value || fallback).trim().toLowerCase();
+  return CLOCK_WIDGET_PRESET_OPTIONS.includes(raw) ? raw : fallback;
+}
+
+function applyClockPresetToLayoutControls(preset) {
+  const layoutEl = document.getElementById("clock-widget-layout");
+  const countEl = document.getElementById("clock-widget-count");
+  if (!layoutEl || !countEl) return;
+
+  const key = normalizeClockWidgetPreset(preset, "auto");
+  if (key === "horizontal_single") {
+    layoutEl.value = "horizontal";
+    countEl.value = "1";
+  } else if (key === "horizontal_single_top") {
+    layoutEl.value = "horizontal";
+    countEl.value = "1";
+  } else if (key === "horizontal_split") {
+    layoutEl.value = "horizontal";
+    countEl.value = "2";
+  } else if (key === "vertical_focus") {
+    layoutEl.value = "vertical";
+    countEl.value = "1";
+  } else if (key === "vertical_split_focus") {
+    layoutEl.value = "vertical";
+    countEl.value = "2";
+  } else if (key === "vertical_split_focus_top") {
+    layoutEl.value = "vertical";
+    countEl.value = "2";
+  }
+}
+
+function widgetSourceSupportsScroll(source) {
+  return CLOCK_SCROLLABLE_WIDGET_SOURCES.has(String(source || "").trim().toLowerCase());
 }
 
 function updateClockSizeControl(mode) {
@@ -1112,6 +1195,41 @@ function updateClockSizeControl(mode) {
   selectedClockSize = restore;
   sizeEl.value = String(restore);
   if (hintEl) hintEl.style.display = "none";
+}
+
+function refreshClockWidgetControls() {
+  const presetEl = document.getElementById("clock-widget-preset");
+  const layoutEl = document.getElementById("clock-widget-layout");
+  const countEl = document.getElementById("clock-widget-count");
+  const sourceEl = document.getElementById("clock-widget-source");
+  const sourceSecondaryEl = document.getElementById("clock-widget-source-secondary");
+  const primaryWrap = document.getElementById("clock-widget-scroll-primary-wrap");
+  const secondaryWrap = document.getElementById("clock-widget-scroll-secondary-wrap");
+
+  if (!presetEl || !layoutEl || !countEl || !sourceEl || !sourceSecondaryEl || !primaryWrap || !secondaryWrap) {
+    return;
+  }
+
+  selectedClockWidgetPreset = normalizeClockWidgetPreset(presetEl.value, "auto");
+  if (selectedClockWidgetPreset !== "auto") {
+    applyClockPresetToLayoutControls(selectedClockWidgetPreset);
+    layoutEl.disabled = true;
+    countEl.disabled = true;
+  } else {
+    layoutEl.disabled = false;
+    countEl.disabled = false;
+  }
+
+  selectedClockLayout = layoutEl.value === "vertical" ? "vertical" : "horizontal";
+  selectedClockWidgetCount = Number(countEl.value) >= 2 ? 2 : 1;
+  selectedClockWidgetSource = sourceEl.value;
+  selectedClockWidgetSourceSecondary = sourceSecondaryEl.value;
+
+  const showPrimaryScroll = widgetSourceSupportsScroll(selectedClockWidgetSource);
+  const showSecondaryScroll = selectedClockWidgetCount >= 2 && widgetSourceSupportsScroll(selectedClockWidgetSourceSecondary);
+
+  primaryWrap.style.display = showPrimaryScroll ? "" : "none";
+  secondaryWrap.style.display = showSecondaryScroll ? "" : "none";
 }
 
 function parseCsvSet(raw) {
@@ -1270,6 +1388,13 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
+["clock-widget-preset", "clock-widget-layout", "clock-widget-count", "clock-widget-source", "clock-widget-source-secondary"].forEach((id) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener("change", refreshClockWidgetControls);
+});
+refreshClockWidgetControls();
+
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   renderStations(WMATA_STATION_GROUPS);
@@ -1299,6 +1424,7 @@ async function init() {
       ? data.CLOCK_FONT_STYLE
       : "matrix";
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
+    selectedClockWidgetPreset = normalizeClockWidgetPreset(data.CLOCK_WIDGET_PRESET, "auto");
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";
     selectedClockWidgetSource = ["metro", "weather", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE)
       ? data.CLOCK_WIDGET_SOURCE
@@ -1307,6 +1433,14 @@ async function init() {
       ? data.CLOCK_WIDGET_SOURCE_SECONDARY
       : "stocks";
     selectedClockWidgetCount = Number(data.CLOCK_WIDGET_COUNT) >= 2 ? 2 : 1;
+    selectedClockWidgetScrollModePrimary = normalizeClockWidgetScrollMode(
+      data.CLOCK_WIDGET_SCROLL_MODE_PRIMARY ?? data.CLOCK_WIDGET_SCROLL_MODE,
+      "metro"
+    );
+    selectedClockWidgetScrollModeSecondary = normalizeClockWidgetScrollMode(
+      data.CLOCK_WIDGET_SCROLL_MODE_SECONDARY ?? selectedClockWidgetScrollModePrimary,
+      selectedClockWidgetScrollModePrimary
+    );
     selectedClockUse24h = data.CLOCK_USE_24H === true;
     selectedClockShowDate = data.CLOCK_SHOW_DATE !== false;
     selectedClockShowAmpm = data.CLOCK_SHOW_AMPM !== false;
@@ -1318,14 +1452,18 @@ async function init() {
     document.getElementById("clock-color-accent-2").value = data.CLOCK_COLOR_ACCENT_2 || "";
     document.getElementById("clock-color-dim").value = data.CLOCK_COLOR_DIM || "";
     document.getElementById("clock-color-bg").value = data.CLOCK_COLOR_BG || "";
+    document.getElementById("clock-widget-preset").value = selectedClockWidgetPreset;
     document.getElementById("clock-widget-layout").value = selectedClockLayout;
     document.getElementById("clock-widget-count").value = String(selectedClockWidgetCount);
     document.getElementById("clock-widget-source").value = selectedClockWidgetSource;
     document.getElementById("clock-widget-source-secondary").value = selectedClockWidgetSourceSecondary;
+    document.getElementById("clock-widget-scroll-mode-primary").value = selectedClockWidgetScrollModePrimary;
+    document.getElementById("clock-widget-scroll-mode-secondary").value = selectedClockWidgetScrollModeSecondary;
     document.getElementById("clock-format").value = selectedClockUse24h ? "24h" : "12h";
     document.getElementById("clock-show-date").value = selectedClockShowDate ? "on" : "off";
     document.getElementById("clock-show-ampm").value = selectedClockShowAmpm ? "on" : "off";
     updateClockSizeControl(currentDisplayMode);
+    refreshClockWidgetControls();
 
     // Metro
     selectedMetroSystem = ["wmata", "nyc", "ttc"].includes(String(data.METRO_SYSTEM || "").toLowerCase())
@@ -1796,6 +1934,13 @@ async function saveSettings(payload) {
 
 async function saveClock() {
   selectedClockFontStyle = document.getElementById("clock-font-style").value;
+  selectedClockWidgetPreset = normalizeClockWidgetPreset(
+    document.getElementById("clock-widget-preset").value,
+    "auto"
+  );
+  if (selectedClockWidgetPreset !== "auto") {
+    applyClockPresetToLayoutControls(selectedClockWidgetPreset);
+  }
   const lockClockSize = currentDisplayMode === "clock_widget";
   selectedClockSize = lockClockSize
     ? 0.5
@@ -1808,6 +1953,14 @@ async function saveClock() {
   selectedClockWidgetCount = Number(document.getElementById("clock-widget-count").value) >= 2 ? 2 : 1;
   selectedClockWidgetSource = document.getElementById("clock-widget-source").value;
   selectedClockWidgetSourceSecondary = document.getElementById("clock-widget-source-secondary").value;
+  selectedClockWidgetScrollModePrimary = normalizeClockWidgetScrollMode(
+    document.getElementById("clock-widget-scroll-mode-primary").value,
+    "metro"
+  );
+  selectedClockWidgetScrollModeSecondary = normalizeClockWidgetScrollMode(
+    document.getElementById("clock-widget-scroll-mode-secondary").value,
+    selectedClockWidgetScrollModePrimary
+  );
   selectedClockUse24h = document.getElementById("clock-format").value === "24h";
   selectedClockShowDate = document.getElementById("clock-show-date").value === "on";
   selectedClockShowAmpm = document.getElementById("clock-show-ampm").value === "on";
@@ -1826,10 +1979,13 @@ async function saveClock() {
     CLOCK_COLOR_ACCENT_2: clockColorAccent2,
     CLOCK_COLOR_DIM: clockColorDim,
     CLOCK_COLOR_BG: clockColorBg,
+    CLOCK_WIDGET_PRESET: selectedClockWidgetPreset,
     CLOCK_WIDGET_LAYOUT: selectedClockLayout,
     CLOCK_WIDGET_COUNT: selectedClockWidgetCount,
     CLOCK_WIDGET_SOURCE: selectedClockWidgetSource,
     CLOCK_WIDGET_SOURCE_SECONDARY: selectedClockWidgetSourceSecondary,
+    CLOCK_WIDGET_SCROLL_MODE_PRIMARY: selectedClockWidgetScrollModePrimary,
+    CLOCK_WIDGET_SCROLL_MODE_SECONDARY: selectedClockWidgetScrollModeSecondary,
     CLOCK_USE_24H: selectedClockUse24h,
     CLOCK_SHOW_DATE: selectedClockShowDate,
     CLOCK_SHOW_AMPM: selectedClockShowAmpm

@@ -8,12 +8,23 @@ import uuid
 
 import config
 import config_manager
+from core.modes import DEFAULT_MODE_CATALOG
 from flask import Flask, jsonify, request, send_from_directory
 
 API_VERSION = "1.0"
 
 CLOCK_FONT_STYLE_OPTIONS = ("matrix",)
 CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
+CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
+CLOCK_WIDGET_PRESET_OPTIONS = (
+    {"key": "auto", "label": "Auto (Layout + Count)", "layout": "mixed", "widget_count": None},
+    {"key": "horizontal_single", "label": "Top Clock + Bottom Widget", "layout": "horizontal", "widget_count": 1},
+    {"key": "horizontal_single_top", "label": "Top Widget + Bottom Clock", "layout": "horizontal", "widget_count": 1},
+    {"key": "horizontal_split", "label": "Top Clock + Split Bottom Widgets", "layout": "horizontal", "widget_count": 2},
+    {"key": "vertical_focus", "label": "Left Clock + Right Focus Widget", "layout": "vertical", "widget_count": 1},
+    {"key": "vertical_split_focus", "label": "Left Clock Stack + Right Focus Widget", "layout": "vertical", "widget_count": 2},
+    {"key": "vertical_split_focus_top", "label": "Left Mini + Left Clock + Right Focus Widget", "layout": "vertical", "widget_count": 2},
+)
 
 WRITE_ENDPOINTS = {
     "/api/settings",
@@ -27,19 +38,179 @@ WRITE_ENDPOINTS = {
 
 app = Flask(__name__, static_folder="web", static_url_path="")
 
-_mode_lock = threading.Lock()
-_display_mode = None
-_weather_preview_lock = threading.Lock()
-_weather_preview = None
-_ambient_scene_lock = threading.Lock()
-_AMBIENT_UNSET = object()
-_ambient_scene = _AMBIENT_UNSET  # None = auto-cycle; scene key string = pinned
-_brightness_lock = threading.Lock()
-_brightness = None
-_device_id_lock = threading.Lock()
-_device_id = None
-_app_version_lock = threading.Lock()
-_app_version = None
+
+class RuntimeState:
+    """Thread-safe runtime settings and memoized metadata."""
+
+    _AMBIENT_UNSET = object()
+
+    def __init__(self):
+        self._mode_lock = threading.Lock()
+        self._display_mode = None
+
+        self._weather_preview_lock = threading.Lock()
+        self._weather_preview = None
+
+        self._ambient_scene_lock = threading.Lock()
+        self._ambient_scene = self._AMBIENT_UNSET  # None = auto-cycle; scene key string = pinned
+
+        self._brightness_lock = threading.Lock()
+        self._brightness = None
+
+        self._device_id_lock = threading.Lock()
+        self._device_id = None
+
+        self._app_version_lock = threading.Lock()
+        self._app_version = None
+
+    @staticmethod
+    def _device_id_path():
+        return os.environ.get("METROCLOCK_DEVICE_ID_PATH", "/etc/metroclock/device_id")
+
+    def get_device_id(self):
+        with self._device_id_lock:
+            if self._device_id:
+                return self._device_id
+
+            env_id = str(os.environ.get("METROCLOCK_DEVICE_ID", "") or "").strip()
+            if env_id:
+                self._device_id = env_id
+                return self._device_id
+
+            path = self._device_id_path()
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    stored = f.read().strip()
+                if stored:
+                    self._device_id = stored
+                    return self._device_id
+            except Exception:
+                pass
+
+            generated = uuid.uuid4().hex
+            directory = os.path.dirname(path)
+            try:
+                if directory:
+                    os.makedirs(directory, exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(generated + "\n")
+            except Exception:
+                # Keep generated id in-memory even if file write fails.
+                pass
+
+            self._device_id = generated
+            return self._device_id
+
+    def get_app_version(self):
+        with self._app_version_lock:
+            if self._app_version:
+                return self._app_version
+
+            env_version = str(os.environ.get("METROCLOCK_APP_VERSION", "") or "").strip()
+            if env_version:
+                self._app_version = env_version
+                return self._app_version
+
+            app_dir = os.path.dirname(os.path.abspath(__file__))
+            try:
+                git_ver = subprocess.check_output(
+                    ["git", "describe", "--tags", "--always", "--dirty"],
+                    cwd=app_dir,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+                if git_ver:
+                    self._app_version = git_ver
+                    return self._app_version
+            except Exception:
+                pass
+
+            for filename in ("version.txt", "VERSION"):
+                try:
+                    with open(os.path.join(app_dir, filename), "r", encoding="utf-8") as f:
+                        file_ver = f.read().strip()
+                    if file_ver:
+                        self._app_version = file_ver
+                        return self._app_version
+                except Exception:
+                    pass
+
+            self._app_version = "dev"
+            return self._app_version
+
+    def get_display_mode(self) -> str:
+        with self._mode_lock:
+            if self._display_mode is None:
+                self._display_mode = getattr(config, "DISPLAY_MODE", "metro")
+            return self._display_mode
+
+    def set_display_mode(self, mode: str):
+        with self._mode_lock:
+            self._display_mode = mode
+
+    def get_brightness(self):
+        with self._brightness_lock:
+            if self._brightness is None:
+                self._brightness = getattr(config, "MATRIX_BRIGHTNESS", 30)
+            return self._brightness
+
+    def set_brightness(self, brightness):
+        with self._brightness_lock:
+            self._brightness = max(1, min(100, int(brightness)))
+
+    def get_weather_preview(self):
+        with self._weather_preview_lock:
+            return self._weather_preview
+
+    @staticmethod
+    def preview_weather_data(preview: str, units: str) -> dict:
+        table = {
+            "clear_day": ("Clear", "clear sky", "01d"),
+            "clear_night": ("Clear", "clear sky", "01n"),
+            "cloudy": ("Clouds", "overcast clouds", "04d"),
+            "drizzle": ("Drizzle", "light drizzle", "09d"),
+            "rain": ("Rain", "light rain", "10d"),
+            "thunderstorm": ("Thunderstorm", "thunderstorm", "11d"),
+            "snow": ("Snow", "light snow", "13d"),
+        }
+        main, description, icon_code = table.get(preview, table["clear_day"])
+        return {
+            "main": {"temp": 72 if units == "imperial" else 22},
+            "weather": [{"main": main, "description": description, "icon": icon_code}],
+        }
+
+    def set_weather_preview(self, preview):
+        with self._weather_preview_lock:
+            self._weather_preview = preview
+
+    @staticmethod
+    def normalize_ambient_scene(scene):
+        aliases = {
+            "city_night": "city_day",
+            "forest": "sunset_trail",
+            "winter_cabin": "alpine_cabin",
+            "space": "coral_reef",
+        }
+        if scene in aliases:
+            scene = aliases[scene]
+
+        if scene in ("", None, "auto"):
+            return None
+        return str(scene)
+
+    def get_ambient_scene(self):
+        with self._ambient_scene_lock:
+            if self._ambient_scene is self._AMBIENT_UNSET:
+                configured = getattr(config, "AMBIENT_SCENE", "auto")
+                self._ambient_scene = self.normalize_ambient_scene(configured)
+            return self._ambient_scene
+
+    def set_ambient_scene(self, scene):
+        with self._ambient_scene_lock:
+            self._ambient_scene = self.normalize_ambient_scene(scene)
+
+
+_runtime_state = RuntimeState()
 
 
 def _configured_api_token():
@@ -80,169 +251,52 @@ def _authorize_writes():
     }), 401
 
 
-def _device_id_path():
-    return os.environ.get("METROCLOCK_DEVICE_ID_PATH", "/etc/metroclock/device_id")
-
-
 def _get_device_id():
-    with _device_id_lock:
-        global _device_id
-        if _device_id:
-            return _device_id
-
-        env_id = str(os.environ.get("METROCLOCK_DEVICE_ID", "") or "").strip()
-        if env_id:
-            _device_id = env_id
-            return _device_id
-
-        path = _device_id_path()
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                stored = f.read().strip()
-            if stored:
-                _device_id = stored
-                return _device_id
-        except Exception:
-            pass
-
-        generated = uuid.uuid4().hex
-        directory = os.path.dirname(path)
-        try:
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(generated + "\n")
-        except Exception:
-            # Keep generated id in-memory even if file write fails.
-            pass
-
-        _device_id = generated
-        return _device_id
+    return _runtime_state.get_device_id()
 
 
 def _get_app_version():
-    with _app_version_lock:
-        global _app_version
-        if _app_version:
-            return _app_version
-
-        env_version = str(os.environ.get("METROCLOCK_APP_VERSION", "") or "").strip()
-        if env_version:
-            _app_version = env_version
-            return _app_version
-
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-        try:
-            git_ver = subprocess.check_output(
-                ["git", "describe", "--tags", "--always", "--dirty"],
-                cwd=app_dir,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-            if git_ver:
-                _app_version = git_ver
-                return _app_version
-        except Exception:
-            pass
-
-        for filename in ("version.txt", "VERSION"):
-            try:
-                with open(os.path.join(app_dir, filename), "r", encoding="utf-8") as f:
-                    file_ver = f.read().strip()
-                if file_ver:
-                    _app_version = file_ver
-                    return _app_version
-            except Exception:
-                pass
-
-        _app_version = "dev"
-        return _app_version
+    return _runtime_state.get_app_version()
 
 
 def get_display_mode() -> str:
-    with _mode_lock:
-        global _display_mode
-        if _display_mode is None:
-            _display_mode = getattr(config, "DISPLAY_MODE", "metro")
-        return _display_mode
+    return _runtime_state.get_display_mode()
 
 
 def set_display_mode(mode: str):
-    with _mode_lock:
-        global _display_mode
-        _display_mode = mode
+    _runtime_state.set_display_mode(mode)
 
 
 def get_brightness():
-    with _brightness_lock:
-        global _brightness
-        if _brightness is None:
-            _brightness = getattr(config, "MATRIX_BRIGHTNESS", 30)
-        return _brightness
+    return _runtime_state.get_brightness()
 
 
 def set_brightness(brightness):
-    with _brightness_lock:
-        global _brightness
-        _brightness = max(1, min(100, int(brightness)))
+    _runtime_state.set_brightness(brightness)
 
 
 def get_weather_preview():
-    with _weather_preview_lock:
-        return _weather_preview
+    return _runtime_state.get_weather_preview()
 
 
 def preview_weather_data(preview: str, units: str) -> dict:
-    table = {
-        "clear_day": ("Clear", "clear sky", "01d"),
-        "clear_night": ("Clear", "clear sky", "01n"),
-        "cloudy": ("Clouds", "overcast clouds", "04d"),
-        "drizzle": ("Drizzle", "light drizzle", "09d"),
-        "rain": ("Rain", "light rain", "10d"),
-        "thunderstorm": ("Thunderstorm", "thunderstorm", "11d"),
-        "snow": ("Snow", "light snow", "13d"),
-    }
-    main, description, icon_code = table.get(preview, table["clear_day"])
-    return {
-        "main": {"temp": 72 if units == "imperial" else 22},
-        "weather": [{"main": main, "description": description, "icon": icon_code}],
-    }
+    return _runtime_state.preview_weather_data(preview, units)
 
 
 def set_weather_preview(preview):
-    with _weather_preview_lock:
-        global _weather_preview
-        _weather_preview = preview
+    _runtime_state.set_weather_preview(preview)
 
 
 def _normalize_ambient_scene(scene):
-    aliases = {
-        "city_night": "city_day",
-        "forest": "sunset_trail",
-        "winter_cabin": "alpine_cabin",
-        "space": "coral_reef",
-    }
-    if scene in aliases:
-        scene = aliases[scene]
-
-    if scene in ("", None, "auto"):
-        return None
-    return str(scene)
+    return _runtime_state.normalize_ambient_scene(scene)
 
 
 def get_ambient_scene():
-    with _ambient_scene_lock:
-        global _ambient_scene
-        if _ambient_scene is _AMBIENT_UNSET:
-            configured = getattr(config, "AMBIENT_SCENE", "auto")
-            _ambient_scene = _normalize_ambient_scene(configured)
-        return _ambient_scene
+    return _runtime_state.get_ambient_scene()
 
 
 def set_ambient_scene(scene):
-    with _ambient_scene_lock:
-        global _ambient_scene
-        _ambient_scene = _normalize_ambient_scene(scene)
+    _runtime_state.set_ambient_scene(scene)
 
 
 def _get_ip() -> str:
@@ -320,6 +374,21 @@ def api_clock_styles():
                 "show_ampm": True,
             },
         },
+        "clock_widget_preset": {
+            "key": "CLOCK_WIDGET_PRESET",
+            "default": "auto",
+            "options": list(CLOCK_WIDGET_PRESET_OPTIONS),
+        },
+        "clock_widget_scroll_mode": {
+            "keys": {
+                "primary": "CLOCK_WIDGET_SCROLL_MODE_PRIMARY",
+                "secondary": "CLOCK_WIDGET_SCROLL_MODE_SECONDARY",
+                "legacy": "CLOCK_WIDGET_SCROLL_MODE",
+            },
+            "default": "metro",
+            "options": list(CLOCK_WIDGET_SCROLL_MODE_OPTIONS),
+            "scroll_widget_sources": ["metro", "stocks", "sports", "flight"],
+        },
         "clock_color_overrides": {
             "format": "#RRGGBB",
             "allow_empty": True,
@@ -354,7 +423,7 @@ def api_settings_post():
 def api_mode():
     data = request.get_json(force=True) or {}
     mode = data.get("mode", "").lower()
-    if mode not in ("metro", "weather", "flight", "ambient", "sports", "stocks", "clock", "clock_widget"):
+    if not DEFAULT_MODE_CATALOG.is_supported(mode):
         return jsonify({"ok": False, "error": "Invalid mode"}), 400
     set_display_mode(mode)
     return jsonify({"ok": True, "mode": mode})
