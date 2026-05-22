@@ -156,6 +156,7 @@ class ClockWidget(Widget):
     MINI_SCROLLABLE_SOURCES = {"metro", "stocks", "sports", "flight"}
     CLOCK_WIDGET_GRID_WIDTH = 6
     CLOCK_WIDGET_GRID_HEIGHT = 3
+    VERTICAL_SIDE_WIDTH_UNITS = 3.0
     WEATHER_MINI_WIDTH_UNITS = 2.0
 
     def __init__(self, width, height, metro_widget, weather_widget, flight_widget, sports_widget, stocks_widget):
@@ -490,19 +491,17 @@ class ClockWidget(Widget):
         widget_panes = []
 
         if layout == "vertical":
-            side_w = int(round(self.width * 0.5))
-            left_w = self.width - side_w
+            grid = self._normalized_clock_grid()
+            side_units = max(1.0, min(float(self.CLOCK_WIDGET_GRID_WIDTH - 1), float(self.VERTICAL_SIDE_WIDTH_UNITS)))
+            left_units = float(self.CLOCK_WIDGET_GRID_WIDTH) - side_units
             side_source = self._resolve_supported_source(primary_req, "vertical")
 
-            if widget_count == 2 and left_w >= 12 and self.height >= 12:
-                split_ratio = 2 / 3
-                left_clock_h = max(1, min(self.height - 1, int(round(self.height * split_ratio))))
-                left_bottom_h = self.height - left_clock_h
+            if widget_count == 2:
                 bottom_source = self._resolve_supported_source(secondary_req, "horizontal")
 
                 clock_faces.append(
                     ClockFacePane(
-                        bounds=ClockPaneBounds(0, 0, left_w, left_clock_h),
+                        bounds=grid.bounds(0.0, 0.0, left_units, 2.0),
                         variant="vertical_split_top",
                     )
                 )
@@ -510,7 +509,7 @@ class ClockWidget(Widget):
                     ClockWidgetPane(
                         source=bottom_source,
                         slot="horizontal",
-                        bounds=ClockPaneBounds(0, left_clock_h, left_w, max(1, left_bottom_h)),
+                        bounds=grid.bounds(0.0, 2.0, left_units, 1.0),
                         render_mode="compact",
                         scroll_mode_key="secondary",
                     )
@@ -518,7 +517,7 @@ class ClockWidget(Widget):
             else:
                 clock_faces.append(
                     ClockFacePane(
-                        bounds=ClockPaneBounds(0, 0, left_w, self.height),
+                        bounds=grid.bounds(0.0, 0.0, left_units, float(self.CLOCK_WIDGET_GRID_HEIGHT)),
                         variant="vertical_focus",
                     )
                 )
@@ -527,7 +526,7 @@ class ClockWidget(Widget):
                 ClockWidgetPane(
                     source=side_source,
                     slot="vertical",
-                    bounds=ClockPaneBounds(left_w, 0, max(1, side_w), self.height),
+                    bounds=grid.bounds(left_units, 0.0, side_units, float(self.CLOCK_WIDGET_GRID_HEIGHT)),
                     render_mode="focused",
                     scroll_mode_key="primary",
                 )
