@@ -87,6 +87,10 @@ POMODORO_LONG_BREAK_MINUTES = 15
 POMODORO_LONG_BREAK_EVERY = 4
 POMODORO_AUTO_START_BREAKS = True
 POMODORO_AUTO_START_FOCUS = False
+# "mode_time" or "mode_time_task"
+POMODORO_LAYOUT = "mode_time_task"
+# Newline-delimited task queue; top line is shown first.
+POMODORO_TODO_ITEMS = ""
 
 # --- CLOCK ---
 # Font style options:
@@ -181,6 +185,8 @@ RUNTIME_EDITABLE_FIELDS = {
     "POMODORO_LONG_BREAK_EVERY",
     "POMODORO_AUTO_START_BREAKS",
     "POMODORO_AUTO_START_FOCUS",
+    "POMODORO_LAYOUT",
+    "POMODORO_TODO_ITEMS",
     "CLOCK_FONT_STYLE",
     "CLOCK_SIZE",
     "CLOCK_COLOR_PRIMARY",

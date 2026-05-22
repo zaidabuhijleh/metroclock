@@ -815,27 +815,30 @@
           <div class="info-value" id="pomodoro-phase">FOCUS</div>
         </div>
         <div class="info-item">
-          <div class="info-label">Timer</div>
+          <div class="info-label">Display</div>
           <div class="info-value" id="pomodoro-timer">25:00</div>
         </div>
         <div class="info-item">
-          <div class="info-label">Cycle</div>
-          <div class="info-value" id="pomodoro-progress">1 / 4</div>
-        </div>
-        <div class="info-item">
-          <div class="info-label">Status</div>
-          <div class="info-value" id="pomodoro-running">Paused</div>
+          <div class="info-label">Top Task</div>
+          <div class="info-value" id="pomodoro-top-task">No Task</div>
         </div>
       </div>
       <div class="btn-row">
         <button class="btn btn-primary" onclick="pomodoroActionRequest('start')">Start</button>
         <button class="btn btn-ghost" onclick="pomodoroActionRequest('pause')">Pause</button>
         <button class="btn btn-ghost" onclick="pomodoroActionRequest('skip')">Skip</button>
+        <button class="btn btn-ghost" onclick="completePomodoroTopTask()">Complete Top Task</button>
         <button class="btn btn-danger" onclick="pomodoroActionRequest('reset')">Reset</button>
       </div>
     </div>
     <div class="card">
       <div class="card-title">Pomodoro Settings</div>
+      <label>Display Layout</label>
+      <select id="pomodoro-layout">
+        <option value="mode_time">MODE + TIME</option>
+        <option value="mode_time_task">MODE + TIME + TASK</option>
+      </select>
+
       <label>Focus Minutes</label>
       <input type="number" id="pomodoro-focus-minutes" min="1" max="180" />
 
@@ -861,6 +864,19 @@
       </select>
 
       <button class="btn btn-primary" onclick="savePomodoro()">Save Pomodoro Settings</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Task Queue</div>
+      <div class="stock-input-row">
+        <input type="text" id="pomodoro-task-input" placeholder="Add a task..." maxlength="80" autocomplete="off" onkeydown="if(event.key==='Enter'){addPomodoroTask();event.preventDefault();}" />
+        <button class="btn btn-ghost" onclick="addPomodoroTask()">Add</button>
+      </div>
+      <div class="stock-chip-grid" id="pomodoro-task-list"></div>
+      <p class="hint">Top task is shown on the display when layout is MODE + TIME + TASK.</p>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="completePomodoroTopTask()">Check Off Top Task</button>
+        <button class="btn btn-danger" onclick="clearPomodoroTasks()">Clear Tasks</button>
+      </div>
     </div>
   </div>
 
@@ -1177,6 +1193,8 @@ let selectedPomodoroLongBreakMinutes = 15;
 let selectedPomodoroLongBreakEvery = 4;
 let selectedPomodoroAutoStartBreaks = true;
 let selectedPomodoroAutoStartFocus = false;
+let selectedPomodoroLayout = "mode_time_task";
+let selectedPomodoroTasks = [];
 let selectedPomodoroState = null;
 let pomodoroPollHandle = null;
 let currentDisplayMode = "clock";
@@ -1310,6 +1328,92 @@ function pomodoroPhaseLabel(phase) {
   return "FOCUS";
 }
 
+function normalizePomodoroLayout(value) {
+  const raw = String(value || "mode_time_task").trim().toLowerCase();
+  return raw === "mode_time" ? "mode_time" : "mode_time_task";
+}
+
+function parsePomodoroTasks(raw) {
+  return String(raw || "")
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function serializePomodoroTasks(tasks) {
+  return (tasks || [])
+    .map(s => String(s || "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function renderPomodoroTaskList() {
+  const el = document.getElementById("pomodoro-task-list");
+  if (!el) return;
+  if (!selectedPomodoroTasks.length) {
+    el.innerHTML = `<div class="stock-chip empty">No tasks yet</div>`;
+    return;
+  }
+  el.innerHTML = selectedPomodoroTasks.map((task, idx) => {
+    const safe = String(task || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    const topBadge = idx === 0 ? " (TOP)" : "";
+    return `<div class="stock-chip" title="Remove task" onclick="removePomodoroTask(${idx})">${safe}${topBadge}</div>`;
+  }).join("");
+}
+
+async function savePomodoroTaskQueue() {
+  await saveSettings({
+    POMODORO_TODO_ITEMS: serializePomodoroTasks(selectedPomodoroTasks),
+  });
+  await loadPomodoroState(false);
+}
+
+function addPomodoroTask() {
+  const input = document.getElementById("pomodoro-task-input");
+  const text = String((input && input.value) || "").trim();
+  if (!text) {
+    toast("Enter a task first", "error");
+    return;
+  }
+  if (selectedPomodoroTasks.length >= 20) {
+    toast("Max 20 tasks", "error");
+    return;
+  }
+  selectedPomodoroTasks.push(text);
+  input.value = "";
+  renderPomodoroTaskList();
+  savePomodoroTaskQueue();
+}
+
+function removePomodoroTask(index) {
+  const idx = Number(index);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= selectedPomodoroTasks.length) {
+    return;
+  }
+  selectedPomodoroTasks.splice(idx, 1);
+  renderPomodoroTaskList();
+  savePomodoroTaskQueue();
+}
+
+function completePomodoroTopTask() {
+  if (!selectedPomodoroTasks.length) {
+    toast("No tasks to complete", "error");
+    return;
+  }
+  selectedPomodoroTasks.shift();
+  renderPomodoroTaskList();
+  savePomodoroTaskQueue();
+}
+
+function clearPomodoroTasks() {
+  selectedPomodoroTasks = [];
+  renderPomodoroTaskList();
+  savePomodoroTaskQueue();
+}
+
 function formatPomodoroTimer(totalSeconds) {
   const secs = Math.max(0, Number.parseInt(totalSeconds, 10) || 0);
   const mm = String(Math.floor(secs / 60)).padStart(2, "0");
@@ -1323,16 +1427,14 @@ function renderPomodoroState(state) {
 
   const phaseEl = document.getElementById("pomodoro-phase");
   const timerEl = document.getElementById("pomodoro-timer");
-  const progressEl = document.getElementById("pomodoro-progress");
-  const runningEl = document.getElementById("pomodoro-running");
-  if (!phaseEl || !timerEl || !progressEl || !runningEl) return;
+  const topTaskEl = document.getElementById("pomodoro-top-task");
+  if (!phaseEl || !timerEl || !topTaskEl) return;
 
   phaseEl.textContent = pomodoroPhaseLabel(state.phase);
-  timerEl.textContent = formatPomodoroTimer(state.remaining_seconds);
-  const cyclePos = Number.parseInt(state.cycle_position, 10) || 1;
-  const longEvery = Number.parseInt(state.long_break_every, 10) || 4;
-  progressEl.textContent = `${cyclePos} / ${longEvery}`;
-  runningEl.textContent = state.running ? "Running" : "Paused";
+  timerEl.textContent = state.running ? formatPomodoroTimer(state.remaining_seconds) : "PAUSED";
+
+  const topTask = String(state.current_task || "").trim();
+  topTaskEl.textContent = topTask || "No Task";
 }
 
 function startPomodoroPolling() {
@@ -1626,12 +1728,16 @@ async function init() {
     selectedPomodoroLongBreakEvery = Number.isFinite(Number(data.POMODORO_LONG_BREAK_EVERY)) ? Number(data.POMODORO_LONG_BREAK_EVERY) : 4;
     selectedPomodoroAutoStartBreaks = data.POMODORO_AUTO_START_BREAKS !== false;
     selectedPomodoroAutoStartFocus = data.POMODORO_AUTO_START_FOCUS === true;
+    selectedPomodoroLayout = normalizePomodoroLayout(data.POMODORO_LAYOUT);
+    selectedPomodoroTasks = parsePomodoroTasks(data.POMODORO_TODO_ITEMS);
     document.getElementById("pomodoro-focus-minutes").value = String(selectedPomodoroFocusMinutes);
     document.getElementById("pomodoro-short-break-minutes").value = String(selectedPomodoroShortBreakMinutes);
     document.getElementById("pomodoro-long-break-minutes").value = String(selectedPomodoroLongBreakMinutes);
     document.getElementById("pomodoro-long-break-every").value = String(selectedPomodoroLongBreakEvery);
     document.getElementById("pomodoro-auto-start-breaks").value = selectedPomodoroAutoStartBreaks ? "on" : "off";
     document.getElementById("pomodoro-auto-start-focus").value = selectedPomodoroAutoStartFocus ? "on" : "off";
+    document.getElementById("pomodoro-layout").value = selectedPomodoroLayout;
+    renderPomodoroTaskList();
 
     // Metro
     selectedMetroSystem = ["wmata", "nyc", "ttc"].includes(String(data.METRO_SYSTEM || "").toLowerCase())
@@ -2282,6 +2388,7 @@ async function savePomodoro() {
   const longEvery = Number.parseInt(document.getElementById("pomodoro-long-break-every").value, 10);
   const autoStartBreaks = document.getElementById("pomodoro-auto-start-breaks").value === "on";
   const autoStartFocus = document.getElementById("pomodoro-auto-start-focus").value === "on";
+  const layout = normalizePomodoroLayout(document.getElementById("pomodoro-layout").value);
 
   if (!Number.isInteger(focus) || focus < 1 || focus > 180) {
     toast("Focus minutes must be 1 to 180", "error");
@@ -2306,6 +2413,7 @@ async function savePomodoro() {
   selectedPomodoroLongBreakEvery = longEvery;
   selectedPomodoroAutoStartBreaks = autoStartBreaks;
   selectedPomodoroAutoStartFocus = autoStartFocus;
+  selectedPomodoroLayout = layout;
 
   await saveSettings({
     POMODORO_FOCUS_MINUTES: selectedPomodoroFocusMinutes,
@@ -2314,7 +2422,10 @@ async function savePomodoro() {
     POMODORO_LONG_BREAK_EVERY: selectedPomodoroLongBreakEvery,
     POMODORO_AUTO_START_BREAKS: selectedPomodoroAutoStartBreaks,
     POMODORO_AUTO_START_FOCUS: selectedPomodoroAutoStartFocus,
+    POMODORO_LAYOUT: selectedPomodoroLayout,
+    POMODORO_TODO_ITEMS: serializePomodoroTasks(selectedPomodoroTasks),
   });
+  await loadPomodoroState(false);
 }
 
 // ── Ambient ────────────────────────────────────────────────────────────────

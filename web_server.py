@@ -222,6 +222,23 @@ class RuntimeState:
             parsed = int(default)
         return max(minimum, min(maximum, parsed))
 
+    @staticmethod
+    def _normalize_pomodoro_layout(value) -> str:
+        raw = str(value or "mode_time_task").strip().lower()
+        if raw in {"mode_time", "mode_time_task"}:
+            return raw
+        return "mode_time_task"
+
+    @staticmethod
+    def _parse_pomodoro_tasks(raw_value):
+        text = str(raw_value or "")
+        tasks = []
+        for line in text.splitlines():
+            item = line.strip()
+            if item:
+                tasks.append(item)
+        return tasks
+
     def _pomodoro_settings(self) -> dict:
         return {
             "focus_minutes": self._coerce_int(getattr(config, "POMODORO_FOCUS_MINUTES", 25), 25, 1, 180),
@@ -230,6 +247,8 @@ class RuntimeState:
             "long_break_every": self._coerce_int(getattr(config, "POMODORO_LONG_BREAK_EVERY", 4), 4, 2, 12),
             "auto_start_breaks": bool(getattr(config, "POMODORO_AUTO_START_BREAKS", True)),
             "auto_start_focus": bool(getattr(config, "POMODORO_AUTO_START_FOCUS", False)),
+            "layout": self._normalize_pomodoro_layout(getattr(config, "POMODORO_LAYOUT", "mode_time_task")),
+            "tasks": self._parse_pomodoro_tasks(getattr(config, "POMODORO_TODO_ITEMS", "")),
         }
 
     @staticmethod
@@ -348,6 +367,9 @@ class RuntimeState:
             "long_break_every": long_every,
             "auto_start_breaks": bool(settings["auto_start_breaks"]),
             "auto_start_focus": bool(settings["auto_start_focus"]),
+            "layout": str(settings.get("layout", "mode_time_task")),
+            "current_task": (settings.get("tasks") or [""])[0],
+            "task_count": len(settings.get("tasks") or []),
         }
 
     def get_pomodoro_state(self) -> dict:
