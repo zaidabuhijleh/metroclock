@@ -46,6 +46,7 @@ DEFAULT_MODE_CATALOG = ModeCatalog(
         DisplayMode("ambient", "ambient", 5),
         DisplayMode("sports", "sports", 5),
         DisplayMode("stocks", "stocks", 5),
+        DisplayMode("pomodoro", "pomodoro", 5),
         DisplayMode("clock", "clock", 5),
         DisplayMode("clock_widget", "clock", 5),
     )

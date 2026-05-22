@@ -4,6 +4,7 @@ import os
 import socket
 import subprocess
 import threading
+import time
 import uuid
 
 import config
@@ -31,6 +32,7 @@ WRITE_ENDPOINTS = {
     "/api/mode",
     "/api/weather/preview",
     "/api/ambient/scene",
+    "/api/pomodoro/action",
     "/api/wifi/connect",
     "/api/restart",
     "/api/reboot",
@@ -53,6 +55,9 @@ class RuntimeState:
 
         self._ambient_scene_lock = threading.Lock()
         self._ambient_scene = self._AMBIENT_UNSET  # None = auto-cycle; scene key string = pinned
+
+        self._pomodoro_lock = threading.Lock()
+        self._pomodoro_state = None
 
         self._brightness_lock = threading.Lock()
         self._brightness = None
@@ -209,6 +214,224 @@ class RuntimeState:
         with self._ambient_scene_lock:
             self._ambient_scene = self.normalize_ambient_scene(scene)
 
+    @staticmethod
+    def _coerce_int(value, default: int, minimum: int, maximum: int) -> int:
+        try:
+            parsed = int(value)
+        except Exception:
+            parsed = int(default)
+        return max(minimum, min(maximum, parsed))
+
+    @staticmethod
+    def _normalize_pomodoro_layout(value) -> str:
+        raw = str(value or "mode_time_task").strip().lower()
+        if raw in {"mode_time", "mode_time_task"}:
+            return raw
+        return "mode_time_task"
+
+    @staticmethod
+    def _parse_pomodoro_tasks(raw_value):
+        text = str(raw_value or "")
+        tasks = []
+        for line in text.splitlines():
+            item = line.strip()
+            if item:
+                tasks.append(item)
+        return tasks
+
+    def _pomodoro_settings(self) -> dict:
+        return {
+            "focus_minutes": self._coerce_int(getattr(config, "POMODORO_FOCUS_MINUTES", 25), 25, 1, 180),
+            "short_break_minutes": self._coerce_int(getattr(config, "POMODORO_SHORT_BREAK_MINUTES", 5), 5, 1, 60),
+            "long_break_minutes": self._coerce_int(getattr(config, "POMODORO_LONG_BREAK_MINUTES", 15), 15, 1, 120),
+            "long_break_every": self._coerce_int(getattr(config, "POMODORO_LONG_BREAK_EVERY", 4), 4, 2, 12),
+            "auto_start_breaks": bool(getattr(config, "POMODORO_AUTO_START_BREAKS", True)),
+            "auto_start_focus": bool(getattr(config, "POMODORO_AUTO_START_FOCUS", False)),
+            "layout": self._normalize_pomodoro_layout(getattr(config, "POMODORO_LAYOUT", "mode_time_task")),
+            "tasks": self._parse_pomodoro_tasks(getattr(config, "POMODORO_TODO_ITEMS", "")),
+        }
+
+    @staticmethod
+    def _phase_duration_seconds(phase: str, settings: dict) -> int:
+        key = str(phase or "focus").strip().lower()
+        if key == "short_break":
+            return int(settings["short_break_minutes"]) * 60
+        if key == "long_break":
+            return int(settings["long_break_minutes"]) * 60
+        return int(settings["focus_minutes"]) * 60
+
+    def _ensure_pomodoro_state_locked(self, settings: dict):
+        if self._pomodoro_state is not None:
+            return
+        self._pomodoro_state = {
+            "phase": "focus",
+            "running": False,
+            "phase_end_ts": None,
+            "remaining_seconds": self._phase_duration_seconds("focus", settings),
+            "completed_focus_sessions": 0,
+            "focus_sessions_in_cycle": 0,
+        }
+
+    def _advance_pomodoro_phase_locked(self, state: dict, settings: dict):
+        phase = str(state.get("phase", "focus") or "focus").strip().lower()
+
+        if phase == "focus":
+            state["completed_focus_sessions"] = int(state.get("completed_focus_sessions", 0)) + 1
+            state["focus_sessions_in_cycle"] = int(state.get("focus_sessions_in_cycle", 0)) + 1
+            if state["focus_sessions_in_cycle"] >= int(settings["long_break_every"]):
+                state["focus_sessions_in_cycle"] = 0
+                next_phase = "long_break"
+            else:
+                next_phase = "short_break"
+            auto_start = bool(settings["auto_start_breaks"])
+        else:
+            next_phase = "focus"
+            auto_start = bool(settings["auto_start_focus"])
+
+        state["phase"] = next_phase
+        total_seconds = self._phase_duration_seconds(next_phase, settings)
+        return auto_start, total_seconds
+
+    def _sync_pomodoro_clock_locked(self, settings: dict, now: float):
+        state = self._pomodoro_state
+        if state is None:
+            return
+
+        if not bool(state.get("running", False)):
+            phase_total = self._phase_duration_seconds(str(state.get("phase", "focus")), settings)
+            state["remaining_seconds"] = max(0, min(int(state.get("remaining_seconds", phase_total)), phase_total))
+            state["phase_end_ts"] = None
+            return
+
+        phase_end_ts = state.get("phase_end_ts")
+        if phase_end_ts is None:
+            remaining = max(1, int(state.get("remaining_seconds", self._phase_duration_seconds(state.get("phase", "focus"), settings))))
+            state["phase_end_ts"] = now + remaining
+            state["remaining_seconds"] = remaining
+            return
+
+        remaining_float = float(phase_end_ts) - float(now)
+        if remaining_float > 0:
+            state["remaining_seconds"] = max(0, int(remaining_float + 0.999))
+            return
+
+        overdue = -remaining_float
+        while True:
+            auto_start, next_total = self._advance_pomodoro_phase_locked(state, settings)
+            if not auto_start:
+                state["running"] = False
+                state["phase_end_ts"] = None
+                state["remaining_seconds"] = next_total
+                return
+
+            if overdue < next_total:
+                remaining = max(0.0, float(next_total) - overdue)
+                state["running"] = True
+                state["phase_end_ts"] = now + remaining
+                state["remaining_seconds"] = max(0, int(remaining + 0.999))
+                return
+
+            overdue -= float(next_total)
+
+    def _pomodoro_public_state_locked(self, settings: dict, now: float) -> dict:
+        state = self._pomodoro_state or {}
+        phase = str(state.get("phase", "focus") or "focus").strip().lower()
+        total_seconds = self._phase_duration_seconds(phase, settings)
+
+        if bool(state.get("running", False)) and state.get("phase_end_ts") is not None:
+            remaining_seconds = max(0, int(float(state["phase_end_ts"]) - float(now) + 0.999))
+        else:
+            remaining_seconds = max(0, int(state.get("remaining_seconds", total_seconds)))
+
+        elapsed = max(0, total_seconds - remaining_seconds)
+        progress = 0.0 if total_seconds <= 0 else min(1.0, max(0.0, float(elapsed) / float(total_seconds)))
+
+        focus_in_cycle = int(state.get("focus_sessions_in_cycle", 0))
+        long_every = int(settings["long_break_every"])
+        if phase == "focus":
+            cycle_position = min(long_every, max(1, focus_in_cycle + 1))
+        elif phase == "long_break":
+            cycle_position = long_every
+        else:
+            cycle_position = min(long_every, max(1, focus_in_cycle))
+
+        return {
+            "phase": phase,
+            "running": bool(state.get("running", False)),
+            "remaining_seconds": remaining_seconds,
+            "total_seconds": total_seconds,
+            "progress": progress,
+            "completed_focus_sessions": int(state.get("completed_focus_sessions", 0)),
+            "focus_sessions_in_cycle": focus_in_cycle,
+            "cycle_position": cycle_position,
+            "long_break_every": long_every,
+            "auto_start_breaks": bool(settings["auto_start_breaks"]),
+            "auto_start_focus": bool(settings["auto_start_focus"]),
+            "layout": str(settings.get("layout", "mode_time_task")),
+            "current_task": (settings.get("tasks") or [""])[0],
+            "task_count": len(settings.get("tasks") or []),
+        }
+
+    def get_pomodoro_state(self) -> dict:
+        with self._pomodoro_lock:
+            settings = self._pomodoro_settings()
+            self._ensure_pomodoro_state_locked(settings)
+            now = time.time()
+            self._sync_pomodoro_clock_locked(settings, now)
+            return self._pomodoro_public_state_locked(settings, now)
+
+    def pomodoro_action(self, action: str) -> dict:
+        action_key = str(action or "").strip().lower()
+        valid_actions = {"start", "pause", "toggle", "reset", "skip"}
+        if action_key not in valid_actions:
+            raise ValueError("Invalid action")
+
+        with self._pomodoro_lock:
+            settings = self._pomodoro_settings()
+            self._ensure_pomodoro_state_locked(settings)
+            now = time.time()
+            self._sync_pomodoro_clock_locked(settings, now)
+            state = self._pomodoro_state
+
+            if action_key == "toggle":
+                action_key = "pause" if bool(state.get("running", False)) else "start"
+
+            if action_key == "start":
+                if not bool(state.get("running", False)):
+                    remaining = max(0, int(state.get("remaining_seconds", 0)))
+                    if remaining <= 0:
+                        remaining = self._phase_duration_seconds(str(state.get("phase", "focus")), settings)
+                    state["running"] = True
+                    state["phase_end_ts"] = now + float(remaining)
+                    state["remaining_seconds"] = remaining
+            elif action_key == "pause":
+                if bool(state.get("running", False)):
+                    remaining = max(0, int(float(state.get("phase_end_ts", now)) - now + 0.999))
+                    state["running"] = False
+                    state["phase_end_ts"] = None
+                    state["remaining_seconds"] = remaining
+            elif action_key == "reset":
+                state["phase"] = "focus"
+                state["running"] = False
+                state["phase_end_ts"] = None
+                state["remaining_seconds"] = self._phase_duration_seconds("focus", settings)
+                state["completed_focus_sessions"] = 0
+                state["focus_sessions_in_cycle"] = 0
+            elif action_key == "skip":
+                auto_start, next_total = self._advance_pomodoro_phase_locked(state, settings)
+                if auto_start:
+                    state["running"] = True
+                    state["phase_end_ts"] = now + float(next_total)
+                    state["remaining_seconds"] = next_total
+                else:
+                    state["running"] = False
+                    state["phase_end_ts"] = None
+                    state["remaining_seconds"] = next_total
+
+            now = time.time()
+            self._sync_pomodoro_clock_locked(settings, now)
+            return self._pomodoro_public_state_locked(settings, now)
+
 
 _runtime_state = RuntimeState()
 
@@ -299,6 +522,14 @@ def set_ambient_scene(scene):
     _runtime_state.set_ambient_scene(scene)
 
 
+def get_pomodoro_state():
+    return _runtime_state.get_pomodoro_state()
+
+
+def pomodoro_action(action: str):
+    return _runtime_state.pomodoro_action(action)
+
+
 def _get_ip() -> str:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -340,6 +571,7 @@ def api_status():
     masked["display_mode"] = get_display_mode()
     masked["weather_preview"] = get_weather_preview()
     masked["ambient_scene"] = get_ambient_scene()
+    masked["pomodoro_state"] = get_pomodoro_state()
     masked["device_id"] = _get_device_id()
     masked["app_version"] = _get_app_version()
     masked["api_version"] = API_VERSION
@@ -465,6 +697,24 @@ def api_ambient_scene():
     set_ambient_scene(scene)
     config_manager.write_config({"AMBIENT_SCENE": scene or "auto"})
     return jsonify({"ok": True, "scene": scene})
+
+
+@app.route("/api/pomodoro/state")
+def api_pomodoro_state():
+    return jsonify({"ok": True, "state": get_pomodoro_state()})
+
+
+@app.route("/api/pomodoro/action", methods=["POST"])
+def api_pomodoro_action():
+    data = request.get_json(force=True) or {}
+    action = str(data.get("action", "") or "").strip().lower()
+    try:
+        state = pomodoro_action(action)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "state": state})
 
 
 @app.route("/api/wifi/scan")

@@ -14,6 +14,7 @@ from widgets.ambient import AmbientWidget
 from widgets.clock import ClockWidget
 from widgets.flight import FlightWidget
 from widgets.metro import MetroWidget
+from widgets.pomodoro import PomodoroWidget
 from widgets.sports import SportsWidget
 from widgets.stocks import StocksWidget
 from widgets.weather import WeatherWidget
@@ -124,6 +125,7 @@ class WidgetRegistry:
         self.ambient = AmbientWidget(width, height)
         self.sports = SportsWidget(width, height)
         self.stocks = StocksWidget(width, height)
+        self.pomodoro = PomodoroWidget(width, height)
         self.clock = ClockWidget(
             width,
             height,
@@ -141,6 +143,7 @@ class WidgetRegistry:
             "ambient": WidgetRenderer(self.ambient),
             "sports": WidgetRenderer(self.sports),
             "stocks": WidgetRenderer(self.stocks),
+            "pomodoro": WidgetRenderer(self.pomodoro),
             "clock": WidgetRenderer(self.clock),
         }
 
