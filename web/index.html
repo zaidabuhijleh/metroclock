@@ -576,6 +576,7 @@
       <select id="clock-widget-source">
         <option value="metro">Metro</option>
         <option value="weather">Weather</option>
+        <option value="pomodoro">Pomodoro</option>
         <option value="stocks">Stocks</option>
         <option value="sports">Sports</option>
         <option value="flight">Flight</option>
@@ -585,6 +586,7 @@
       <select id="clock-widget-source-secondary">
         <option value="metro">Metro</option>
         <option value="weather">Weather</option>
+        <option value="pomodoro">Pomodoro</option>
         <option value="stocks">Stocks</option>
         <option value="sports">Sports</option>
         <option value="flight">Flight</option>
@@ -1681,10 +1683,10 @@ async function init() {
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
     selectedClockWidgetPreset = normalizeClockWidgetPreset(data.CLOCK_WIDGET_PRESET, "auto");
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";
-    selectedClockWidgetSource = ["metro", "weather", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE)
+    selectedClockWidgetSource = ["metro", "weather", "pomodoro", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE)
       ? data.CLOCK_WIDGET_SOURCE
       : "weather";
-    selectedClockWidgetSourceSecondary = ["metro", "weather", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE_SECONDARY)
+    selectedClockWidgetSourceSecondary = ["metro", "weather", "pomodoro", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE_SECONDARY)
       ? data.CLOCK_WIDGET_SOURCE_SECONDARY
       : "stocks";
     selectedClockWidgetCount = Number(data.CLOCK_WIDGET_COUNT) >= 2 ? 2 : 1;

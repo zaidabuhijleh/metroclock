@@ -164,7 +164,7 @@ class ClockWidget(Widget):
         },
     }
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
-    WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient"}
+    WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient", "pomodoro"}
     SCROLL_MODE_OPTIONS = {"metro", "ticker"}
     MINI_SCROLLABLE_SOURCES = {"metro", "stocks", "sports", "flight"}
     CLOCK_WIDGET_PRESET_OPTIONS = (
@@ -205,6 +205,7 @@ class ClockWidget(Widget):
         self._stocks_mini_last_symbol = None
         self._stocks_mini_hold_key = None
         self._stocks_mini_hold_started = 0.0
+        self._pomodoro_state_cache = None
 
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
@@ -402,6 +403,12 @@ class ClockWidget(Widget):
                 updater=self._update_stocks_for_clock,
                 drawer=self._draw_stocks_pane,
             ),
+            "pomodoro": ClockWidgetPresenter(
+                source="pomodoro",
+                supported_slots={"horizontal", "vertical"},
+                updater=self._update_pomodoro_for_clock,
+                drawer=self._draw_pomodoro_pane,
+            ),
         }
 
     def _build_layout_presets(self):
@@ -496,6 +503,16 @@ class ClockWidget(Widget):
             scroll_mode=self._widget_scroll_mode_for_pane(pane),
         )
 
+    def _draw_pomodoro_pane(self, draw, pane: ClockWidgetPane):
+        self._draw_widget_pomodoro(
+            draw,
+            pane.bounds.x,
+            pane.bounds.y,
+            pane.bounds.width,
+            pane.bounds.height,
+            focused=pane.focused,
+        )
+
     def _update_stocks_for_clock(self):
         self.stocks.update()
         # Compact clock views depend on 1D data for price + delta display.
@@ -507,6 +524,13 @@ class ClockWidget(Widget):
                 self.stocks._fetch_chart(sym, "1D")
             except Exception:
                 pass
+
+    def _update_pomodoro_for_clock(self):
+        try:
+            self._pomodoro_state_cache = web_server.get_pomodoro_state()
+        except Exception:
+            # Keep rendering with the last known state when the API momentarily fails.
+            pass
 
     # --------------------------------------------------------------- state
 
@@ -1072,8 +1096,8 @@ class ClockWidget(Widget):
             return source
 
         fallback_order = {
-            "vertical": ("weather", "stocks", "sports"),
-            "horizontal": ("weather", "metro", "flight", "sports", "stocks"),
+            "vertical": ("weather", "pomodoro", "stocks", "sports"),
+            "horizontal": ("weather", "pomodoro", "metro", "flight", "sports", "stocks"),
         }
         for candidate in fallback_order.get(slot_key, ("weather",)):
             candidate_presenter = self._widget_presenters.get(candidate)
@@ -1362,6 +1386,223 @@ class ClockWidget(Widget):
         else:
             self._metro_mini_hold_key = None
             self._metro_mini_hold_started = 0.0
+
+    def _pomodoro_state_for_clock(self):
+        cached = self._pomodoro_state_cache
+        if isinstance(cached, dict):
+            return cached
+        try:
+            state = web_server.get_pomodoro_state() or {}
+        except Exception:
+            state = {}
+        self._pomodoro_state_cache = state
+        return state
+
+    def _pomodoro_phase_style(self, phase):
+        key = str(phase or "focus").strip().lower()
+        if key == "focus":
+            return {"label": "FOCUS", "color": self.COLOR_DOWN, "bg": self.COLOR_DOWN}
+        if key == "long_break":
+            return {"label": "LONG BREAK", "color": self.COLOR_UP, "bg": self.COLOR_UP}
+        return {"label": "BREAK", "color": self.COLOR_UP, "bg": self.COLOR_UP}
+
+    def _pomodoro_timer_text(self, remaining_seconds):
+        total = max(0, int(remaining_seconds or 0))
+        return f"{total // 60:02d}:{total % 60:02d}"
+
+    def _draw_timer_text(self, draw, timer_text, *, x, y, w, h, color, bg_color, font=None):
+        text = str(timer_text or "").strip()
+        if not text:
+            return
+
+        selected_font = font or self.font_tall
+        if ":" not in text:
+            fit = self._fit_text(text, max(1, w - 2), selected_font)
+            text_w = int(selected_font.getlength(fit))
+            font_h = 6 if selected_font is self.font_small else 10
+            y_off = max(0, (h - font_h) // 2)
+            draw.text((x + max(0, (w - text_w) // 2), y + y_off), fit, font=selected_font, fill=color)
+            return
+
+        mins, secs = text.split(":", 1)
+        mins = mins.strip()
+        secs = secs.strip()
+        if not mins or not secs:
+            fit = self._fit_text(text, max(1, w - 2), selected_font)
+            text_w = int(selected_font.getlength(fit))
+            font_h = 6 if selected_font is self.font_small else 10
+            y_off = max(0, (h - font_h) // 2)
+            draw.text((x + max(0, (w - text_w) // 2), y + y_off), fit, font=selected_font, fill=color)
+            return
+
+        mins_w = int(selected_font.getlength(mins))
+        secs_w = int(selected_font.getlength(secs))
+        strip_h = 10 if selected_font is self.font_tall else 6
+        strip_w = max(1, mins_w + 2 + secs_w)
+        if strip_w > max(1, w - 1) and selected_font is not self.font_small:
+            self._draw_timer_text(
+                draw,
+                text,
+                x=x,
+                y=y,
+                w=w,
+                h=h,
+                color=color,
+                bg_color=bg_color,
+                font=self.font_small,
+            )
+            return
+
+        strip = Image.new("RGB", (strip_w, strip_h), bg_color)
+        strip_draw = ImageDraw.Draw(strip)
+        cursor = 0
+        strip_draw.text((cursor, 0), mins, font=selected_font, fill=color)
+        cursor += mins_w + 1
+        if strip_h >= 10:
+            dot_top = 3
+            dot_bottom = 7
+        else:
+            dot_top = 2
+            dot_bottom = 4
+        strip_draw.point((cursor, dot_top), fill=color)
+        strip_draw.point((cursor, dot_bottom), fill=color)
+        cursor += 1
+        strip_draw.text((cursor, 0), secs, font=selected_font, fill=color)
+
+        paste_x = x + max(0, (w - strip.width) // 2)
+        paste_y = y + max(0, (h - strip.height) // 2)
+        self.canvas.paste(strip, (paste_x, paste_y))
+
+    def _wrap_text_lines(self, text, max_width, font, max_lines=2):
+        normalized = " ".join(str(text or "").strip().split())
+        if not normalized or max_width <= 0 or max_lines <= 0:
+            return []
+
+        words = normalized.split(" ")
+        lines = []
+        idx = 0
+        while idx < len(words) and len(lines) < int(max_lines):
+            token = words[idx]
+            idx += 1
+            if int(font.getlength(token)) > max_width:
+                lines.append(self._fit_text(token, max_width, font))
+                continue
+
+            line = token
+            while idx < len(words):
+                candidate = f"{line} {words[idx]}"
+                if int(font.getlength(candidate)) <= max_width:
+                    line = candidate
+                    idx += 1
+                    continue
+                break
+            lines.append(line)
+
+        if idx < len(words) and lines:
+            lines[-1] = self._fit_text(f"{lines[-1]} ...", max_width, font)
+        return [line for line in lines if line]
+
+    def _draw_widget_pomodoro(self, draw, x, y, w, h, focused=False):
+        if w <= 0 or h <= 0:
+            return
+
+        state = self._pomodoro_state_for_clock()
+        phase_style = self._pomodoro_phase_style(state.get("phase"))
+        phase_label = phase_style["label"]
+        phase_color = phase_style["color"]
+        phase_bg = phase_style["bg"]
+        running = bool(state.get("running", False))
+
+        if not focused:
+            draw.rectangle((x, y, x + w - 1, y + h - 1), fill=phase_bg)
+            if running:
+                timer_txt = self._pomodoro_timer_text(state.get("remaining_seconds", 0))
+                self._draw_timer_text(
+                    draw,
+                    timer_txt,
+                    x=x,
+                    y=y,
+                    w=w,
+                    h=h,
+                    color=self.COLOR_MAIN,
+                    bg_color=phase_bg,
+                    font=self.font_tall,
+                )
+            else:
+                paused = self._fit_text("PAUSED", max(1, w - 2), self.font_small)
+                paused_w = int(self.font_small.getlength(paused))
+                draw.text(
+                    (x + max(0, (w - paused_w) // 2), y + max(0, (h - 6) // 2)),
+                    paused,
+                    font=self.font_small,
+                    fill=self.COLOR_MAIN,
+                )
+            return
+
+        phase_fit = self._fit_text(phase_label, max(1, w - 2), self.font_small)
+        phase_w = int(self.font_small.getlength(phase_fit))
+        draw.text((x + max(0, (w - phase_w) // 2), y + 1), phase_fit, font=self.font_small, fill=phase_color)
+
+        layout = str(state.get("layout", "mode_time_task") or "mode_time_task").strip().lower()
+        show_task = layout != "mode_time"
+        timer_txt = self._pomodoro_timer_text(state.get("remaining_seconds", 0)) if running else "PAUSED"
+
+        if show_task:
+            timer_y = y + 8
+            timer_h = min(10, max(6, h - 14))
+        else:
+            timer_y = y + 9
+            timer_h = max(8, h - 12)
+
+        if running:
+            self._draw_timer_text(
+                draw,
+                timer_txt,
+                x=x,
+                y=timer_y,
+                w=w,
+                h=timer_h,
+                color=self.COLOR_MAIN,
+                bg_color=self.COLOR_BG,
+                font=self.font_tall,
+            )
+        else:
+            paused_font = self.font_small if show_task else self.font_tall
+            paused = self._fit_text(timer_txt, max(1, w - 2), paused_font)
+            paused_w = int(paused_font.getlength(paused))
+            paused_y = timer_y + (0 if paused_font is self.font_small else max(0, (timer_h - 10) // 2))
+            draw.text((x + max(0, (w - paused_w) // 2), paused_y), paused, font=paused_font, fill=self.COLOR_MAIN)
+
+        if not show_task:
+            return
+
+        task = str(state.get("current_task", "") or "").strip()
+        task_top = y + 18
+        task_h = max(6, y + h - task_top)
+        max_lines = 2 if task_h >= 12 else 1
+
+        if task:
+            task_lines = self._wrap_text_lines(task.upper(), max(1, w - 2), self.font_small, max_lines=max_lines)
+            task_color = self.COLOR_ACCENT
+        else:
+            task_lines = ["NO TASK"]
+            task_color = self.COLOR_DIM
+
+        if not task_lines:
+            return
+
+        line_h = 6
+        visible_lines = task_lines[: max(1, task_h // line_h)]
+        total_h = max(1, len(visible_lines) * line_h)
+        start_y = task_top + max(0, (task_h - total_h) // 2)
+        for idx, line in enumerate(visible_lines):
+            line_w = int(self.font_small.getlength(line))
+            draw.text(
+                (x + max(0, (w - line_w) // 2), start_y + idx * line_h),
+                line,
+                font=self.font_small,
+                fill=task_color,
+            )
 
     def _weather_data(self):
         preview = web_server.get_weather_preview()
