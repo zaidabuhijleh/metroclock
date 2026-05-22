@@ -53,6 +53,47 @@ class PomodoroWidget(Widget):
         seconds = total % 60
         return f"{minutes:02d}:{seconds:02d}"
 
+    def _timer_strip_image(self, timer_text, color):
+        text = str(timer_text or "")
+        if ":" not in text:
+            return None
+        mins, secs = text.split(":", 1)
+        mins = mins.strip()
+        secs = secs.strip()
+        if not mins or not secs:
+            return None
+
+        mins_w = int(self.font_tall.getlength(mins))
+        secs_w = int(self.font_tall.getlength(secs))
+        gap_left = 0
+        gap_right = 1
+        strip_h = 10
+        strip_w = max(1, mins_w + gap_left + 1 + gap_right + secs_w)
+        strip = Image.new("RGB", (strip_w, strip_h), self.COLOR_BG)
+        d = ImageDraw.Draw(strip)
+
+        x = 0
+        d.text((x, 0), mins, font=self.font_tall, fill=color)
+        x += mins_w + gap_left
+        d.point((x, 3), fill=color)
+        d.point((x, 7), fill=color)
+        x += 1 + gap_right
+        d.text((x, 0), secs, font=self.font_tall, fill=color)
+        return strip
+
+    def _draw_timer(self, draw, timer_text, y, color, scale=1):
+        strip = self._timer_strip_image(timer_text, color)
+        if strip is None:
+            tw = int(self.font_tall.getlength(str(timer_text or "")))
+            draw.text((max(0, (self.width - tw) // 2), y), str(timer_text or ""), font=self.font_tall, fill=color)
+            return
+
+        target = strip
+        if int(scale) > 1:
+            target = strip.resize((strip.width * int(scale), strip.height * int(scale)), Image.NEAREST)
+        x = max(0, (self.width - target.width) // 2)
+        self.canvas.paste(target, (x, y))
+
     def draw(self):
         self.canvas = Image.new("RGB", (self.width, self.height), self.COLOR_BG)
         draw = ImageDraw.Draw(self.canvas)
@@ -72,10 +113,16 @@ class PomodoroWidget(Widget):
         draw.text(((self.width - phase_w) // 2, 1), phase_txt, font=self.font_small, fill=phase_color)
 
         if layout == "mode_time":
-            draw.text(((self.width - display_w) // 2, 12), display_txt, font=self.font_tall, fill=self.COLOR_TEXT)
+            if running:
+                self._draw_timer(draw, display_txt, y=9, color=self.COLOR_TEXT, scale=2)
+            else:
+                draw.text(((self.width - display_w) // 2, 12), display_txt, font=self.font_tall, fill=self.COLOR_TEXT)
             return self.canvas
 
-        draw.text(((self.width - display_w) // 2, 9), display_txt, font=self.font_tall, fill=self.COLOR_TEXT)
+        if running:
+            self._draw_timer(draw, display_txt, y=9, color=self.COLOR_TEXT, scale=1)
+        else:
+            draw.text(((self.width - display_w) // 2, 9), display_txt, font=self.font_tall, fill=self.COLOR_TEXT)
 
         task = str(state.get("current_task", "") or "").strip()
         if task:
