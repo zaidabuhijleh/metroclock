@@ -101,6 +101,10 @@ CLOCK_WIDGET_SOURCE = "weather"
 CLOCK_WIDGET_COUNT = 1
 # Secondary widget used when CLOCK_WIDGET_COUNT=2.
 CLOCK_WIDGET_SOURCE_SECONDARY = "stocks"
+# Mini-widget text motion style.
+# "metro"  -> single-pass scroll with hold (like metro destination rows)
+# "ticker" -> continuous wrap-around ticker scroll
+CLOCK_WIDGET_SCROLL_MODE = "metro"
 # 24-hour vs 12-hour clock display.
 CLOCK_USE_24H = False
 
@@ -163,6 +167,7 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_WIDGET_SOURCE",
     "CLOCK_WIDGET_COUNT",
     "CLOCK_WIDGET_SOURCE_SECONDARY",
+    "CLOCK_WIDGET_SCROLL_MODE",
     "CLOCK_USE_24H",
 }
 

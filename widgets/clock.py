@@ -1,5 +1,4 @@
 import importlib
-import math
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -74,6 +73,33 @@ class ClockScreenLayout:
     widget_panes: tuple[ClockWidgetPane, ...]
 
 
+class ClockNormalizedGrid:
+    """Maps normalized unit coordinates onto pixel bounds."""
+
+    def __init__(self, pixel_width: int, pixel_height: int, unit_width: int, unit_height: int):
+        self.pixel_width = max(1, int(pixel_width))
+        self.pixel_height = max(1, int(pixel_height))
+        self.unit_width = max(1, int(unit_width))
+        self.unit_height = max(1, int(unit_height))
+
+    def bounds(self, x_units: int, y_units: int, w_units: int, h_units: int) -> ClockPaneBounds:
+        x0 = self._x_boundary(x_units)
+        y0 = self._y_boundary(y_units)
+        x1 = self._x_boundary(x_units + w_units)
+        y1 = self._y_boundary(y_units + h_units)
+        x1 = max(x0 + 1, min(self.pixel_width, x1))
+        y1 = max(y0 + 1, min(self.pixel_height, y1))
+        return ClockPaneBounds(x=x0, y=y0, width=x1 - x0, height=y1 - y0)
+
+    def _x_boundary(self, unit_x: int) -> int:
+        ratio = float(unit_x) / float(self.unit_width)
+        return max(0, min(self.pixel_width, int(round(ratio * self.pixel_width))))
+
+    def _y_boundary(self, unit_y: int) -> int:
+        ratio = float(unit_y) / float(self.unit_height)
+        return max(0, min(self.pixel_height, int(round(ratio * self.pixel_height))))
+
+
 class ClockWidgetPresenter:
     """Object wrapper for a clock-embedded widget source."""
 
@@ -125,14 +151,9 @@ class ClockWidget(Widget):
     }
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient"}
-    MINI_WIDGET_MIN_FRACTION = {
-        "metro": 0.50,
-        "stocks": 0.50,
-        "weather": 0.33,
-        "flight": 0.33,
-        "sports": 0.40,
-        "ambient": 0.33,
-    }
+    SCROLL_MODE_OPTIONS = {"metro", "ticker"}
+    CLOCK_WIDGET_GRID_WIDTH = 6
+    CLOCK_WIDGET_GRID_HEIGHT = 3
 
     def __init__(self, width, height, metro_widget, weather_widget, flight_widget, sports_widget, stocks_widget):
         super().__init__(width, height)
@@ -243,6 +264,34 @@ class ClockWidget(Widget):
 
     def _use_24h(self):
         return bool(getattr(config, "CLOCK_USE_24H", False))
+
+    def _widget_scroll_mode(self):
+        mode = str(getattr(config, "CLOCK_WIDGET_SCROLL_MODE", "metro") or "metro").strip().lower()
+        return mode if mode in self.SCROLL_MODE_OPTIONS else "metro"
+
+    def _normalized_clock_grid(self):
+        return ClockNormalizedGrid(
+            pixel_width=self.width,
+            pixel_height=self.height,
+            unit_width=self.CLOCK_WIDGET_GRID_WIDTH,
+            unit_height=self.CLOCK_WIDGET_GRID_HEIGHT,
+        )
+
+    def _mini_scroll_args(self, *, default_align="left"):
+        mode = self._widget_scroll_mode()
+        if mode == "ticker":
+            return {
+                "always_scroll": True,
+                "wrap": True,
+                "restart_on_end": True,
+                "align": default_align,
+            }
+        return {
+            "always_scroll": False,
+            "wrap": False,
+            "restart_on_end": False,
+            "align": default_align,
+        }
 
     def _build_widget_presenters(self):
         return {
@@ -430,24 +479,26 @@ class ClockWidget(Widget):
                 )
             )
         else:
-            clock_h = max(1, min(self.height - 1, int(round(self.height * 2 / 3))))
-            widget_h = self.height - clock_h
+            grid = self._normalized_clock_grid()
+            clock_bounds = grid.bounds(0, 0, self.CLOCK_WIDGET_GRID_WIDTH, 2)
             clock_faces.append(
                 ClockFacePane(
-                    bounds=ClockPaneBounds(0, 0, self.width, clock_h),
+                    bounds=clock_bounds,
                     variant="horizontal",
                 )
             )
 
-            if widget_count == 2 and self.width >= 16:
+            if widget_count == 2:
                 source_a = self._resolve_supported_source(primary_req, "horizontal")
                 source_b = self._resolve_supported_source(secondary_req, "horizontal")
-                left_w, right_w = self._two_widget_widths(self.width, source_a, source_b)
+                half_width = self.CLOCK_WIDGET_GRID_WIDTH // 2
+                left_bounds = grid.bounds(0, 2, half_width, 1)
+                right_bounds = grid.bounds(half_width, 2, self.CLOCK_WIDGET_GRID_WIDTH - half_width, 1)
                 widget_panes.append(
                     ClockWidgetPane(
                         source=source_a,
                         slot="horizontal",
-                        bounds=ClockPaneBounds(0, clock_h, left_w, max(1, widget_h)),
+                        bounds=left_bounds,
                         render_mode="compact",
                     )
                 )
@@ -455,7 +506,7 @@ class ClockWidget(Widget):
                     ClockWidgetPane(
                         source=source_b,
                         slot="horizontal",
-                        bounds=ClockPaneBounds(left_w, clock_h, max(1, right_w), max(1, widget_h)),
+                        bounds=right_bounds,
                         render_mode="compact",
                     )
                 )
@@ -465,7 +516,7 @@ class ClockWidget(Widget):
                     ClockWidgetPane(
                         source=source,
                         slot="horizontal",
-                        bounds=ClockPaneBounds(0, clock_h, self.width, max(1, widget_h)),
+                        bounds=grid.bounds(0, 2, self.CLOCK_WIDGET_GRID_WIDTH, 1),
                         render_mode="compact",
                     )
                 )
@@ -819,50 +870,6 @@ class ClockWidget(Widget):
                 return candidate
         return "weather"
 
-    def _mini_widget_min_fraction(self, source):
-        key = str(source or "").strip().lower()
-        raw = self.MINI_WIDGET_MIN_FRACTION.get(key, 0.33)
-        try:
-            value = float(raw)
-        except Exception:
-            value = 0.33
-        return max(0.2, min(0.8, value))
-
-    def _two_widget_widths(self, total_w, source_a, source_b):
-        if total_w <= 2:
-            left_w = max(1, total_w // 2)
-            return left_w, max(1, total_w - left_w)
-
-        frac_a = self._mini_widget_min_fraction(source_a)
-        frac_b = self._mini_widget_min_fraction(source_b)
-
-        min_a = max(1, int(math.ceil(total_w * frac_a)))
-        min_b = max(1, int(math.ceil(total_w * frac_b)))
-
-        if min_a + min_b > total_w:
-            # If both minimums cannot fit, keep relative intent and normalize.
-            total_min = float(min_a + min_b)
-            left_w = int(round(total_w * (min_a / total_min)))
-            left_w = max(1, min(total_w - 1, left_w))
-            return left_w, total_w - left_w
-
-        left_w = min_a
-        right_w = min_b
-        remaining = total_w - left_w - right_w
-        if remaining <= 0:
-            return left_w, right_w
-
-        # Give spare room to whichever widget benefits more from width.
-        if frac_a > frac_b:
-            left_w += remaining
-        elif frac_b > frac_a:
-            right_w += remaining
-        else:
-            left_w += remaining // 2
-            right_w += remaining - (remaining // 2)
-
-        return left_w, right_w
-
     def _draw_widget_region(self, draw, x, y, w, h, source, focused=False):
         pane = ClockWidgetPane(
             source=str(source or "").strip().lower(),
@@ -1007,6 +1014,28 @@ class ClockWidget(Widget):
             draw.text((x + 1, y + max(0, (h - 6) // 2)), "NO TRAINS", font=self.font_small, fill=self.COLOR_DIM)
             return
 
+        if self._widget_scroll_mode() == "ticker":
+            ticker_parts = []
+            for row in trains:
+                line = str(row.get("Line", "--")).upper()
+                mins = str(row.get("Min", "--"))
+                mins_label = f"{mins}M" if mins.isdigit() else mins
+                dest = str(row.get("Destination", "Train") or "Train").upper()
+                ticker_parts.append(f"{line} {dest} {mins_label}".strip())
+            ticker = "   ".join(ticker_parts)
+            self._draw_scrolling_text_clipped(
+                x,
+                y,
+                w,
+                h,
+                ticker,
+                self.COLOR_MAIN,
+                key=f"metro-mini:ticker:{ticker}",
+                speed=float(getattr(self.metro, "scroll_speed", 20)),
+                **self._mini_scroll_args(default_align="left"),
+            )
+            return
+
         row = trains[self._metro_idx % len(trains)]
         line = str(row.get("Line", "--")).upper()
         mins = str(row.get("Min", "--"))
@@ -1038,10 +1067,7 @@ class ClockWidget(Widget):
             self.COLOR_MAIN,
             key=scroll_key,
             speed=scroll_speed,
-            always_scroll=False,
-            wrap=False,
-            restart_on_end=False,
-            align="left",
+            **self._mini_scroll_args(default_align="left"),
         )
         if not scroll_state.get("scrolling"):
             # If row text fits, still rotate through trains on a timer.
@@ -1183,6 +1209,32 @@ class ClockWidget(Widget):
             return
 
         # Horizontal split stock ticker (mini).
+        scroll_mode = self._widget_scroll_mode()
+        if scroll_mode == "metro":
+            symbol = symbols[self._stock_idx % len(symbols)]
+            data = self._stock_data(symbol, "1D")
+            if not data or data.get("last_price") is None:
+                draw.text((x + 1, y + max(0, (h - 6) // 2)), "STOCKS LOADING", font=self.font_small, fill=self.COLOR_DIM)
+                return
+
+            last = data.get("last_price")
+            prev = data.get("prev_close")
+            price = self.stocks._fmt_price(last) if hasattr(self.stocks, "_fmt_price") else str(last)
+            pct = self.stocks._fmt_pct(last, prev, signed=False) if hasattr(self.stocks, "_fmt_pct") else "--%"
+            text = f"{symbol} {price} {pct}"
+            self._draw_scrolling_text_clipped(
+                x,
+                y,
+                w,
+                h,
+                text,
+                self.COLOR_MAIN,
+                key=f"stocks-mini:metro:{symbol}:{text}",
+                speed=18.0,
+                **self._mini_scroll_args(default_align="left"),
+            )
+            return
+
         parts = []
         for sym in symbols:
             data = self._stock_data(sym, "1D")
@@ -1199,7 +1251,17 @@ class ClockWidget(Widget):
             return
 
         ticker = "   ".join(parts)
-        self._draw_scrolling_text_clipped(x, y, w, h, ticker, self.COLOR_UP, key=f"stocks:{ticker}", speed=18.0)
+        self._draw_scrolling_text_clipped(
+            x,
+            y,
+            w,
+            h,
+            ticker,
+            self.COLOR_UP,
+            key=f"stocks:ticker:{ticker}",
+            speed=18.0,
+            **self._mini_scroll_args(default_align="left"),
+        )
 
     def _draw_widget_flight(self, draw, x, y, w, h):
         data = getattr(self.flight, "data", None)
@@ -1211,7 +1273,17 @@ class ClockWidget(Widget):
         flight_no = str((data.get("flight") or {}).get("iata") or getattr(config, "FLIGHT_NUMBER", "FLIGHT")).upper()
         status = str(data.get("flight_status", "") or "").upper()
         text = f"{flight_no} {status}"
-        self._draw_scrolling_text_clipped(x, y, w, h, text, self.COLOR_MAIN, key=f"flight:{text}", speed=14.0)
+        self._draw_scrolling_text_clipped(
+            x,
+            y,
+            w,
+            h,
+            text,
+            self.COLOR_MAIN,
+            key=f"flight-mini:{text}",
+            speed=14.0,
+            **self._mini_scroll_args(default_align="left"),
+        )
 
     def _draw_widget_sports(self, draw, x, y, w, h, focused=False):
         games = getattr(self.sports, "games", []) or []
@@ -1260,6 +1332,27 @@ class ClockWidget(Widget):
             draw_team_row(home, away, "home", home_y)
             return
 
+        if self._widget_scroll_mode() == "ticker":
+            ticker_parts = []
+            for row in games:
+                away_team = str((row.get("away") or {}).get("abbr", "AWY")).upper()
+                home_team = str((row.get("home") or {}).get("abbr", "HME")).upper()
+                row_status = self.sports._status_text(row) if hasattr(self.sports, "_status_text") else ""
+                ticker_parts.append(f"{away_team} v. {home_team} {row_status}".strip())
+            ticker = "   ".join(ticker_parts)
+            self._draw_scrolling_text_clipped(
+                x,
+                y,
+                w,
+                h,
+                ticker,
+                self.COLOR_MAIN,
+                key=f"sports-mini:ticker:{ticker}",
+                speed=20.0,
+                **self._mini_scroll_args(default_align="left"),
+            )
+            return
+
         away_abbr = str(away.get("abbr", "AWY")).upper()
         home_abbr = str(home.get("abbr", "HME")).upper()
         status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else ""
@@ -1277,10 +1370,7 @@ class ClockWidget(Widget):
             self.COLOR_MAIN,
             key=scroll_key,
             speed=20.0,
-            always_scroll=False,
-            wrap=False,
-            restart_on_end=False,
-            align="left",
+            **self._mini_scroll_args(default_align="left"),
         )
         if not scroll_state.get("scrolling"):
             # If the line fits without scrolling, still rotate games on a timer.

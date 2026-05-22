@@ -15,6 +15,7 @@ API_VERSION = "1.0"
 
 CLOCK_FONT_STYLE_OPTIONS = ("matrix",)
 CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
+CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 
 WRITE_ENDPOINTS = {
     "/api/settings",
@@ -363,6 +364,11 @@ def api_clock_styles():
                 "show_date": True,
                 "show_ampm": True,
             },
+        },
+        "clock_widget_scroll_mode": {
+            "key": "CLOCK_WIDGET_SCROLL_MODE",
+            "default": "metro",
+            "options": list(CLOCK_WIDGET_SCROLL_MODE_OPTIONS),
         },
         "clock_color_overrides": {
             "format": "#RRGGBB",
