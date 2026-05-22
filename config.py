@@ -95,6 +95,13 @@ CLOCK_SHOW_AMPM = True
 # "horizontal" -> clock top 2/3, widget bottom 1/3
 # "vertical"   -> clock left 2/3, widget right 1/3
 CLOCK_WIDGET_LAYOUT = "horizontal"
+# Layout preset for clock+widget mode.
+# "auto"                -> infer from CLOCK_WIDGET_LAYOUT + CLOCK_WIDGET_COUNT
+# "horizontal_single"   -> top 6x2 clock + bottom 6x1 widget
+# "horizontal_split"    -> top 6x2 clock + two bottom mini widgets
+# "vertical_focus"      -> left 3x3 clock + right 3x3 focus widget
+# "vertical_split_focus"-> left 3x2 clock + left-bottom mini + right focus widget
+CLOCK_WIDGET_PRESET = "auto"
 # Widget shown in clock+widget mode.
 CLOCK_WIDGET_SOURCE = "weather"
 # 1 = clock + one widget pane, 2 = clock + two widget panes
@@ -167,6 +174,7 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_SHOW_DATE",
     "CLOCK_SHOW_AMPM",
     "CLOCK_WIDGET_LAYOUT",
+    "CLOCK_WIDGET_PRESET",
     "CLOCK_WIDGET_SOURCE",
     "CLOCK_WIDGET_COUNT",
     "CLOCK_WIDGET_SOURCE_SECONDARY",

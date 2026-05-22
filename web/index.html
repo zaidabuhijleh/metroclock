@@ -544,6 +544,16 @@
         <option value="off">Off</option>
       </select>
 
+      <label>Clock+Widget Preset</label>
+      <select id="clock-widget-preset">
+        <option value="auto">Auto (Use Layout + Widget Count)</option>
+        <option value="horizontal_single">Top Clock + Bottom Widget</option>
+        <option value="horizontal_split">Top Clock + Split Bottom Widgets</option>
+        <option value="vertical_focus">Left Clock + Right Focus Widget</option>
+        <option value="vertical_split_focus">Left Clock Stack + Right Focus Widget</option>
+      </select>
+      <p class="hint">Auto follows layout + widget count controls below. Explicit presets lock them.</p>
+
       <label>Clock+Widget Layout</label>
       <select id="clock-widget-layout">
         <option value="horizontal">Top 2/3 Clock + Bottom 1/3 Widget</option>
@@ -1086,6 +1096,7 @@ let selectedMetroTransition = "slide";
 let selectedClockFontStyle = "matrix";
 let selectedClockSize = 1.0;
 let selectedClockSizeBeforeWidget = 1.0;
+let selectedClockWidgetPreset = "auto";
 let selectedClockLayout = "horizontal";
 let selectedClockWidgetSource = "weather";
 let selectedClockWidgetSourceSecondary = "stocks";
@@ -1097,6 +1108,7 @@ let selectedClockShowDate = true;
 let selectedClockShowAmpm = true;
 let currentDisplayMode = "clock";
 const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
+const CLOCK_WIDGET_PRESET_OPTIONS = ["auto", "horizontal_single", "horizontal_split", "vertical_focus", "vertical_split_focus"];
 const CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ["metro", "ticker"];
 const CLOCK_SCROLLABLE_WIDGET_SOURCES = new Set(["metro", "stocks", "sports", "flight"]);
 
@@ -1118,6 +1130,32 @@ function normalizeClockSize(value) {
 function normalizeClockWidgetScrollMode(value, fallback = "metro") {
   const raw = String(value || fallback).trim().toLowerCase();
   return CLOCK_WIDGET_SCROLL_MODE_OPTIONS.includes(raw) ? raw : fallback;
+}
+
+function normalizeClockWidgetPreset(value, fallback = "auto") {
+  const raw = String(value || fallback).trim().toLowerCase();
+  return CLOCK_WIDGET_PRESET_OPTIONS.includes(raw) ? raw : fallback;
+}
+
+function applyClockPresetToLayoutControls(preset) {
+  const layoutEl = document.getElementById("clock-widget-layout");
+  const countEl = document.getElementById("clock-widget-count");
+  if (!layoutEl || !countEl) return;
+
+  const key = normalizeClockWidgetPreset(preset, "auto");
+  if (key === "horizontal_single") {
+    layoutEl.value = "horizontal";
+    countEl.value = "1";
+  } else if (key === "horizontal_split") {
+    layoutEl.value = "horizontal";
+    countEl.value = "2";
+  } else if (key === "vertical_focus") {
+    layoutEl.value = "vertical";
+    countEl.value = "1";
+  } else if (key === "vertical_split_focus") {
+    layoutEl.value = "vertical";
+    countEl.value = "2";
+  }
 }
 
 function widgetSourceSupportsScroll(source) {
@@ -1144,16 +1182,29 @@ function updateClockSizeControl(mode) {
 }
 
 function refreshClockWidgetControls() {
+  const presetEl = document.getElementById("clock-widget-preset");
+  const layoutEl = document.getElementById("clock-widget-layout");
   const countEl = document.getElementById("clock-widget-count");
   const sourceEl = document.getElementById("clock-widget-source");
   const sourceSecondaryEl = document.getElementById("clock-widget-source-secondary");
   const primaryWrap = document.getElementById("clock-widget-scroll-primary-wrap");
   const secondaryWrap = document.getElementById("clock-widget-scroll-secondary-wrap");
 
-  if (!countEl || !sourceEl || !sourceSecondaryEl || !primaryWrap || !secondaryWrap) {
+  if (!presetEl || !layoutEl || !countEl || !sourceEl || !sourceSecondaryEl || !primaryWrap || !secondaryWrap) {
     return;
   }
 
+  selectedClockWidgetPreset = normalizeClockWidgetPreset(presetEl.value, "auto");
+  if (selectedClockWidgetPreset !== "auto") {
+    applyClockPresetToLayoutControls(selectedClockWidgetPreset);
+    layoutEl.disabled = true;
+    countEl.disabled = true;
+  } else {
+    layoutEl.disabled = false;
+    countEl.disabled = false;
+  }
+
+  selectedClockLayout = layoutEl.value === "vertical" ? "vertical" : "horizontal";
   selectedClockWidgetCount = Number(countEl.value) >= 2 ? 2 : 1;
   selectedClockWidgetSource = sourceEl.value;
   selectedClockWidgetSourceSecondary = sourceSecondaryEl.value;
@@ -1321,7 +1372,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
-["clock-widget-count", "clock-widget-source", "clock-widget-source-secondary"].forEach((id) => {
+["clock-widget-preset", "clock-widget-layout", "clock-widget-count", "clock-widget-source", "clock-widget-source-secondary"].forEach((id) => {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener("change", refreshClockWidgetControls);
@@ -1357,6 +1408,7 @@ async function init() {
       ? data.CLOCK_FONT_STYLE
       : "matrix";
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
+    selectedClockWidgetPreset = normalizeClockWidgetPreset(data.CLOCK_WIDGET_PRESET, "auto");
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";
     selectedClockWidgetSource = ["metro", "weather", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE)
       ? data.CLOCK_WIDGET_SOURCE
@@ -1384,6 +1436,7 @@ async function init() {
     document.getElementById("clock-color-accent-2").value = data.CLOCK_COLOR_ACCENT_2 || "";
     document.getElementById("clock-color-dim").value = data.CLOCK_COLOR_DIM || "";
     document.getElementById("clock-color-bg").value = data.CLOCK_COLOR_BG || "";
+    document.getElementById("clock-widget-preset").value = selectedClockWidgetPreset;
     document.getElementById("clock-widget-layout").value = selectedClockLayout;
     document.getElementById("clock-widget-count").value = String(selectedClockWidgetCount);
     document.getElementById("clock-widget-source").value = selectedClockWidgetSource;
@@ -1865,6 +1918,13 @@ async function saveSettings(payload) {
 
 async function saveClock() {
   selectedClockFontStyle = document.getElementById("clock-font-style").value;
+  selectedClockWidgetPreset = normalizeClockWidgetPreset(
+    document.getElementById("clock-widget-preset").value,
+    "auto"
+  );
+  if (selectedClockWidgetPreset !== "auto") {
+    applyClockPresetToLayoutControls(selectedClockWidgetPreset);
+  }
   const lockClockSize = currentDisplayMode === "clock_widget";
   selectedClockSize = lockClockSize
     ? 0.5
@@ -1903,6 +1963,7 @@ async function saveClock() {
     CLOCK_COLOR_ACCENT_2: clockColorAccent2,
     CLOCK_COLOR_DIM: clockColorDim,
     CLOCK_COLOR_BG: clockColorBg,
+    CLOCK_WIDGET_PRESET: selectedClockWidgetPreset,
     CLOCK_WIDGET_LAYOUT: selectedClockLayout,
     CLOCK_WIDGET_COUNT: selectedClockWidgetCount,
     CLOCK_WIDGET_SOURCE: selectedClockWidgetSource,
