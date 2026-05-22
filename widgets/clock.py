@@ -42,6 +42,57 @@ class ClockTheme:
     dim: tuple[int, int, int]
 
 
+@dataclass(frozen=True)
+class ClockPaneBounds:
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class ClockFacePane:
+    bounds: ClockPaneBounds
+    variant: str
+
+
+@dataclass(frozen=True)
+class ClockWidgetPane:
+    source: str
+    slot: str
+    bounds: ClockPaneBounds
+    render_mode: str
+
+    @property
+    def focused(self) -> bool:
+        return self.render_mode == "focused"
+
+
+@dataclass(frozen=True)
+class ClockScreenLayout:
+    clock_faces: tuple[ClockFacePane, ...]
+    widget_panes: tuple[ClockWidgetPane, ...]
+
+
+class ClockWidgetPresenter:
+    """Object wrapper for a clock-embedded widget source."""
+
+    def __init__(self, source: str, supported_slots, updater, drawer):
+        self.source = source
+        self._supported_slots = set(supported_slots)
+        self._updater = updater
+        self._drawer = drawer
+
+    def supports_slot(self, slot: str) -> bool:
+        return str(slot or "").strip().lower() in self._supported_slots
+
+    def update(self):
+        self._updater()
+
+    def draw(self, draw, pane: ClockWidgetPane):
+        self._drawer(draw, pane)
+
+
 class ClockWidget(Widget):
     """Home clock with optional compact widget pane."""
 
@@ -113,6 +164,8 @@ class ClockWidget(Widget):
             self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
         except Exception:
             self.font_small = ImageFont.load_default()
+
+        self._widget_presenters = self._build_widget_presenters()
 
     # --------------------------------------------------------------- config
 
@@ -191,6 +244,88 @@ class ClockWidget(Widget):
     def _use_24h(self):
         return bool(getattr(config, "CLOCK_USE_24H", False))
 
+    def _build_widget_presenters(self):
+        return {
+            "metro": ClockWidgetPresenter(
+                source="metro",
+                supported_slots={"horizontal"},
+                updater=self.metro.update,
+                drawer=self._draw_metro_pane,
+            ),
+            "weather": ClockWidgetPresenter(
+                source="weather",
+                supported_slots={"horizontal", "vertical"},
+                updater=self.weather.update,
+                drawer=self._draw_weather_pane,
+            ),
+            "flight": ClockWidgetPresenter(
+                source="flight",
+                supported_slots={"horizontal"},
+                updater=self.flight.update,
+                drawer=self._draw_flight_pane,
+            ),
+            "sports": ClockWidgetPresenter(
+                source="sports",
+                supported_slots={"horizontal", "vertical"},
+                updater=self.sports.update,
+                drawer=self._draw_sports_pane,
+            ),
+            "stocks": ClockWidgetPresenter(
+                source="stocks",
+                supported_slots={"horizontal", "vertical"},
+                updater=self._update_stocks_for_clock,
+                drawer=self._draw_stocks_pane,
+            ),
+        }
+
+    def _draw_metro_pane(self, draw, pane: ClockWidgetPane):
+        self._draw_widget_metro(draw, pane.bounds.x, pane.bounds.y, pane.bounds.width, pane.bounds.height)
+
+    def _draw_weather_pane(self, draw, pane: ClockWidgetPane):
+        self._draw_widget_weather(
+            draw,
+            pane.bounds.x,
+            pane.bounds.y,
+            pane.bounds.width,
+            pane.bounds.height,
+            focused=pane.focused,
+        )
+
+    def _draw_flight_pane(self, draw, pane: ClockWidgetPane):
+        self._draw_widget_flight(draw, pane.bounds.x, pane.bounds.y, pane.bounds.width, pane.bounds.height)
+
+    def _draw_sports_pane(self, draw, pane: ClockWidgetPane):
+        self._draw_widget_sports(
+            draw,
+            pane.bounds.x,
+            pane.bounds.y,
+            pane.bounds.width,
+            pane.bounds.height,
+            focused=pane.focused,
+        )
+
+    def _draw_stocks_pane(self, draw, pane: ClockWidgetPane):
+        self._draw_widget_stocks(
+            draw,
+            pane.bounds.x,
+            pane.bounds.y,
+            pane.bounds.width,
+            pane.bounds.height,
+            focused=pane.focused,
+        )
+
+    def _update_stocks_for_clock(self):
+        self.stocks.update()
+        # Compact clock views depend on 1D data for price + delta display.
+        for sym in self._stock_symbols():
+            key = (sym, "1D")
+            if key in getattr(self.stocks, "cache", {}):
+                continue
+            try:
+                self.stocks._fetch_chart(sym, "1D")
+            except Exception:
+                pass
+
     # --------------------------------------------------------------- state
 
     def update(self):
@@ -200,42 +335,14 @@ class ClockWidget(Widget):
             return
 
         now = time.time()
-        layout = self._layout()
-        widget_count = self._widget_count()
-        primary_req = self._widget_source()
-        secondary_req = self._widget_source_secondary()
+        screen_layout = self._build_clock_screen_layout()
+        sources_to_update = {pane.source for pane in screen_layout.widget_panes}
 
-        sources_to_update = set()
-        if layout == "vertical":
-            # Focused side pane.
-            sources_to_update.add(self._resolve_supported_source(primary_req, "vertical"))
-            # Optional secondary horizontal strip in two-widget mode.
-            if widget_count == 2:
-                sources_to_update.add(self._resolve_supported_source(secondary_req, "horizontal"))
-        else:
-            sources_to_update.add(self._resolve_supported_source(primary_req, "horizontal"))
-            if widget_count == 2:
-                sources_to_update.add(self._resolve_supported_source(secondary_req, "horizontal"))
-
-        if "metro" in sources_to_update:
-            self.metro.update()
-        if "weather" in sources_to_update:
-            self.weather.update()
-        if "flight" in sources_to_update:
-            self.flight.update()
-        if "sports" in sources_to_update:
-            self.sports.update()
-        if "stocks" in sources_to_update:
-            self.stocks.update()
-            # Compact clock views depend on 1D data for price + delta display.
-            for sym in self._stock_symbols():
-                key = (sym, "1D")
-                if key in getattr(self.stocks, "cache", {}):
-                    continue
-                try:
-                    self.stocks._fetch_chart(sym, "1D")
-                except Exception:
-                    pass
+        for source in sources_to_update:
+            presenter = self._widget_presenters.get(source)
+            if presenter is None:
+                continue
+            presenter.update()
 
         if now - self._last_widget_rotate >= self._widget_rotate_seconds:
             symbols = self._stock_symbols()
@@ -257,92 +364,113 @@ class ClockWidget(Widget):
             self.canvas.paste(face, (0, 0))
             return self.canvas
 
+        screen_layout = self._build_clock_screen_layout()
+        for clock_face in screen_layout.clock_faces:
+            face = self._render_clock_face(
+                clock_face.bounds.width,
+                clock_face.bounds.height,
+                clock_face.variant,
+                theme,
+            )
+            self.canvas.paste(face, (clock_face.bounds.x, clock_face.bounds.y))
+
+        for pane in screen_layout.widget_panes:
+            self._draw_widget_pane(draw, pane)
+
+        return self.canvas
+
+    def _build_clock_screen_layout(self) -> ClockScreenLayout:
         layout = self._layout()
         widget_count = self._widget_count()
         primary_req = self._widget_source()
         secondary_req = self._widget_source_secondary()
 
+        clock_faces = []
+        widget_panes = []
+
         if layout == "vertical":
-            # Wider side pane than before for clearer focused widget rendering.
             side_w = int(round(self.width * 0.5))
             left_w = self.width - side_w
             side_source = self._resolve_supported_source(primary_req, "vertical")
 
             if widget_count == 2 and left_w >= 12 and self.height >= 12:
-                # Left area becomes clock (top) + horizontal mini-widget (bottom).
                 split_ratio = 2 / 3
                 left_clock_h = max(1, min(self.height - 1, int(round(self.height * split_ratio))))
                 left_bottom_h = self.height - left_clock_h
-
-                face = self._render_clock_face(left_w, left_clock_h, "vertical_split_top", theme)
-                self.canvas.paste(face, (0, 0))
-
                 bottom_source = self._resolve_supported_source(secondary_req, "horizontal")
-                self._draw_widget_region(
-                    draw,
-                    0,
-                    left_clock_h,
-                    left_w,
-                    max(1, left_bottom_h),
-                    bottom_source,
-                    focused=False,
+
+                clock_faces.append(
+                    ClockFacePane(
+                        bounds=ClockPaneBounds(0, 0, left_w, left_clock_h),
+                        variant="vertical_split_top",
+                    )
+                )
+                widget_panes.append(
+                    ClockWidgetPane(
+                        source=bottom_source,
+                        slot="horizontal",
+                        bounds=ClockPaneBounds(0, left_clock_h, left_w, max(1, left_bottom_h)),
+                        render_mode="compact",
+                    )
                 )
             else:
-                face = self._render_clock_face(left_w, self.height, "vertical_focus", theme)
-                self.canvas.paste(face, (0, 0))
+                clock_faces.append(
+                    ClockFacePane(
+                        bounds=ClockPaneBounds(0, 0, left_w, self.height),
+                        variant="vertical_focus",
+                    )
+                )
 
-            self._draw_widget_region(
-                draw,
-                left_w,
-                0,
-                max(1, side_w),
-                self.height,
-                side_source,
-                focused=True,
+            widget_panes.append(
+                ClockWidgetPane(
+                    source=side_source,
+                    slot="vertical",
+                    bounds=ClockPaneBounds(left_w, 0, max(1, side_w), self.height),
+                    render_mode="focused",
+                )
             )
         else:
             clock_h = max(1, min(self.height - 1, int(round(self.height * 2 / 3))))
             widget_h = self.height - clock_h
-
-            face = self._render_clock_face(self.width, clock_h, "horizontal", theme)
-            self.canvas.paste(face, (0, 0))
+            clock_faces.append(
+                ClockFacePane(
+                    bounds=ClockPaneBounds(0, 0, self.width, clock_h),
+                    variant="horizontal",
+                )
+            )
 
             if widget_count == 2 and self.width >= 16:
                 source_a = self._resolve_supported_source(primary_req, "horizontal")
                 source_b = self._resolve_supported_source(secondary_req, "horizontal")
                 left_w, right_w = self._two_widget_widths(self.width, source_a, source_b)
-
-                self._draw_widget_region(
-                    draw,
-                    0,
-                    clock_h,
-                    left_w,
-                    max(1, widget_h),
-                    source_a,
-                    focused=False,
+                widget_panes.append(
+                    ClockWidgetPane(
+                        source=source_a,
+                        slot="horizontal",
+                        bounds=ClockPaneBounds(0, clock_h, left_w, max(1, widget_h)),
+                        render_mode="compact",
+                    )
                 )
-                self._draw_widget_region(
-                    draw,
-                    left_w,
-                    clock_h,
-                    max(1, right_w),
-                    max(1, widget_h),
-                    source_b,
-                    focused=False,
+                widget_panes.append(
+                    ClockWidgetPane(
+                        source=source_b,
+                        slot="horizontal",
+                        bounds=ClockPaneBounds(left_w, clock_h, max(1, right_w), max(1, widget_h)),
+                        render_mode="compact",
+                    )
                 )
             else:
                 source = self._resolve_supported_source(primary_req, "horizontal")
-                self._draw_widget_region(
-                    draw,
-                    0,
-                    clock_h,
-                    self.width,
-                    max(1, widget_h),
-                    source,
-                    focused=False,
+                widget_panes.append(
+                    ClockWidgetPane(
+                        source=source,
+                        slot="horizontal",
+                        bounds=ClockPaneBounds(0, clock_h, self.width, max(1, widget_h)),
+                        render_mode="compact",
+                    )
                 )
 
-        return self.canvas
+        return ClockScreenLayout(clock_faces=tuple(clock_faces), widget_panes=tuple(widget_panes))
 
     # --------------------------------------------------------------- clock faces
 
@@ -674,15 +802,22 @@ class ClockWidget(Widget):
         source = str(requested or "").strip().lower()
         if source not in self.WIDGET_SOURCES:
             source = "weather"
+        presenter = self._widget_presenters.get(source)
+        slot_key = str(slot or "").strip().lower()
+        if presenter is not None and presenter.supports_slot(slot_key):
+            return source
 
-        if slot == "vertical":
-            # Focused side pane: weather + stocks + sports.
-            return source if source in {"stocks", "weather", "sports"} else "weather"
-
-        # Horizontal mini pane: support all except ambient.
-        if source == "ambient":
-            return "weather"
-        return source
+        fallback_order = {
+            "vertical": ("weather", "stocks", "sports"),
+            "horizontal": ("weather", "metro", "flight", "sports", "stocks"),
+        }
+        for candidate in fallback_order.get(slot_key, ("weather",)):
+            candidate_presenter = self._widget_presenters.get(candidate)
+            if candidate_presenter is None:
+                continue
+            if candidate_presenter.supports_slot(slot_key):
+                return candidate
+        return "weather"
 
     def _mini_widget_min_fraction(self, source):
         key = str(source or "").strip().lower()
@@ -729,31 +864,39 @@ class ClockWidget(Widget):
         return left_w, right_w
 
     def _draw_widget_region(self, draw, x, y, w, h, source, focused=False):
-        if w <= 0 or h <= 0:
+        pane = ClockWidgetPane(
+            source=str(source or "").strip().lower(),
+            slot="vertical" if focused else "horizontal",
+            bounds=ClockPaneBounds(x, y, w, h),
+            render_mode="focused" if focused else "compact",
+        )
+        self._draw_widget_pane(draw, pane)
+
+    def _draw_widget_pane(self, draw, pane: ClockWidgetPane):
+        if pane.bounds.width <= 0 or pane.bounds.height <= 0:
+            return
+
+        presenter = self._widget_presenters.get(pane.source)
+        if presenter is None:
+            txt = self._fit_text(pane.source.upper(), max(0, pane.bounds.width - 2), self.font_small)
+            draw.text(
+                (pane.bounds.x + 1, pane.bounds.y + max(0, (pane.bounds.height - 6) // 2)),
+                txt,
+                font=self.font_small,
+                fill=self.COLOR_DIM,
+            )
             return
 
         try:
-            if source == "metro":
-                self._draw_widget_metro(draw, x, y, w, h)
-                return
-            if source == "weather":
-                self._draw_widget_weather(draw, x, y, w, h, focused=focused)
-                return
-            if source == "stocks":
-                self._draw_widget_stocks(draw, x, y, w, h, focused=focused)
-                return
-            if source == "flight":
-                self._draw_widget_flight(draw, x, y, w, h)
-                return
-            if source == "sports":
-                self._draw_widget_sports(draw, x, y, w, h, focused=focused)
-                return
-
-            txt = self._fit_text(source.upper(), max(0, w - 2), self.font_small)
-            draw.text((x + 1, y + max(0, (h - 6) // 2)), txt, font=self.font_small, fill=self.COLOR_DIM)
+            presenter.draw(draw, pane)
         except Exception:
-            fallback = self._fit_text("WIDGET ERR", max(0, w - 2), self.font_small)
-            draw.text((x + 1, y + max(0, (h - 6) // 2)), fallback, font=self.font_small, fill=self.COLOR_DOWN)
+            fallback = self._fit_text("WIDGET ERR", max(0, pane.bounds.width - 2), self.font_small)
+            draw.text(
+                (pane.bounds.x + 1, pane.bounds.y + max(0, (pane.bounds.height - 6) // 2)),
+                fallback,
+                font=self.font_small,
+                fill=self.COLOR_DOWN,
+            )
 
     def _current_metro_station_label(self):
         system = str(getattr(config, "METRO_SYSTEM", "wmata") or "wmata").strip().lower()
