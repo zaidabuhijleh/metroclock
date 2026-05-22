@@ -465,7 +465,8 @@ class ClockWidget(Widget):
         if self._show_date() and metrics["bottom_band"] > 0:
             dw = int(self.font_small.getlength(date_text))
             date_y = h - metrics["bottom_band"] + max(0, (metrics["bottom_band"] - 6) // 2)
-            date_y = min(h - 6, date_y + 2)
+            # Allow a true 1px downward nudge; previous clamp could pin to same row.
+            date_y = min(h - 5, date_y + 3)
             draw.text((max(0, (w - dw) // 2), date_y), date_text, font=self.font_small, fill=theme.accent)
 
         if self._show_ampm() and ampm and not self._use_24h() and metrics["top_band"] > 0:
