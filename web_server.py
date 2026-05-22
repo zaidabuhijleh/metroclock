@@ -366,9 +366,14 @@ def api_clock_styles():
             },
         },
         "clock_widget_scroll_mode": {
-            "key": "CLOCK_WIDGET_SCROLL_MODE",
+            "keys": {
+                "primary": "CLOCK_WIDGET_SCROLL_MODE_PRIMARY",
+                "secondary": "CLOCK_WIDGET_SCROLL_MODE_SECONDARY",
+                "legacy": "CLOCK_WIDGET_SCROLL_MODE",
+            },
             "default": "metro",
             "options": list(CLOCK_WIDGET_SCROLL_MODE_OPTIONS),
+            "scroll_widget_sources": ["metro", "stocks", "sports", "flight"],
         },
         "clock_color_overrides": {
             "format": "#RRGGBB",

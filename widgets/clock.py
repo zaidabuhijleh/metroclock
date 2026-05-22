@@ -61,6 +61,7 @@ class ClockWidgetPane:
     slot: str
     bounds: ClockPaneBounds
     render_mode: str
+    scroll_mode_key: str = "primary"
 
     @property
     def focused(self) -> bool:
@@ -152,6 +153,7 @@ class ClockWidget(Widget):
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"metro", "weather", "flight", "sports", "stocks", "ambient"}
     SCROLL_MODE_OPTIONS = {"metro", "ticker"}
+    MINI_SCROLLABLE_SOURCES = {"metro", "stocks", "sports", "flight"}
     CLOCK_WIDGET_GRID_WIDTH = 6
     CLOCK_WIDGET_GRID_HEIGHT = 3
 
@@ -265,9 +267,26 @@ class ClockWidget(Widget):
     def _use_24h(self):
         return bool(getattr(config, "CLOCK_USE_24H", False))
 
-    def _widget_scroll_mode(self):
-        mode = str(getattr(config, "CLOCK_WIDGET_SCROLL_MODE", "metro") or "metro").strip().lower()
-        return mode if mode in self.SCROLL_MODE_OPTIONS else "metro"
+    def _normalize_scroll_mode(self, mode, fallback="metro"):
+        value = str(mode or fallback).strip().lower()
+        return value if value in self.SCROLL_MODE_OPTIONS else fallback
+
+    def _widget_scroll_mode_for_key(self, key="primary"):
+        legacy = getattr(config, "CLOCK_WIDGET_SCROLL_MODE", "metro")
+        primary = self._normalize_scroll_mode(
+            getattr(config, "CLOCK_WIDGET_SCROLL_MODE_PRIMARY", legacy),
+            fallback=self._normalize_scroll_mode(legacy, fallback="metro"),
+        )
+        if str(key or "primary").strip().lower() == "secondary":
+            secondary = getattr(config, "CLOCK_WIDGET_SCROLL_MODE_SECONDARY", primary)
+            return self._normalize_scroll_mode(secondary, fallback=primary)
+        return primary
+
+    def _widget_scroll_mode_for_pane(self, pane: ClockWidgetPane):
+        source = str(getattr(pane, "source", "") or "").strip().lower()
+        if source not in self.MINI_SCROLLABLE_SOURCES:
+            return "metro"
+        return self._widget_scroll_mode_for_key(getattr(pane, "scroll_mode_key", "primary"))
 
     def _normalized_clock_grid(self):
         return ClockNormalizedGrid(
@@ -277,8 +296,8 @@ class ClockWidget(Widget):
             unit_height=self.CLOCK_WIDGET_GRID_HEIGHT,
         )
 
-    def _mini_scroll_args(self, *, default_align="left"):
-        mode = self._widget_scroll_mode()
+    def _mini_scroll_args(self, scroll_mode="metro", *, default_align="left"):
+        mode = self._normalize_scroll_mode(scroll_mode, fallback="metro")
         if mode == "ticker":
             return {
                 "always_scroll": True,
@@ -328,7 +347,14 @@ class ClockWidget(Widget):
         }
 
     def _draw_metro_pane(self, draw, pane: ClockWidgetPane):
-        self._draw_widget_metro(draw, pane.bounds.x, pane.bounds.y, pane.bounds.width, pane.bounds.height)
+        self._draw_widget_metro(
+            draw,
+            pane.bounds.x,
+            pane.bounds.y,
+            pane.bounds.width,
+            pane.bounds.height,
+            scroll_mode=self._widget_scroll_mode_for_pane(pane),
+        )
 
     def _draw_weather_pane(self, draw, pane: ClockWidgetPane):
         self._draw_widget_weather(
@@ -341,7 +367,14 @@ class ClockWidget(Widget):
         )
 
     def _draw_flight_pane(self, draw, pane: ClockWidgetPane):
-        self._draw_widget_flight(draw, pane.bounds.x, pane.bounds.y, pane.bounds.width, pane.bounds.height)
+        self._draw_widget_flight(
+            draw,
+            pane.bounds.x,
+            pane.bounds.y,
+            pane.bounds.width,
+            pane.bounds.height,
+            scroll_mode=self._widget_scroll_mode_for_pane(pane),
+        )
 
     def _draw_sports_pane(self, draw, pane: ClockWidgetPane):
         self._draw_widget_sports(
@@ -351,6 +384,7 @@ class ClockWidget(Widget):
             pane.bounds.width,
             pane.bounds.height,
             focused=pane.focused,
+            scroll_mode=self._widget_scroll_mode_for_pane(pane),
         )
 
     def _draw_stocks_pane(self, draw, pane: ClockWidgetPane):
@@ -361,6 +395,7 @@ class ClockWidget(Widget):
             pane.bounds.width,
             pane.bounds.height,
             focused=pane.focused,
+            scroll_mode=self._widget_scroll_mode_for_pane(pane),
         )
 
     def _update_stocks_for_clock(self):
@@ -460,6 +495,7 @@ class ClockWidget(Widget):
                         slot="horizontal",
                         bounds=ClockPaneBounds(0, left_clock_h, left_w, max(1, left_bottom_h)),
                         render_mode="compact",
+                        scroll_mode_key="secondary",
                     )
                 )
             else:
@@ -476,6 +512,7 @@ class ClockWidget(Widget):
                     slot="vertical",
                     bounds=ClockPaneBounds(left_w, 0, max(1, side_w), self.height),
                     render_mode="focused",
+                    scroll_mode_key="primary",
                 )
             )
         else:
@@ -500,6 +537,7 @@ class ClockWidget(Widget):
                         slot="horizontal",
                         bounds=left_bounds,
                         render_mode="compact",
+                        scroll_mode_key="primary",
                     )
                 )
                 widget_panes.append(
@@ -508,6 +546,7 @@ class ClockWidget(Widget):
                         slot="horizontal",
                         bounds=right_bounds,
                         render_mode="compact",
+                        scroll_mode_key="secondary",
                     )
                 )
             else:
@@ -518,6 +557,7 @@ class ClockWidget(Widget):
                         slot="horizontal",
                         bounds=grid.bounds(0, 2, self.CLOCK_WIDGET_GRID_WIDTH, 1),
                         render_mode="compact",
+                        scroll_mode_key="primary",
                     )
                 )
 
@@ -876,6 +916,7 @@ class ClockWidget(Widget):
             slot="vertical" if focused else "horizontal",
             bounds=ClockPaneBounds(x, y, w, h),
             render_mode="focused" if focused else "compact",
+            scroll_mode_key="primary",
         )
         self._draw_widget_pane(draw, pane)
 
@@ -1008,13 +1049,14 @@ class ClockWidget(Widget):
         self.canvas.paste(region, (x, y))
         return state
 
-    def _draw_widget_metro(self, draw, x, y, w, h):
+    def _draw_widget_metro(self, draw, x, y, w, h, scroll_mode="metro"):
         trains = getattr(self.metro, "trains", []) or []
         if not trains:
             draw.text((x + 1, y + max(0, (h - 6) // 2)), "NO TRAINS", font=self.font_small, fill=self.COLOR_DIM)
             return
 
-        if self._widget_scroll_mode() == "ticker":
+        mode = self._normalize_scroll_mode(scroll_mode, fallback="metro")
+        if mode == "ticker":
             ticker_parts = []
             for row in trains:
                 line = str(row.get("Line", "--")).upper()
@@ -1032,7 +1074,7 @@ class ClockWidget(Widget):
                 self.COLOR_MAIN,
                 key=f"metro-mini:ticker:{ticker}",
                 speed=float(getattr(self.metro, "scroll_speed", 20)),
-                **self._mini_scroll_args(default_align="left"),
+                **self._mini_scroll_args(mode, default_align="left"),
             )
             return
 
@@ -1067,7 +1109,7 @@ class ClockWidget(Widget):
             self.COLOR_MAIN,
             key=scroll_key,
             speed=scroll_speed,
-            **self._mini_scroll_args(default_align="left"),
+            **self._mini_scroll_args(mode, default_align="left"),
         )
         if not scroll_state.get("scrolling"):
             # If row text fits, still rotate through trains on a timer.
@@ -1181,7 +1223,7 @@ class ClockWidget(Widget):
                 return data
         return None
 
-    def _draw_widget_stocks(self, draw, x, y, w, h, focused=False):
+    def _draw_widget_stocks(self, draw, x, y, w, h, focused=False, scroll_mode="metro"):
         symbols = self._stock_symbols()
         if not symbols:
             draw.text((x + 1, y + max(0, (h - 6) // 2)), "NO STOCKS", font=self.font_small, fill=self.COLOR_DIM)
@@ -1209,8 +1251,8 @@ class ClockWidget(Widget):
             return
 
         # Horizontal split stock ticker (mini).
-        scroll_mode = self._widget_scroll_mode()
-        if scroll_mode == "metro":
+        mode = self._normalize_scroll_mode(scroll_mode, fallback="metro")
+        if mode == "metro":
             symbol = symbols[self._stock_idx % len(symbols)]
             data = self._stock_data(symbol, "1D")
             if not data or data.get("last_price") is None:
@@ -1231,7 +1273,7 @@ class ClockWidget(Widget):
                 self.COLOR_MAIN,
                 key=f"stocks-mini:metro:{symbol}:{text}",
                 speed=18.0,
-                **self._mini_scroll_args(default_align="left"),
+                **self._mini_scroll_args(mode, default_align="left"),
             )
             return
 
@@ -1260,10 +1302,10 @@ class ClockWidget(Widget):
             self.COLOR_UP,
             key=f"stocks:ticker:{ticker}",
             speed=18.0,
-            **self._mini_scroll_args(default_align="left"),
+            **self._mini_scroll_args(mode, default_align="left"),
         )
 
-    def _draw_widget_flight(self, draw, x, y, w, h):
+    def _draw_widget_flight(self, draw, x, y, w, h, scroll_mode="metro"):
         data = getattr(self.flight, "data", None)
         if not data:
             txt = str(getattr(self.flight, "status_text", "FLIGHT")).upper()
@@ -1282,10 +1324,10 @@ class ClockWidget(Widget):
             self.COLOR_MAIN,
             key=f"flight-mini:{text}",
             speed=14.0,
-            **self._mini_scroll_args(default_align="left"),
+            **self._mini_scroll_args(scroll_mode, default_align="left"),
         )
 
-    def _draw_widget_sports(self, draw, x, y, w, h, focused=False):
+    def _draw_widget_sports(self, draw, x, y, w, h, focused=False, scroll_mode="metro"):
         games = getattr(self.sports, "games", []) or []
         if not games:
             draw.text((x + 1, y + max(0, (h - 6) // 2)), "NO GAMES", font=self.font_small, fill=self.COLOR_DIM)
@@ -1332,7 +1374,8 @@ class ClockWidget(Widget):
             draw_team_row(home, away, "home", home_y)
             return
 
-        if self._widget_scroll_mode() == "ticker":
+        mode = self._normalize_scroll_mode(scroll_mode, fallback="metro")
+        if mode == "ticker":
             ticker_parts = []
             for row in games:
                 away_team = str((row.get("away") or {}).get("abbr", "AWY")).upper()
@@ -1349,7 +1392,7 @@ class ClockWidget(Widget):
                 self.COLOR_MAIN,
                 key=f"sports-mini:ticker:{ticker}",
                 speed=20.0,
-                **self._mini_scroll_args(default_align="left"),
+                **self._mini_scroll_args(mode, default_align="left"),
             )
             return
 
@@ -1370,7 +1413,7 @@ class ClockWidget(Widget):
             self.COLOR_MAIN,
             key=scroll_key,
             speed=20.0,
-            **self._mini_scroll_args(default_align="left"),
+            **self._mini_scroll_args(mode, default_align="left"),
         )
         if not scroll_state.get("scrolling"):
             # If the line fits without scrolling, still rotate games on a timer.
