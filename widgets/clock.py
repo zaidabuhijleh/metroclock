@@ -156,6 +156,7 @@ class ClockWidget(Widget):
     MINI_SCROLLABLE_SOURCES = {"metro", "stocks", "sports", "flight"}
     CLOCK_WIDGET_GRID_WIDTH = 6
     CLOCK_WIDGET_GRID_HEIGHT = 3
+    WEATHER_MINI_WIDTH_UNITS = 2.0
 
     def __init__(self, width, height, metro_widget, weather_widget, flight_widget, sports_widget, stocks_widget):
         super().__init__(width, height)
@@ -178,6 +179,9 @@ class ClockWidget(Widget):
         self._metro_mini_hold_started = 0.0
         self._sports_mini_hold_key = None
         self._sports_mini_hold_started = 0.0
+        self._stocks_mini_last_symbol = None
+        self._stocks_mini_hold_key = None
+        self._stocks_mini_hold_started = 0.0
 
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
@@ -295,6 +299,19 @@ class ClockWidget(Widget):
             unit_width=self.CLOCK_WIDGET_GRID_WIDTH,
             unit_height=self.CLOCK_WIDGET_GRID_HEIGHT,
         )
+
+    def _bottom_split_units(self, source_a: str, source_b: str):
+        total = float(self.CLOCK_WIDGET_GRID_WIDTH)
+        weather_units = max(1.0, min(total - 1.0, float(self.WEATHER_MINI_WIDTH_UNITS)))
+        src_a = str(source_a or "").strip().lower()
+        src_b = str(source_b or "").strip().lower()
+
+        if src_a == "weather" and src_b != "weather":
+            return weather_units, total - weather_units
+        if src_b == "weather" and src_a != "weather":
+            return total - weather_units, weather_units
+        # Equal split when neither or both sides are weather.
+        return total / 2.0, total / 2.0
 
     def _mini_scroll_args(self, scroll_mode="metro", *, default_align="left"):
         mode = self._normalize_scroll_mode(scroll_mode, fallback="metro")
@@ -528,9 +545,9 @@ class ClockWidget(Widget):
             if widget_count == 2:
                 source_a = self._resolve_supported_source(primary_req, "horizontal")
                 source_b = self._resolve_supported_source(secondary_req, "horizontal")
-                half_width = self.CLOCK_WIDGET_GRID_WIDTH // 2
-                left_bounds = grid.bounds(0, 2, half_width, 1)
-                right_bounds = grid.bounds(half_width, 2, self.CLOCK_WIDGET_GRID_WIDTH - half_width, 1)
+                left_units, right_units = self._bottom_split_units(source_a, source_b)
+                left_bounds = grid.bounds(0.0, 2.0, left_units, 1.0)
+                right_bounds = grid.bounds(left_units, 2.0, right_units, 1.0)
                 widget_panes.append(
                     ClockWidgetPane(
                         source=source_a,
@@ -982,6 +999,7 @@ class ClockWidget(Widget):
         wrap=True,
         restart_on_end=True,
         align="center",
+        force_scroll_pixels=0.0,
     ):
         state = {"at_end": False, "scrolling": False}
         if w <= 1 or h <= 1:
@@ -995,9 +1013,13 @@ class ClockWidget(Widget):
         rd = ImageDraw.Draw(region)
         text_w = int(self.font_small.getlength(txt))
         y_text = max(0, (h - 6) // 2)
+        try:
+            forced = max(0.0, float(force_scroll_pixels))
+        except Exception:
+            forced = 0.0
 
         visible_w = max(1, w - 2)
-        if not always_scroll and text_w <= visible_w:
+        if not always_scroll and text_w <= visible_w and forced <= 0.0:
             if align == "left":
                 text_x = 1
             elif align == "right":
@@ -1028,6 +1050,8 @@ class ClockWidget(Widget):
             offset = (offset + step) % cycle
         else:
             max_offset = max(0.0, float(text_w - visible_w))
+            if forced > 0.0:
+                max_offset = max(max_offset, forced)
             offset = offset + step
             if offset > max_offset:
                 state["at_end"] = True
@@ -1049,6 +1073,51 @@ class ClockWidget(Widget):
         self.canvas.paste(region, (x, y))
         return state
 
+    def _draw_scrolling_colored_ticker(self, x, y, w, h, parts, key, speed=16.0):
+        if w <= 1 or h <= 1:
+            return
+        rendered_parts = []
+        for text, color in parts or []:
+            txt = str(text or "").strip()
+            if not txt:
+                continue
+            rendered_parts.append((txt, color))
+        if not rendered_parts:
+            return
+
+        gap = 8
+        strip_w = gap
+        for txt, _color in rendered_parts:
+            strip_w += int(self.font_small.getlength(txt)) + gap
+        strip_w = max(strip_w, 1)
+
+        strip = Image.new("RGB", (strip_w, h), self.COLOR_BG)
+        sd = ImageDraw.Draw(strip)
+        cx = gap // 2
+        text_y = max(0, (h - 6) // 2)
+        for txt, color in rendered_parts:
+            sd.text((cx, text_y), txt, font=self.font_small, fill=color)
+            cx += int(self.font_small.getlength(txt)) + gap
+
+        now = time.time()
+        last_ts = self._scroll_last_ts.get(key, now)
+        dt = now - last_ts
+        self._scroll_last_ts[key] = now
+        if dt < 0 or dt > 0.6:
+            dt = 0.05
+
+        step = min(max(0.0, dt * speed), 1.0)
+        cycle = strip_w + gap
+        offset = self._scroll_offsets.get(key, 0.0)
+        offset = (offset + step) % cycle
+        self._scroll_offsets[key] = offset
+
+        region = Image.new("RGB", (w, h), self.COLOR_BG)
+        start_x = w - int(offset)
+        region.paste(strip, (start_x, 0))
+        region.paste(strip, (start_x - cycle, 0))
+        self.canvas.paste(region, (x, y))
+
     def _draw_widget_metro(self, draw, x, y, w, h, scroll_mode="metro"):
         trains = getattr(self.metro, "trains", []) or []
         if not trains:
@@ -1063,18 +1132,17 @@ class ClockWidget(Widget):
                 mins = str(row.get("Min", "--"))
                 mins_label = f"{mins}M" if mins.isdigit() else mins
                 dest = str(row.get("Destination", "Train") or "Train").upper()
-                ticker_parts.append(f"{line} {dest} {mins_label}".strip())
-            ticker = "   ".join(ticker_parts)
-            self._draw_scrolling_text_clipped(
+                line_color = self.metro._line_color(line) if hasattr(self.metro, "_line_color") else self.COLOR_ACCENT
+                ticker_parts.append((f"{line} {dest} {mins_label}".strip(), line_color))
+            ticker_key = " | ".join(part[0] for part in ticker_parts)
+            self._draw_scrolling_colored_ticker(
                 x,
                 y,
                 w,
                 h,
-                ticker,
-                self.COLOR_MAIN,
-                key=f"metro-mini:ticker:{ticker}",
+                ticker_parts,
+                key=f"metro-mini:ticker:{ticker_key}",
                 speed=float(getattr(self.metro, "scroll_speed", 20)),
-                **self._mini_scroll_args(mode, default_align="left"),
             )
             return
 
@@ -1261,20 +1329,47 @@ class ClockWidget(Widget):
 
             last = data.get("last_price")
             prev = data.get("prev_close")
+            change = self.stocks._change(last, prev) if hasattr(self.stocks, "_change") else 0.0
             price = self.stocks._fmt_price(last) if hasattr(self.stocks, "_fmt_price") else str(last)
             pct = self.stocks._fmt_pct(last, prev, signed=False) if hasattr(self.stocks, "_fmt_pct") else "--%"
             text = f"{symbol} {price} {pct}"
-            self._draw_scrolling_text_clipped(
+            color = self.COLOR_UP if change >= 0 else self.COLOR_DOWN
+            scroll_key = f"stocks-mini:metro:{symbol}"
+            if self._stocks_mini_last_symbol != symbol:
+                self._stocks_mini_last_symbol = symbol
+                self._scroll_offsets[scroll_key] = 0.0
+                self._scroll_last_ts[scroll_key] = time.time()
+
+            scroll_args = self._mini_scroll_args(mode, default_align="left")
+            scroll_args["force_scroll_pixels"] = max(12.0, float(w) * 0.35)
+            scroll_state = self._draw_scrolling_text_clipped(
                 x,
                 y,
                 w,
                 h,
                 text,
-                self.COLOR_MAIN,
-                key=f"stocks-mini:metro:{symbol}:{text}",
+                color,
+                key=scroll_key,
                 speed=18.0,
-                **self._mini_scroll_args(mode, default_align="left"),
+                **scroll_args,
             )
+
+            if scroll_state.get("at_end"):
+                now = time.time()
+                if self._stocks_mini_hold_key != scroll_key:
+                    self._stocks_mini_hold_key = scroll_key
+                    self._stocks_mini_hold_started = now
+                elif now - self._stocks_mini_hold_started >= 1.0:
+                    if len(symbols) > 1:
+                        self._stock_idx = (self._stock_idx + 1) % len(symbols)
+                        self._last_widget_rotate = now
+                    self._scroll_offsets[scroll_key] = 0.0
+                    self._stocks_mini_last_symbol = None
+                    self._stocks_mini_hold_key = None
+                    self._stocks_mini_hold_started = 0.0
+            else:
+                self._stocks_mini_hold_key = None
+                self._stocks_mini_hold_started = 0.0
             return
 
         parts = []
@@ -1284,25 +1379,25 @@ class ClockWidget(Widget):
                 continue
             last = data.get("last_price")
             prev = data.get("prev_close")
+            change = self.stocks._change(last, prev) if hasattr(self.stocks, "_change") else 0.0
             price = self.stocks._fmt_price(last) if hasattr(self.stocks, "_fmt_price") else str(last)
             pct = self.stocks._fmt_pct(last, prev, signed=False) if hasattr(self.stocks, "_fmt_pct") else "--%"
-            parts.append(f"{sym} {price} {pct}")
+            color = self.COLOR_UP if change >= 0 else self.COLOR_DOWN
+            parts.append((f"{sym} {price} {pct}", color))
 
         if not parts:
             draw.text((x + 1, y + max(0, (h - 6) // 2)), "STOCKS LOADING", font=self.font_small, fill=self.COLOR_DIM)
             return
 
-        ticker = "   ".join(parts)
-        self._draw_scrolling_text_clipped(
+        ticker_key = " | ".join(text for text, _color in parts)
+        self._draw_scrolling_colored_ticker(
             x,
             y,
             w,
             h,
-            ticker,
-            self.COLOR_UP,
-            key=f"stocks:ticker:{ticker}",
+            parts,
+            key=f"stocks:ticker:{ticker_key}",
             speed=18.0,
-            **self._mini_scroll_args(mode, default_align="left"),
         )
 
     def _draw_widget_flight(self, draw, x, y, w, h, scroll_mode="metro"):
