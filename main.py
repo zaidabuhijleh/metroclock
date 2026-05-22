@@ -21,6 +21,7 @@ def _pwm_bits_for_mode(mode: str) -> int:
         "stocks": 5,
         "clock": 5,
         "clock_widget": 5,
+        "clock_segment_test": 5,
     }
     fallback = getattr(config, "MATRIX_PWM_BITS", 3)
     value = getattr(config, f"MATRIX_PWM_BITS_{mode.upper()}", defaults.get(mode, fallback))
@@ -96,6 +97,9 @@ def main():
                 elif mode == "clock_widget":
                     clock.update()
                     img = clock.draw()
+                elif mode == "clock_segment_test":
+                    clock.update()
+                    img = clock.draw_segment_test()
                 else:
                     clock.update()
                     img = clock.draw()

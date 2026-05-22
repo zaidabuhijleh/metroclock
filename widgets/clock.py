@@ -25,6 +25,13 @@ SEGMENT_MAP = {
     "9": {"a", "b", "c", "d", "f", "g"},
 }
 
+# Segment-style readability overrides for low-resolution LED panels.
+# Keeps the watch-face aesthetic while making ambiguous digits easier to parse.
+SEGMENT_MAP_SEGMENT_STYLE = {
+    # Add a base foot to "1" so it separates visually from "7".
+    "1": {"b", "c", "d"},
+}
+
 
 @dataclass
 class ClockTheme:
@@ -561,6 +568,8 @@ class ClockWidget(Widget):
         base_thickness = max(1, int(round(min(dw, dh) * profile["thickness_ratio"])))
         rects, thickness = self._segment_rects_for_digit(x, y, dw, dh, base_thickness, digit)
         segs = SEGMENT_MAP.get(digit, set())
+        if style == "segment":
+            segs = SEGMENT_MAP_SEGMENT_STYLE.get(digit, segs)
         draw_unlit = profile["draw_unlit"]
 
         for seg, rect in rects.items():
@@ -586,7 +595,9 @@ class ClockWidget(Widget):
         now, hour, ampm = self._time_parts()
         digits = f"{hour:02d}{now.minute:02d}"
         metrics = self._clock_layout_metrics(w, h, variant)
-        off = tuple(max(0, c // 4) for c in theme.dim)
+        # Reduce inactive segment glow in segment mode to improve contrast.
+        off_divisor = 6 if style == "segment" else 4
+        off = tuple(max(0, c // off_divisor) for c in theme.dim)
         date_text = now.strftime("%a %b %d").upper() if style == "matrix" else now.strftime("%a %m/%d").upper()
 
         for digit_index, ch in enumerate(digits):
@@ -615,6 +626,46 @@ class ClockWidget(Widget):
 
     def _draw_face_digital_segment(self, draw, w, h, variant, theme):
         self._draw_face_digital_common(draw, w, h, variant, theme, "segment")
+
+    def draw_segment_test(self):
+        """Render readability test: cycle 01..24 and display as NN:NN."""
+        theme = self._clock_theme()
+        self.canvas = Image.new("RGB", (self.width, self.height), theme.bg)
+        draw = ImageDraw.Draw(self.canvas)
+
+        test_value = (int(time.time()) % 24) + 1
+        digits = f"{test_value:02d}{test_value:02d}"
+        metrics = self._clock_layout_metrics(self.width, self.height, "full")
+        off = tuple(max(0, c // 6) for c in theme.dim)
+
+        for digit_index, ch in enumerate(digits):
+            x = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
+            if digit_index >= 2:
+                x += metrics["colon_w"] + metrics["spacing"]
+            self._draw_segment_digit(
+                draw,
+                x,
+                metrics["y0"],
+                metrics["digit_w"],
+                metrics["digit_h"],
+                ch,
+                theme.primary,
+                off,
+                "segment",
+            )
+
+        colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
+        cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
+        self._draw_colon(draw, cx, metrics["y0"], metrics["digit_h"], theme, "segment")
+
+        title = "SEG TEST"
+        progress = f"{test_value:02d}/24"
+        tw = int(self.font_small.getlength(title))
+        pw = int(self.font_small.getlength(progress))
+        draw.text((max(0, (self.width - tw) // 2), 0), title, font=self.font_small, fill=theme.accent_2)
+        draw.text((max(0, (self.width - pw) // 2), max(0, self.height - 7)), progress, font=self.font_small, fill=theme.accent)
+
+        return self.canvas
 
     # --------------------------------------------------------------- widget region
 
