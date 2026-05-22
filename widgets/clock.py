@@ -1463,13 +1463,11 @@ class ClockWidget(Widget):
         strip_draw.text((cursor, 0), mins, font=selected_font, fill=color)
         cursor += mins_w
         if strip_h >= 10:
-            dot_top = 3
-            dot_bottom = 7
+            strip_draw.point((cursor, 3), fill=color)
+            strip_draw.point((cursor, 7), fill=color)
         else:
-            dot_top = 2
-            dot_bottom = 4
-        strip_draw.point((cursor, dot_top), fill=color)
-        strip_draw.point((cursor, dot_bottom), fill=color)
+            # Small-size timer keeps a single-dot colon to avoid crowding.
+            strip_draw.point((cursor, 3), fill=color)
         cursor += 2
         strip_draw.text((cursor, 0), secs, font=selected_font, fill=color)
 
@@ -1506,6 +1504,34 @@ class ClockWidget(Widget):
             lines[-1] = self._fit_text(f"{lines[-1]} ...", max_width, font)
         return [line for line in lines if line]
 
+    def _compact_pomodoro_value_bounds(self, x, y, w, h):
+        return x, y + 1, w, max(1, h - 1)
+
+    def _draw_compact_pomodoro_value(self, draw, x, y, w, h, running, remaining_seconds, bg_color):
+        value_x, value_y, value_w, value_h = self._compact_pomodoro_value_bounds(x, y, w, h)
+        if running:
+            self._draw_timer_text(
+                draw,
+                self._pomodoro_timer_text(remaining_seconds),
+                x=value_x,
+                y=value_y,
+                w=value_w,
+                h=value_h,
+                color=self.COLOR_MAIN,
+                bg_color=bg_color,
+                font=self.font_tall,
+            )
+            return
+
+        paused = self._fit_text("PAUSED", max(1, value_w - 2), self.font_small)
+        paused_w = int(self.font_small.getlength(paused))
+        draw.text(
+            (value_x + max(0, (value_w - paused_w) // 2), value_y + max(0, (value_h - 6) // 2)),
+            paused,
+            font=self.font_small,
+            fill=self.COLOR_MAIN,
+        )
+
     def _draw_widget_pomodoro(self, draw, x, y, w, h, focused=False):
         if w <= 0 or h <= 0:
             return
@@ -1519,28 +1545,16 @@ class ClockWidget(Widget):
 
         if not focused:
             draw.rectangle((x, y, x + w - 1, y + h - 1), fill=phase_bg)
-            if running:
-                timer_txt = self._pomodoro_timer_text(state.get("remaining_seconds", 0))
-                self._draw_timer_text(
-                    draw,
-                    timer_txt,
-                    x=x,
-                    y=y + 1,
-                    w=w,
-                    h=max(1, h - 1),
-                    color=self.COLOR_MAIN,
-                    bg_color=phase_bg,
-                    font=self.font_tall,
-                )
-            else:
-                paused = self._fit_text("PAUSED", max(1, w - 2), self.font_small)
-                paused_w = int(self.font_small.getlength(paused))
-                draw.text(
-                    (x + max(0, (w - paused_w) // 2), y + max(0, (h - 6) // 2)),
-                    paused,
-                    font=self.font_small,
-                    fill=self.COLOR_MAIN,
-                )
+            self._draw_compact_pomodoro_value(
+                draw,
+                x=x,
+                y=y,
+                w=w,
+                h=h,
+                running=running,
+                remaining_seconds=state.get("remaining_seconds", 0),
+                bg_color=phase_bg,
+            )
             return
 
         phase_fit = self._fit_text(phase_label, max(1, w - 2), self.font_small)
