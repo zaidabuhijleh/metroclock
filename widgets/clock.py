@@ -144,6 +144,10 @@ class ClockWidget(Widget):
     COLOR_UP = (92, 226, 130)
     COLOR_DOWN = (239, 97, 97)
     COLOR_DIVIDER = (48, 62, 90)
+    # Quantized + slightly muted fills reduce perceived temporal-dither shimmer
+    # on low-bit-depth matrix backgrounds, especially saturated red.
+    COLOR_POMODORO_BG_FOCUS = (184, 56, 56)
+    COLOR_POMODORO_BG_BREAK = (48, 136, 72)
 
     FONT_STYLE_OPTIONS = {"matrix"}
     CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
@@ -1401,10 +1405,10 @@ class ClockWidget(Widget):
     def _pomodoro_phase_style(self, phase):
         key = str(phase or "focus").strip().lower()
         if key == "focus":
-            return {"label": "FOCUS", "color": self.COLOR_DOWN, "bg": self.COLOR_DOWN}
+            return {"label": "FOCUS", "color": self.COLOR_DOWN, "bg": self.COLOR_POMODORO_BG_FOCUS}
         if key == "long_break":
-            return {"label": "LONG BREAK", "color": self.COLOR_UP, "bg": self.COLOR_UP}
-        return {"label": "BREAK", "color": self.COLOR_UP, "bg": self.COLOR_UP}
+            return {"label": "LONG BREAK", "color": self.COLOR_UP, "bg": self.COLOR_POMODORO_BG_BREAK}
+        return {"label": "BREAK", "color": self.COLOR_UP, "bg": self.COLOR_POMODORO_BG_BREAK}
 
     def _pomodoro_timer_text(self, remaining_seconds):
         total = max(0, int(remaining_seconds or 0))
@@ -1457,7 +1461,7 @@ class ClockWidget(Widget):
         strip_draw = ImageDraw.Draw(strip)
         cursor = 0
         strip_draw.text((cursor, 0), mins, font=selected_font, fill=color)
-        cursor += mins_w + 1
+        cursor += mins_w
         if strip_h >= 10:
             dot_top = 3
             dot_bottom = 7
@@ -1466,7 +1470,7 @@ class ClockWidget(Widget):
             dot_bottom = 4
         strip_draw.point((cursor, dot_top), fill=color)
         strip_draw.point((cursor, dot_bottom), fill=color)
-        cursor += 1
+        cursor += 2
         strip_draw.text((cursor, 0), secs, font=selected_font, fill=color)
 
         paste_x = x + max(0, (w - strip.width) // 2)
