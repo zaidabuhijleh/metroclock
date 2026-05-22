@@ -548,9 +548,11 @@
       <select id="clock-widget-preset">
         <option value="auto">Auto (Use Layout + Widget Count)</option>
         <option value="horizontal_single">Top Clock + Bottom Widget</option>
+        <option value="horizontal_single_top">Top Widget + Bottom Clock</option>
         <option value="horizontal_split">Top Clock + Split Bottom Widgets</option>
         <option value="vertical_focus">Left Clock + Right Focus Widget</option>
         <option value="vertical_split_focus">Left Clock Stack + Right Focus Widget</option>
+        <option value="vertical_split_focus_top">Left Mini + Left Clock + Right Focus Widget</option>
       </select>
       <p class="hint">Auto follows layout + widget count controls below. Explicit presets lock them.</p>
 
@@ -1108,7 +1110,15 @@ let selectedClockShowDate = true;
 let selectedClockShowAmpm = true;
 let currentDisplayMode = "clock";
 const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
-const CLOCK_WIDGET_PRESET_OPTIONS = ["auto", "horizontal_single", "horizontal_split", "vertical_focus", "vertical_split_focus"];
+const CLOCK_WIDGET_PRESET_OPTIONS = [
+  "auto",
+  "horizontal_single",
+  "horizontal_single_top",
+  "horizontal_split",
+  "vertical_focus",
+  "vertical_split_focus",
+  "vertical_split_focus_top"
+];
 const CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ["metro", "ticker"];
 const CLOCK_SCROLLABLE_WIDGET_SOURCES = new Set(["metro", "stocks", "sports", "flight"]);
 
@@ -1146,6 +1156,9 @@ function applyClockPresetToLayoutControls(preset) {
   if (key === "horizontal_single") {
     layoutEl.value = "horizontal";
     countEl.value = "1";
+  } else if (key === "horizontal_single_top") {
+    layoutEl.value = "horizontal";
+    countEl.value = "1";
   } else if (key === "horizontal_split") {
     layoutEl.value = "horizontal";
     countEl.value = "2";
@@ -1153,6 +1166,9 @@ function applyClockPresetToLayoutControls(preset) {
     layoutEl.value = "vertical";
     countEl.value = "1";
   } else if (key === "vertical_split_focus") {
+    layoutEl.value = "vertical";
+    countEl.value = "2";
+  } else if (key === "vertical_split_focus_top") {
     layoutEl.value = "vertical";
     countEl.value = "2";
   }

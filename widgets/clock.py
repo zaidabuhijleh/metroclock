@@ -170,9 +170,11 @@ class ClockWidget(Widget):
     CLOCK_WIDGET_PRESET_OPTIONS = (
         "auto",
         "horizontal_single",
+        "horizontal_single_top",
         "horizontal_split",
         "vertical_focus",
         "vertical_split_focus",
+        "vertical_split_focus_top",
     )
     CLOCK_WIDGET_GRID_WIDTH = 6
     CLOCK_WIDGET_GRID_HEIGHT = 3
@@ -410,6 +412,12 @@ class ClockWidget(Widget):
                 description="Clock 6x2 with one full-width bottom widget (6x1).",
                 builder=ClockWidget._layout_preset_horizontal_single,
             ),
+            "horizontal_single_top": ClockLayoutPreset(
+                key="horizontal_single_top",
+                label="Top Widget + Bottom Clock",
+                description="One full-width widget (6x1) above the clock (6x2).",
+                builder=ClockWidget._layout_preset_horizontal_single_top,
+            ),
             "horizontal_split": ClockLayoutPreset(
                 key="horizontal_split",
                 label="Top Clock + Split Bottom Widgets",
@@ -427,6 +435,12 @@ class ClockWidget(Widget):
                 label="Left Clock Stack + Right Focus Widget",
                 description="Clock 3x2 + mini widget 3x1 on the left with focused vertical widget on the right.",
                 builder=ClockWidget._layout_preset_vertical_split_focus,
+            ),
+            "vertical_split_focus_top": ClockLayoutPreset(
+                key="vertical_split_focus_top",
+                label="Left Mini + Left Clock + Right Focus Widget",
+                description="Left mini widget above left 3x2 clock, with focused right vertical widget.",
+                builder=ClockWidget._layout_preset_vertical_split_focus_top,
             ),
         }
 
@@ -577,6 +591,30 @@ class ClockWidget(Widget):
         )
         return ClockScreenLayout(clock_faces=clock_faces, widget_panes=widget_panes)
 
+    def _layout_preset_horizontal_single_top(
+        self,
+        grid: ClockNormalizedGrid,
+        primary_req: str,
+        _secondary_req: str,
+    ) -> ClockScreenLayout:
+        source = self._resolve_supported_source(primary_req, "horizontal")
+        clock_faces = (
+            ClockFacePane(
+                bounds=grid.bounds(0.0, 1.0, float(self.CLOCK_WIDGET_GRID_WIDTH), 2.0),
+                variant="horizontal",
+            ),
+        )
+        widget_panes = (
+            ClockWidgetPane(
+                source=source,
+                slot="horizontal",
+                bounds=grid.bounds(0.0, 0.0, float(self.CLOCK_WIDGET_GRID_WIDTH), 1.0),
+                render_mode="compact",
+                scroll_mode_key="primary",
+            ),
+        )
+        return ClockScreenLayout(clock_faces=clock_faces, widget_panes=widget_panes)
+
     def _layout_preset_horizontal_split(self, grid: ClockNormalizedGrid, primary_req: str, secondary_req: str) -> ClockScreenLayout:
         source_a = self._resolve_supported_source(primary_req, "horizontal")
         source_b = self._resolve_supported_source(secondary_req, "horizontal")
@@ -650,6 +688,41 @@ class ClockWidget(Widget):
                 source=bottom_source,
                 slot="horizontal",
                 bounds=grid.bounds(0.0, 2.0, left_units, 1.0),
+                render_mode="compact",
+                scroll_mode_key="secondary",
+            ),
+            ClockWidgetPane(
+                source=side_source,
+                slot="vertical",
+                bounds=grid.bounds(left_units, 0.0, side_units, float(self.CLOCK_WIDGET_GRID_HEIGHT)),
+                render_mode="focused",
+                scroll_mode_key="primary",
+            ),
+        )
+        return ClockScreenLayout(clock_faces=clock_faces, widget_panes=widget_panes)
+
+    def _layout_preset_vertical_split_focus_top(
+        self,
+        grid: ClockNormalizedGrid,
+        primary_req: str,
+        secondary_req: str,
+    ) -> ClockScreenLayout:
+        side_units = max(1.0, min(float(self.CLOCK_WIDGET_GRID_WIDTH - 1), float(self.VERTICAL_SIDE_WIDTH_UNITS)))
+        left_units = float(self.CLOCK_WIDGET_GRID_WIDTH) - side_units
+        side_source = self._resolve_supported_source(primary_req, "vertical")
+        top_source = self._resolve_supported_source(secondary_req, "horizontal")
+
+        clock_faces = (
+            ClockFacePane(
+                bounds=grid.bounds(0.0, 1.0, left_units, 2.0),
+                variant="vertical_split_top",
+            ),
+        )
+        widget_panes = (
+            ClockWidgetPane(
+                source=top_source,
+                slot="horizontal",
+                bounds=grid.bounds(0.0, 0.0, left_units, 1.0),
                 render_mode="compact",
                 scroll_mode_key="secondary",
             ),

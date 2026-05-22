@@ -19,9 +19,11 @@ CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 CLOCK_WIDGET_PRESET_OPTIONS = (
     {"key": "auto", "label": "Auto (Layout + Count)", "layout": "mixed", "widget_count": None},
     {"key": "horizontal_single", "label": "Top Clock + Bottom Widget", "layout": "horizontal", "widget_count": 1},
+    {"key": "horizontal_single_top", "label": "Top Widget + Bottom Clock", "layout": "horizontal", "widget_count": 1},
     {"key": "horizontal_split", "label": "Top Clock + Split Bottom Widgets", "layout": "horizontal", "widget_count": 2},
     {"key": "vertical_focus", "label": "Left Clock + Right Focus Widget", "layout": "vertical", "widget_count": 1},
     {"key": "vertical_split_focus", "label": "Left Clock Stack + Right Focus Widget", "layout": "vertical", "widget_count": 2},
+    {"key": "vertical_split_focus_top", "label": "Left Mini + Left Clock + Right Focus Widget", "layout": "vertical", "widget_count": 2},
 )
 
 WRITE_ENDPOINTS = {

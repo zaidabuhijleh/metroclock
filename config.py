@@ -98,9 +98,11 @@ CLOCK_WIDGET_LAYOUT = "horizontal"
 # Layout preset for clock+widget mode.
 # "auto"                -> infer from CLOCK_WIDGET_LAYOUT + CLOCK_WIDGET_COUNT
 # "horizontal_single"   -> top 6x2 clock + bottom 6x1 widget
+# "horizontal_single_top" -> top 6x1 widget + bottom 6x2 clock
 # "horizontal_split"    -> top 6x2 clock + two bottom mini widgets
 # "vertical_focus"      -> left 3x3 clock + right 3x3 focus widget
 # "vertical_split_focus"-> left 3x2 clock + left-bottom mini + right focus widget
+# "vertical_split_focus_top" -> left-top mini + left 3x2 clock + right focus widget
 CLOCK_WIDGET_PRESET = "auto"
 # Widget shown in clock+widget mode.
 CLOCK_WIDGET_SOURCE = "weather"
