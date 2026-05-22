@@ -464,6 +464,7 @@
     <button class="tab-btn" data-tab="flight">Flight</button>
     <button class="tab-btn" data-tab="sports">Sports</button>
     <button class="tab-btn" data-tab="stocks">Stocks</button>
+    <button class="tab-btn" data-tab="pomodoro">Pomodoro</button>
     <button class="tab-btn" data-tab="ambient">Ambient</button>
     <button class="tab-btn" data-tab="wifi">WiFi</button>
     <button class="tab-btn" data-tab="system">System</button>
@@ -497,6 +498,9 @@
         </button>
         <button class="mode-btn" data-mode="stocks" onclick="switchMode('stocks')">
           <span class="icon">📈</span>Stocks
+        </button>
+        <button class="mode-btn" data-mode="pomodoro" onclick="switchMode('pomodoro')">
+          <span class="icon">🍅</span>Pomodoro
         </button>
       </div>
     </div>
@@ -798,6 +802,65 @@
       <label>Ticker scroll speed (pixels/sec)</label>
       <input type="number" id="stocks-ticker-speed" min="5" max="80" />
       <button class="btn btn-primary btn-full" onclick="saveStocks()">Save</button>
+    </div>
+  </div>
+
+  <!-- Pomodoro Tab -->
+  <div class="panel" id="panel-pomodoro">
+    <div class="card">
+      <div class="card-title">Session State</div>
+      <div class="info-grid">
+        <div class="info-item">
+          <div class="info-label">Phase</div>
+          <div class="info-value" id="pomodoro-phase">FOCUS</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Timer</div>
+          <div class="info-value" id="pomodoro-timer">25:00</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Cycle</div>
+          <div class="info-value" id="pomodoro-progress">1 / 4</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Status</div>
+          <div class="info-value" id="pomodoro-running">Paused</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="pomodoroActionRequest('start')">Start</button>
+        <button class="btn btn-ghost" onclick="pomodoroActionRequest('pause')">Pause</button>
+        <button class="btn btn-ghost" onclick="pomodoroActionRequest('skip')">Skip</button>
+        <button class="btn btn-danger" onclick="pomodoroActionRequest('reset')">Reset</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Pomodoro Settings</div>
+      <label>Focus Minutes</label>
+      <input type="number" id="pomodoro-focus-minutes" min="1" max="180" />
+
+      <label>Short Break Minutes</label>
+      <input type="number" id="pomodoro-short-break-minutes" min="1" max="60" />
+
+      <label>Long Break Minutes</label>
+      <input type="number" id="pomodoro-long-break-minutes" min="1" max="120" />
+
+      <label>Long Break Every (Focus Sessions)</label>
+      <input type="number" id="pomodoro-long-break-every" min="2" max="12" />
+
+      <label>Auto-start Breaks</label>
+      <select id="pomodoro-auto-start-breaks">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+
+      <label>Auto-start Focus</label>
+      <select id="pomodoro-auto-start-focus">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+
+      <button class="btn btn-primary" onclick="savePomodoro()">Save Pomodoro Settings</button>
     </div>
   </div>
 
@@ -1108,6 +1171,14 @@ let selectedClockWidgetScrollModeSecondary = "metro";
 let selectedClockUse24h = false;
 let selectedClockShowDate = true;
 let selectedClockShowAmpm = true;
+let selectedPomodoroFocusMinutes = 25;
+let selectedPomodoroShortBreakMinutes = 5;
+let selectedPomodoroLongBreakMinutes = 15;
+let selectedPomodoroLongBreakEvery = 4;
+let selectedPomodoroAutoStartBreaks = true;
+let selectedPomodoroAutoStartFocus = false;
+let selectedPomodoroState = null;
+let pomodoroPollHandle = null;
 let currentDisplayMode = "clock";
 const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
 const CLOCK_WIDGET_PRESET_OPTIONS = [
@@ -1230,6 +1301,85 @@ function refreshClockWidgetControls() {
 
   primaryWrap.style.display = showPrimaryScroll ? "" : "none";
   secondaryWrap.style.display = showSecondaryScroll ? "" : "none";
+}
+
+function pomodoroPhaseLabel(phase) {
+  const key = String(phase || "").trim().toLowerCase();
+  if (key === "short_break") return "SHORT BREAK";
+  if (key === "long_break") return "LONG BREAK";
+  return "FOCUS";
+}
+
+function formatPomodoroTimer(totalSeconds) {
+  const secs = Math.max(0, Number.parseInt(totalSeconds, 10) || 0);
+  const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+  const ss = String(secs % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+function renderPomodoroState(state) {
+  if (!state || typeof state !== "object") return;
+  selectedPomodoroState = state;
+
+  const phaseEl = document.getElementById("pomodoro-phase");
+  const timerEl = document.getElementById("pomodoro-timer");
+  const progressEl = document.getElementById("pomodoro-progress");
+  const runningEl = document.getElementById("pomodoro-running");
+  if (!phaseEl || !timerEl || !progressEl || !runningEl) return;
+
+  phaseEl.textContent = pomodoroPhaseLabel(state.phase);
+  timerEl.textContent = formatPomodoroTimer(state.remaining_seconds);
+  const cyclePos = Number.parseInt(state.cycle_position, 10) || 1;
+  const longEvery = Number.parseInt(state.long_break_every, 10) || 4;
+  progressEl.textContent = `${cyclePos} / ${longEvery}`;
+  runningEl.textContent = state.running ? "Running" : "Paused";
+}
+
+function startPomodoroPolling() {
+  if (pomodoroPollHandle) {
+    clearInterval(pomodoroPollHandle);
+  }
+  pomodoroPollHandle = setInterval(() => {
+    const panel = document.getElementById("panel-pomodoro");
+    if (currentDisplayMode === "pomodoro" || (panel && panel.classList.contains("active"))) {
+      loadPomodoroState(false);
+    }
+  }, 1000);
+}
+
+async function loadPomodoroState(showErrorToast = false) {
+  try {
+    const res = await fetch("/api/pomodoro/state");
+    const data = await res.json();
+    if (data.ok && data.state) {
+      renderPomodoroState(data.state);
+    } else if (showErrorToast) {
+      toast(data.error || "Unable to load Pomodoro state", "error");
+    }
+  } catch (e) {
+    if (showErrorToast) {
+      toast("Unable to load Pomodoro state", "error");
+    }
+  }
+}
+
+async function pomodoroActionRequest(action) {
+  try {
+    const res = await fetch("/api/pomodoro/action", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({action})
+    });
+    const data = await res.json();
+    if (data.ok && data.state) {
+      renderPomodoroState(data.state);
+      toast("Pomodoro " + action);
+    } else {
+      toast(data.error || "Pomodoro action failed", "error");
+    }
+  } catch (e) {
+    toast("Pomodoro action failed", "error");
+  }
 }
 
 function parseCsvSet(raw) {
@@ -1385,6 +1535,9 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "pomodoro") {
+      loadPomodoroState(false);
+    }
   });
 });
 
@@ -1464,6 +1617,21 @@ async function init() {
     document.getElementById("clock-show-ampm").value = selectedClockShowAmpm ? "on" : "off";
     updateClockSizeControl(currentDisplayMode);
     refreshClockWidgetControls();
+    renderPomodoroState(data.pomodoro_state || null);
+
+    // Pomodoro
+    selectedPomodoroFocusMinutes = Number.isFinite(Number(data.POMODORO_FOCUS_MINUTES)) ? Number(data.POMODORO_FOCUS_MINUTES) : 25;
+    selectedPomodoroShortBreakMinutes = Number.isFinite(Number(data.POMODORO_SHORT_BREAK_MINUTES)) ? Number(data.POMODORO_SHORT_BREAK_MINUTES) : 5;
+    selectedPomodoroLongBreakMinutes = Number.isFinite(Number(data.POMODORO_LONG_BREAK_MINUTES)) ? Number(data.POMODORO_LONG_BREAK_MINUTES) : 15;
+    selectedPomodoroLongBreakEvery = Number.isFinite(Number(data.POMODORO_LONG_BREAK_EVERY)) ? Number(data.POMODORO_LONG_BREAK_EVERY) : 4;
+    selectedPomodoroAutoStartBreaks = data.POMODORO_AUTO_START_BREAKS !== false;
+    selectedPomodoroAutoStartFocus = data.POMODORO_AUTO_START_FOCUS === true;
+    document.getElementById("pomodoro-focus-minutes").value = String(selectedPomodoroFocusMinutes);
+    document.getElementById("pomodoro-short-break-minutes").value = String(selectedPomodoroShortBreakMinutes);
+    document.getElementById("pomodoro-long-break-minutes").value = String(selectedPomodoroLongBreakMinutes);
+    document.getElementById("pomodoro-long-break-every").value = String(selectedPomodoroLongBreakEvery);
+    document.getElementById("pomodoro-auto-start-breaks").value = selectedPomodoroAutoStartBreaks ? "on" : "off";
+    document.getElementById("pomodoro-auto-start-focus").value = selectedPomodoroAutoStartFocus ? "on" : "off";
 
     // Metro
     selectedMetroSystem = ["wmata", "nyc", "ttc"].includes(String(data.METRO_SYSTEM || "").toLowerCase())
@@ -1896,6 +2064,9 @@ async function switchMode(mode) {
       setActiveMode(mode);
       updateClockSizeControl(mode);
       document.getElementById("sys-mode").textContent = mode;
+      if (mode === "pomodoro") {
+        loadPomodoroState(false);
+      }
       toast("Mode switched to " + mode);
     } else {
       toast(data.error || "Failed to switch mode", "error");
@@ -2102,6 +2273,48 @@ async function saveFlight() {
   if (key) payload.AVIATIONSTACK_API_KEY = key;
   await saveSettings(payload);
   if (key) document.getElementById("aviationstack-api-key").value = "";
+}
+
+async function savePomodoro() {
+  const focus = Number.parseInt(document.getElementById("pomodoro-focus-minutes").value, 10);
+  const shortBreak = Number.parseInt(document.getElementById("pomodoro-short-break-minutes").value, 10);
+  const longBreak = Number.parseInt(document.getElementById("pomodoro-long-break-minutes").value, 10);
+  const longEvery = Number.parseInt(document.getElementById("pomodoro-long-break-every").value, 10);
+  const autoStartBreaks = document.getElementById("pomodoro-auto-start-breaks").value === "on";
+  const autoStartFocus = document.getElementById("pomodoro-auto-start-focus").value === "on";
+
+  if (!Number.isInteger(focus) || focus < 1 || focus > 180) {
+    toast("Focus minutes must be 1 to 180", "error");
+    return;
+  }
+  if (!Number.isInteger(shortBreak) || shortBreak < 1 || shortBreak > 60) {
+    toast("Short break must be 1 to 60", "error");
+    return;
+  }
+  if (!Number.isInteger(longBreak) || longBreak < 1 || longBreak > 120) {
+    toast("Long break must be 1 to 120", "error");
+    return;
+  }
+  if (!Number.isInteger(longEvery) || longEvery < 2 || longEvery > 12) {
+    toast("Long break every must be 2 to 12", "error");
+    return;
+  }
+
+  selectedPomodoroFocusMinutes = focus;
+  selectedPomodoroShortBreakMinutes = shortBreak;
+  selectedPomodoroLongBreakMinutes = longBreak;
+  selectedPomodoroLongBreakEvery = longEvery;
+  selectedPomodoroAutoStartBreaks = autoStartBreaks;
+  selectedPomodoroAutoStartFocus = autoStartFocus;
+
+  await saveSettings({
+    POMODORO_FOCUS_MINUTES: selectedPomodoroFocusMinutes,
+    POMODORO_SHORT_BREAK_MINUTES: selectedPomodoroShortBreakMinutes,
+    POMODORO_LONG_BREAK_MINUTES: selectedPomodoroLongBreakMinutes,
+    POMODORO_LONG_BREAK_EVERY: selectedPomodoroLongBreakEvery,
+    POMODORO_AUTO_START_BREAKS: selectedPomodoroAutoStartBreaks,
+    POMODORO_AUTO_START_FOCUS: selectedPomodoroAutoStartFocus,
+  });
 }
 
 // ── Ambient ────────────────────────────────────────────────────────────────
@@ -2358,6 +2571,7 @@ function toast(msg, type = "success") {
 }
 
 init();
+startPomodoroPolling();
 </script>
 </body>
 </html>
