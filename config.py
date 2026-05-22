@@ -15,6 +15,7 @@ MATRIX_PWM_BITS_WEATHER = 5
 MATRIX_PWM_BITS_AMBIENT = 5
 MATRIX_PWM_BITS_SPORTS = 5
 MATRIX_PWM_BITS_STOCKS = 5
+MATRIX_PWM_BITS_CLOCK = 5
 
 # --- FONTS ---
 FONT_PATH_TALL = "assets/fonts/6x10.bdf"
@@ -78,13 +79,38 @@ STOCKS_FOCUS_TIMEFRAME = "1D"
 STOCKS_FOCUS_ROTATE_SECONDS = 8  # seconds per stock in focus view
 STOCKS_TICKER_SPEED = 25  # ticker scroll speed in pixels/sec
 
+# --- CLOCK ---
+# Font style options:
+#   matrix
+CLOCK_FONT_STYLE = "matrix"
+# One sizing control for all styles.
+CLOCK_SIZE = 1.0  # 0.5, 0.75, 1.0
+CLOCK_COLOR_PRIMARY = ""  # Optional #RRGGBB override
+CLOCK_COLOR_ACCENT = ""  # Optional #RRGGBB override
+CLOCK_COLOR_ACCENT_2 = ""  # Optional #RRGGBB override
+CLOCK_COLOR_DIM = ""  # Optional #RRGGBB override
+CLOCK_COLOR_BG = ""  # Optional #RRGGBB override
+CLOCK_SHOW_DATE = True
+CLOCK_SHOW_AMPM = True
+# "horizontal" -> clock top 2/3, widget bottom 1/3
+# "vertical"   -> clock left 2/3, widget right 1/3
+CLOCK_WIDGET_LAYOUT = "horizontal"
+# Widget shown in clock+widget mode.
+CLOCK_WIDGET_SOURCE = "weather"
+# 1 = clock + one widget pane, 2 = clock + two widget panes
+CLOCK_WIDGET_COUNT = 1
+# Secondary widget used when CLOCK_WIDGET_COUNT=2.
+CLOCK_WIDGET_SOURCE_SECONDARY = "stocks"
+# 24-hour vs 12-hour clock display.
+CLOCK_USE_24H = False
+
 # --- COLORS ---
 COLOR_WHITE = (255, 255, 255)
 COLOR_GREY = (100, 100, 100)
 COLOR_BLUE = (0, 0, 255)
 COLOR_YELLOW = (255, 255, 0)
 
-DISPLAY_MODE = "metro"
+DISPLAY_MODE = "clock"
 WEB_SERVER_PORT = 80
 SETUP_MODE = False
 
@@ -124,6 +150,20 @@ RUNTIME_EDITABLE_FIELDS = {
     "STOCKS_FOCUS_TIMEFRAME",
     "STOCKS_FOCUS_ROTATE_SECONDS",
     "STOCKS_TICKER_SPEED",
+    "CLOCK_FONT_STYLE",
+    "CLOCK_SIZE",
+    "CLOCK_COLOR_PRIMARY",
+    "CLOCK_COLOR_ACCENT",
+    "CLOCK_COLOR_ACCENT_2",
+    "CLOCK_COLOR_DIM",
+    "CLOCK_COLOR_BG",
+    "CLOCK_SHOW_DATE",
+    "CLOCK_SHOW_AMPM",
+    "CLOCK_WIDGET_LAYOUT",
+    "CLOCK_WIDGET_SOURCE",
+    "CLOCK_WIDGET_COUNT",
+    "CLOCK_WIDGET_SOURCE_SECONDARY",
+    "CLOCK_USE_24H",
 }
 
 def _default_runtime_config_path():
@@ -200,6 +240,10 @@ def _load_runtime_overrides(path):
 
 def _apply_runtime_overrides():
     file_overrides = _load_runtime_overrides(RUNTIME_CONFIG_PATH)
+    # Backward compatibility: migrate legacy clock size key.
+    if "CLOCK_SIZE" not in file_overrides and "CLOCK_SIZE_SCALE" in file_overrides:
+        file_overrides["CLOCK_SIZE"] = file_overrides["CLOCK_SIZE_SCALE"]
+
     for key in RUNTIME_EDITABLE_FIELDS:
         if key not in file_overrides or key not in globals():
             continue

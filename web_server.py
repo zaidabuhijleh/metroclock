@@ -12,6 +12,9 @@ from flask import Flask, jsonify, request, send_from_directory
 
 API_VERSION = "1.0"
 
+CLOCK_FONT_STYLE_OPTIONS = ("matrix",)
+CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
+
 WRITE_ENDPOINTS = {
     "/api/settings",
     "/api/mode",
@@ -296,6 +299,41 @@ def api_settings_get():
     return jsonify(_mask_config(cfg))
 
 
+@app.route("/api/clock/styles")
+def api_clock_styles():
+    return jsonify({
+        "clock_font_style": {
+            "key": "CLOCK_FONT_STYLE",
+            "default": "matrix",
+            "options": list(CLOCK_FONT_STYLE_OPTIONS),
+        },
+        "clock_size": {
+            "key": "CLOCK_SIZE",
+            "default": 1.0,
+            "options": list(CLOCK_SIZE_OPTIONS),
+        },
+        "clock_overlays": {
+            "show_date_key": "CLOCK_SHOW_DATE",
+            "show_ampm_key": "CLOCK_SHOW_AMPM",
+            "defaults": {
+                "show_date": True,
+                "show_ampm": True,
+            },
+        },
+        "clock_color_overrides": {
+            "format": "#RRGGBB",
+            "allow_empty": True,
+            "keys": [
+                "CLOCK_COLOR_PRIMARY",
+                "CLOCK_COLOR_ACCENT",
+                "CLOCK_COLOR_ACCENT_2",
+                "CLOCK_COLOR_DIM",
+                "CLOCK_COLOR_BG",
+            ],
+        },
+    })
+
+
 @app.route("/api/settings", methods=["POST"])
 def api_settings_post():
     data = request.get_json(force=True) or {}
@@ -316,7 +354,7 @@ def api_settings_post():
 def api_mode():
     data = request.get_json(force=True) or {}
     mode = data.get("mode", "").lower()
-    if mode not in ("metro", "weather", "flight", "ambient", "sports", "stocks"):
+    if mode not in ("metro", "weather", "flight", "ambient", "sports", "stocks", "clock", "clock_widget"):
         return jsonify({"ok": False, "error": "Invalid mode"}), 400
     set_display_mode(mode)
     return jsonify({"ok": True, "mode": mode})
