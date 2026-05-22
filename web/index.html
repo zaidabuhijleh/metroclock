@@ -480,9 +480,6 @@
         <button class="mode-btn" data-mode="clock_widget" onclick="switchMode('clock_widget')">
           <span class="icon">🧩</span>Clock+Widget
         </button>
-        <button class="mode-btn" data-mode="clock_segment_test" onclick="switchMode('clock_segment_test')">
-          <span class="icon">#</span>Seg Test
-        </button>
         <button class="mode-btn" data-mode="metro" onclick="switchMode('metro')">
           <span class="icon">🚇</span>Metro
         </button>
@@ -508,7 +505,6 @@
       <label>Font Style</label>
       <select id="clock-font-style">
         <option value="matrix">Matrix</option>
-        <option value="segment">Segment</option>
       </select>
 
       <label>Clock Size</label>
@@ -1299,7 +1295,7 @@ async function init() {
     setActiveMode(currentDisplayMode);
 
     // Clock
-    selectedClockFontStyle = ["matrix", "segment"].includes(data.CLOCK_FONT_STYLE)
+    selectedClockFontStyle = ["matrix"].includes(data.CLOCK_FONT_STYLE)
       ? data.CLOCK_FONT_STYLE
       : "matrix";
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);

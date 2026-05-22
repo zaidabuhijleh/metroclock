@@ -54,7 +54,7 @@ class ClockWidget(Widget):
     COLOR_DOWN = (239, 97, 97)
     COLOR_DIVIDER = (48, 62, 90)
 
-    FONT_STYLE_OPTIONS = {"matrix", "segment"}
+    FONT_STYLE_OPTIONS = {"matrix"}
     CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
     FONT_LINE_SHAPES = {
         "matrix": {

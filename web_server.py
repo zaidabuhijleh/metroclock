@@ -12,7 +12,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 API_VERSION = "1.0"
 
-CLOCK_FONT_STYLE_OPTIONS = ("matrix", "segment")
+CLOCK_FONT_STYLE_OPTIONS = ("matrix",)
 CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
 
 WRITE_ENDPOINTS = {
@@ -354,7 +354,7 @@ def api_settings_post():
 def api_mode():
     data = request.get_json(force=True) or {}
     mode = data.get("mode", "").lower()
-    if mode not in ("metro", "weather", "flight", "ambient", "sports", "stocks", "clock", "clock_widget", "clock_segment_test"):
+    if mode not in ("metro", "weather", "flight", "ambient", "sports", "stocks", "clock", "clock_widget"):
         return jsonify({"ok": False, "error": "Invalid mode"}), 400
     set_display_mode(mode)
     return jsonify({"ok": True, "mode": mode})

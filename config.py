@@ -81,7 +81,7 @@ STOCKS_TICKER_SPEED = 25  # ticker scroll speed in pixels/sec
 
 # --- CLOCK ---
 # Font style options:
-#   matrix, segment
+#   matrix
 CLOCK_FONT_STYLE = "matrix"
 # One sizing control for all styles.
 CLOCK_SIZE = 1.0  # 0.5, 0.75, 1.0
