@@ -1,5 +1,7 @@
 import importlib
+import threading
 import time
+from queue import Empty, Queue
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
@@ -44,6 +46,16 @@ class StocksWidget(Widget):
         self.cache = {}              # (symbol, timeframe) -> parsed dict
         self.last_fetch = {}         # (symbol, timeframe) -> ts
         self.user_agent = "Mozilla/5.0 (compatible; metroclock-stocks/1.0)"
+
+        # Background fetch plumbing — keeps HTTP off the render thread.
+        self._cache_lock = threading.Lock()
+        self._fetch_queue: "Queue[tuple[str, str]]" = Queue()
+        self._inflight: set[tuple[str, str]] = set()
+        self._worker = threading.Thread(target=self._fetch_worker, daemon=True)
+        self._worker.start()
+
+        # Throttle config reload so we don't hit disk every frame.
+        self._last_config_reload = 0.0
 
         self.focus_index = 0
         self.last_focus_rotate = time.time()
@@ -107,8 +119,10 @@ class StocksWidget(Widget):
     # ------------------------------------------------------------- update
 
     def update(self):
-        importlib.reload(config)
         now = time.time()
+        if now - self._last_config_reload >= 1.0:
+            importlib.reload(config)
+            self._last_config_reload = now
 
         symbols = self._symbols()
         if not symbols:
@@ -147,17 +161,41 @@ class StocksWidget(Widget):
         for sym in symbols:
             for tf in needed:
                 key = (sym, tf)
-                if key in self.cache and now - self.last_fetch.get(key, 0) < fetch_interval:
+                with self._cache_lock:
+                    have_recent = (
+                        key in self.cache
+                        and now - self.last_fetch.get(key, 0) < fetch_interval
+                    )
+                    already_queued = key in self._inflight
+                if have_recent or already_queued:
                     continue
-                self._fetch_chart(sym, tf)
-                self.last_fetch[key] = now
+                self._inflight.add(key)
+                self._fetch_queue.put(key)
 
     def _derive_market_state(self):
-        for data in self.cache.values():
+        with self._cache_lock:
+            values = list(self.cache.values())
+        for data in values:
             ms = data.get("market_state") or ""
             if ms:
                 return ms
         return "REGULAR"
+
+    def _fetch_worker(self):
+        while True:
+            try:
+                key = self._fetch_queue.get()
+            except Exception:
+                continue
+            sym, tf = key
+            try:
+                self._fetch_chart(sym, tf)
+            except Exception as exc:
+                print(f"Stocks worker error ({sym}/{tf}): {exc}")
+            finally:
+                with self._cache_lock:
+                    self._inflight.discard(key)
+                    self.last_fetch[key] = time.time()
 
     def _fetch_chart(self, symbol, timeframe):
         cfg = TIMEFRAMES.get(timeframe) or TIMEFRAMES["1D"]
@@ -183,7 +221,8 @@ class StocksWidget(Widget):
 
         parsed = self._parse_chart(payload)
         if parsed:
-            self.cache[(symbol, timeframe)] = parsed
+            with self._cache_lock:
+                self.cache[(symbol, timeframe)] = parsed
 
     def _parse_chart(self, payload):
         try:
@@ -278,7 +317,8 @@ class StocksWidget(Widget):
     def _ticker_items(self):
         items = []
         for sym in self._symbols():
-            data = self.cache.get((sym, "1D"))
+            with self._cache_lock:
+                data = self.cache.get((sym, "1D"))
             if not data or data.get("last_price") is None:
                 continue
             items.append({
@@ -360,7 +400,8 @@ class StocksWidget(Widget):
 
         sym = symbols[self.focus_index % len(symbols)]
         timeframe = self._current_timeframe()
-        data = self.cache.get((sym, timeframe))
+        with self._cache_lock:
+            data = self.cache.get((sym, timeframe))
 
         # Header: symbol + price (or LOADING)
         draw.text((1, 0), sym, font=self.font_tall, fill=self.COLOR_TEXT)
