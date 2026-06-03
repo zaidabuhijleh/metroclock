@@ -7,6 +7,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+from core import scroll
 from core.widget import Widget
 
 
@@ -61,7 +62,7 @@ class StocksWidget(Widget):
         self.last_focus_rotate = time.time()
         self.cycle_tf_index = 0
 
-        self.ticker_offset = 0
+        self.ticker_frame = 0
         self._strip_sig = None
         self._strip_img = None
 
@@ -96,12 +97,6 @@ class StocksWidget(Widget):
         if tf == "CYCLE":
             return "cycle"
         return tf if tf in TIMEFRAMES else "1D"
-
-    def _ticker_px_per_frame(self):
-        try:
-            return max(1, min(6, int(getattr(config, "STOCKS_TICKER_PX_PER_FRAME", 1))))
-        except Exception:
-            return 1
 
     def _focus_rotate_interval(self):
         try:
@@ -292,11 +287,10 @@ class StocksWidget(Widget):
             self._draw_placeholder(ImageDraw.Draw(self.canvas), "LOADING")
             return
 
-        # Advance an integer pixel count per frame so motion is uniform
-        # regardless of frame-to-frame timing jitter.
-        self.ticker_offset = (self.ticker_offset + self._ticker_px_per_frame()) % strip.width
-
-        src_x = self.ticker_offset
+        # Advance 1 px every `stride` frames so motion is uniform regardless
+        # of frame-to-frame timing jitter (and globally tunable via SCROLL_SPEED).
+        self.ticker_frame += 1
+        src_x = (self.ticker_frame // scroll.frame_stride("stocks")) % strip.width
         first_w = min(self.width, strip.width - src_x)
         if first_w > 0:
             self.canvas.paste(

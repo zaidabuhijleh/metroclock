@@ -8,6 +8,7 @@ import requests
 from PIL import ImageDraw, ImageFont
 
 import config
+from core import scroll
 from core.widget import Widget
 from widgets.metrolines import NYC_LINE_COLORS, TTC_LINE_COLORS, WMATA_LINE_COLORS
 
@@ -71,6 +72,9 @@ class MetroWidget(Widget):
         # Animation state
         self.page_start_time = time.time()
         self.scroll_speed = 20
+        # Per-row scroll frame counters → uniform 1px/frame scroll on the matrix.
+        self._row_scroll_state = {}   # row_y -> (key, frames)
+        self._scroll_hold_frames = 50  # ~1s at 50fps
 
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
@@ -714,13 +718,14 @@ class MetroWidget(Widget):
             else:
                 max_offset = text_width - visible_space
 
-            if time_on_page < 1.0:
-                offset = 0
-            else:
-                active_scroll_time = time_on_page - 1.0
-                offset = active_scroll_time * self.scroll_speed
-                if offset > max_offset:
-                    offset = max_offset
+            # Frame-based scroll: hold N frames, then advance exactly 1px/frame.
+            key = (line, dest)
+            prev_key, frames = self._row_scroll_state.get(row_y, (None, 0))
+            if prev_key != key or time_on_page < 0.05:
+                frames = 0
+            scroll_frames = max(0, frames - self._scroll_hold_frames)
+            offset = min(scroll_frames // scroll.frame_stride("metro"), int(max_offset))
+            self._row_scroll_state[row_y] = (key, frames + 1)
 
             x_pos = text_start_x - offset
 

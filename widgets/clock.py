@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import config
 import web_server
+from core import scroll
 from core.widget import Widget
 from widgets import icons
 
@@ -1216,12 +1217,12 @@ class ClockWidget(Widget):
 
         state["scrolling"] = True
 
-        # Advance an integer pixel per frame so motion is uniform on the
-        # LED matrix. Sub-pixel steps strobe; this gives a smooth glide.
+        # 1 px every N frames → uniform motion; N comes from SCROLL_SPEED.
         gap = 10
         cycle = text_w + gap
         offset = self._scroll_offsets.get(key, 0.0)
-        step = 1.0
+        widget_name = str(key).split(":", 1)[0].split("-", 1)[0]
+        step = 1.0 / scroll.frame_stride(widget_name)
         if wrap:
             offset = (offset + step) % cycle
         else:
@@ -1275,8 +1276,9 @@ class ClockWidget(Widget):
             sd.text((cx, text_y), txt, font=self.font_small, fill=color)
             cx += int(self.font_small.getlength(txt)) + gap
 
-        # Integer-px-per-frame step → uniform smooth motion (no sub-pixel strobe).
-        step = 1.0
+        # 1 px every N frames → uniform motion; N comes from SCROLL_SPEED.
+        widget_name = str(key).split(":", 1)[0].split("-", 1)[0]
+        step = 1.0 / scroll.frame_stride(widget_name)
         cycle = strip_w + gap
         offset = self._scroll_offsets.get(key, 0.0)
         offset = (offset + step) % cycle
