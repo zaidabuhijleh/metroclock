@@ -14,7 +14,7 @@ MATRIX_PWM_BITS_FLIGHT = 3
 MATRIX_PWM_BITS_WEATHER = 5
 MATRIX_PWM_BITS_AMBIENT = 5
 MATRIX_PWM_BITS_SPORTS = 5
-MATRIX_PWM_BITS_STOCKS = 5
+MATRIX_PWM_BITS_STOCKS = 3
 MATRIX_PWM_BITS_CLOCK = 5
 # Clock+widget mode can run a lower bit depth for higher refresh and reduced shimmer.
 MATRIX_PWM_BITS_CLOCK_WIDGET = 4
@@ -80,7 +80,20 @@ STOCKS_SYMBOLS = "AAPL,TSLA,NVDA,SPY"
 STOCKS_VIEW_MODE = "ticker"
 STOCKS_FOCUS_TIMEFRAME = "1D"
 STOCKS_FOCUS_ROTATE_SECONDS = 8  # seconds per stock in focus view
-STOCKS_TICKER_SPEED = 25  # ticker scroll speed in pixels/sec
+STOCKS_TICKER_SPEED = 25  # legacy/unused — see SCROLL_SPEED
+
+# --- SCROLL ---
+# Global scroll speed for all marquee/ticker text. Restricted to values that
+# produce uniform motion on the LED matrix (whole pixels per fixed frame stride).
+#   "slow"   -> 1 px every 3 frames
+#   "medium" -> 1 px every 2 frames
+#   "fast"   -> 1 px every frame  (default)
+SCROLL_SPEED = "fast"
+# Per-widget overrides (leave as None or "" to inherit SCROLL_SPEED).
+SCROLL_SPEED_STOCKS = None
+SCROLL_SPEED_METRO = None
+SCROLL_SPEED_SPORTS = None
+SCROLL_SPEED_FLIGHT = None
 
 # --- POMODORO ---
 POMODORO_FOCUS_MINUTES = 25
@@ -182,6 +195,11 @@ RUNTIME_EDITABLE_FIELDS = {
     "STOCKS_FOCUS_TIMEFRAME",
     "STOCKS_FOCUS_ROTATE_SECONDS",
     "STOCKS_TICKER_SPEED",
+    "SCROLL_SPEED",
+    "SCROLL_SPEED_STOCKS",
+    "SCROLL_SPEED_METRO",
+    "SCROLL_SPEED_SPORTS",
+    "SCROLL_SPEED_FLIGHT",
     "POMODORO_FOCUS_MINUTES",
     "POMODORO_SHORT_BREAK_MINUTES",
     "POMODORO_LONG_BREAK_MINUTES",

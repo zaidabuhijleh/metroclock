@@ -4,6 +4,7 @@ from datetime import datetime
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from core.widget import Widget
+from core import scroll
 import config
 import widgets.icons as icons
 
@@ -13,6 +14,8 @@ class FlightWidget(Widget):
         self.data = None
         self.status_text = "INITIALIZING"
         self.next_fetch_time = 0
+        self._status_scroll_frame = 0
+        self._status_scroll_text = None
         
         self.COLOR_GOLD = (255, 180, 0)
         self.COLOR_PURPLE = (180, 80, 255)
@@ -99,8 +102,13 @@ class FlightWidget(Widget):
         if text_width <= width_limit:
             draw.text((x_min, y), text, font=self.font, fill=color)
         else:
+            # Integer-px-per-frame scroll → uniform smooth motion on the matrix.
+            if self._status_scroll_text != text:
+                self._status_scroll_text = text
+                self._status_scroll_frame = 0
             full_path = text_width + 15
-            scroll_pos = int(time.time() * 8) % (full_path + 30)
+            scroll_pos = (self._status_scroll_frame // scroll.frame_stride("flight")) % (full_path + 30)
+            self._status_scroll_frame += 1
             offset = max(0, scroll_pos - 15)
             if offset > text_width - width_limit:
                 offset = text_width - width_limit
