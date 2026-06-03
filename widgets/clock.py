@@ -1216,12 +1216,12 @@ class ClockWidget(Widget):
 
         state["scrolling"] = True
 
-        # Use a fixed per-frame step so motion is uniform regardless of
-        # frame-to-frame timing jitter on the matrix. Assume a ~50fps loop.
+        # Advance an integer pixel per frame so motion is uniform on the
+        # LED matrix. Sub-pixel steps strobe; this gives a smooth glide.
         gap = 10
         cycle = text_w + gap
         offset = self._scroll_offsets.get(key, 0.0)
-        step = max(0.0, float(speed) / 50.0)
+        step = 1.0
         if wrap:
             offset = (offset + step) % cycle
         else:
@@ -1275,8 +1275,8 @@ class ClockWidget(Widget):
             sd.text((cx, text_y), txt, font=self.font_small, fill=color)
             cx += int(self.font_small.getlength(txt)) + gap
 
-        # Fixed per-frame step → uniform motion regardless of frame jitter.
-        step = max(0.0, float(speed) / 50.0)
+        # Integer-px-per-frame step → uniform smooth motion (no sub-pixel strobe).
+        step = 1.0
         cycle = strip_w + gap
         offset = self._scroll_offsets.get(key, 0.0)
         offset = (offset + step) % cycle
