@@ -161,7 +161,7 @@ class MetroClockApp:
         state_provider: RuntimeStateProvider,
         widgets: WidgetRegistry,
         display: DisplayManager,
-        loop_delay: float = 0.05,
+        loop_delay: float = 0.02,
         error_delay: float = 0.25,
     ):
         self._state_provider = state_provider

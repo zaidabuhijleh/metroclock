@@ -61,8 +61,7 @@ class StocksWidget(Widget):
         self.last_focus_rotate = time.time()
         self.cycle_tf_index = 0
 
-        self.ticker_offset = 0.0
-        self.last_ticker_step = time.time()
+        self.ticker_offset = 0
         self._strip_sig = None
         self._strip_img = None
 
@@ -98,11 +97,11 @@ class StocksWidget(Widget):
             return "cycle"
         return tf if tf in TIMEFRAMES else "1D"
 
-    def _ticker_speed(self):
+    def _ticker_px_per_frame(self):
         try:
-            return max(5.0, min(80.0, float(getattr(config, "STOCKS_TICKER_SPEED", 25))))
+            return max(1, min(6, int(getattr(config, "STOCKS_TICKER_PX_PER_FRAME", 1))))
         except Exception:
-            return 25.0
+            return 1
 
     def _focus_rotate_interval(self):
         try:
@@ -293,14 +292,11 @@ class StocksWidget(Widget):
             self._draw_placeholder(ImageDraw.Draw(self.canvas), "LOADING")
             return
 
-        now = time.time()
-        dt = now - self.last_ticker_step
-        self.last_ticker_step = now
-        if dt < 0 or dt > 0.5:
-            dt = 0.05
-        self.ticker_offset = (self.ticker_offset + dt * self._ticker_speed()) % strip.width
+        # Advance an integer pixel count per frame so motion is uniform
+        # regardless of frame-to-frame timing jitter.
+        self.ticker_offset = (self.ticker_offset + self._ticker_px_per_frame()) % strip.width
 
-        src_x = int(self.ticker_offset)
+        src_x = self.ticker_offset
         first_w = min(self.width, strip.width - src_x)
         if first_w > 0:
             self.canvas.paste(
