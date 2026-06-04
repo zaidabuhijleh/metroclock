@@ -665,7 +665,7 @@ def preview_pngstream():
 @app.route("/preview.mjpg")
 def preview_mjpg():
     boundary = "frame"
-    target_fps = 20
+    target_fps = 30
     target_interval = 1.0 / target_fps
     jpeg_quality = 85
 

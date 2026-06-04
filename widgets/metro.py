@@ -69,6 +69,7 @@ class MetroWidget(Widget):
         self.scroll_index = 0
         self.last_fetch = 0.0
         self._config_signature = None
+        self._initial_fetch_done = False
 
         # Animation state
         self.page_start_time = time.time()
@@ -125,6 +126,8 @@ class MetroWidget(Widget):
                 self.last_fetch = time.time()
             except Exception as exc:
                 print(f"Metro worker error: {exc}")
+            finally:
+                self._initial_fetch_done = True
             # Wait up to 30s, but wake immediately if config changed.
             self._fetch_wake.wait(timeout=30.0)
             self._fetch_wake.clear()
@@ -768,11 +771,14 @@ class MetroWidget(Widget):
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
         if not self.trains:
-            label = "NO TRAINS"
-            if self._metro_system() == "nyc":
-                label = "NYC NO DATA"
-            if self._metro_system() == "ttc":
-                label = "TTC NO DATA"
+            if not self._initial_fetch_done:
+                label = "LOADING..."
+            else:
+                label = "NO TRAINS"
+                if self._metro_system() == "nyc":
+                    label = "NYC NO DATA"
+                if self._metro_system() == "ttc":
+                    label = "TTC NO DATA"
             draw.text((1, 12), label, font=self.font_small, fill=config.COLOR_GREY)
             return self.canvas
 
