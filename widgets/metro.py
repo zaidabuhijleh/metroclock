@@ -73,7 +73,7 @@ class MetroWidget(Widget):
         self._initial_fetch_done = False
         self._config_signature = None
         self._last_empty_draw_log = 0.0
-        self._fetch_interval_seconds = 30.0
+        self._fetch_interval_seconds = 15.0
         self._failure_retry_seconds = 10.0
         # Keep stale rows long enough to bridge several missed polls plus
         # quick retries. The displayed ETAs continue aging locally.
@@ -168,6 +168,21 @@ class MetroWidget(Widget):
         ]
         if len(trains) > limit:
             parts.append(f"+{len(trains) - limit} more")
+        return "[" + "; ".join(parts) + "]"
+
+    def _format_projected_rows(self, trains, limit=8):
+        now = time.time()
+        projected = self._project_train_minutes(trains, now=now)
+        parts = []
+        for row in projected[:limit]:
+            fetched_at = self._safe_float(row.get("_FetchedAt"), now)
+            age = max(0, int(now - fetched_at))
+            parts.append(
+                f"{row.get('Line', '?')} {row.get('Destination', '?')} "
+                f"api={row.get('_FetchedMin', '?')} display={row.get('Min', '?')} age={age}s"
+            )
+        if len(projected) > limit:
+            parts.append(f"+{len(projected) - limit} more")
         return "[" + "; ".join(parts) + "]"
 
     def _mark_fetch_success(self, timestamp=None):
@@ -508,6 +523,9 @@ class MetroWidget(Widget):
 
         if changed:
             self._log(f"replaced trains old={old_count} new={new_count} {self._cache_status()}")
+            with self._trains_lock:
+                rows = list(self.trains)
+            self._log(f"projected rows {self._format_projected_rows(rows)}")
 
     def _project_train_minutes(self, trains, now=None):
         """Return a draw-time snapshot with arrival minutes aged from fetch time."""
@@ -573,6 +591,12 @@ class MetroWidget(Widget):
     def _safe_int(self, value, fallback):
         try:
             return int(value)
+        except Exception:
+            return fallback
+
+    def _safe_float(self, value, fallback):
+        try:
+            return float(value)
         except Exception:
             return fallback
 
