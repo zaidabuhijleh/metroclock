@@ -630,7 +630,7 @@ def preview_png():
 @app.route("/preview.pngstream")
 def preview_pngstream():
     boundary = "frame"
-    target_fps = 10
+    target_fps = 20
     target_interval = 1.0 / target_fps
 
     def generate():

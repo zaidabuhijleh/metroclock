@@ -97,7 +97,6 @@ class DisplayManager:
     def present(self, image, brightness: int):
         if self._display is None:
             raise RuntimeError("Display has not been initialized")
-        self._display.clear()
         self._display.set_brightness(brightness)
         self._display.draw_image(image)
         self._display.push()
