@@ -2,6 +2,7 @@ import importlib
 import json
 import os
 import re
+import threading
 import time
 
 import requests
@@ -88,29 +89,45 @@ class MetroWidget(Widget):
 
         self._nyc_stop_name_map = self._load_nyc_stop_name_map()
 
+        # Background fetch plumbing — keeps HTTP off the render thread so the
+        # matrix never goes dark during a 6–8s API call.
+        self._trains_lock = threading.Lock()
+        self._fetch_wake = threading.Event()
+        self._last_config_reload = 0.0
+        self._worker = threading.Thread(target=self._fetch_worker, daemon=True)
+        self._worker.start()
+
     def update(self):
-        """Fetch arrival data from configured metro system."""
+        """Lightweight: reload config + nudge worker on changes. No HTTP here."""
         now = time.time()
-        importlib.reload(config)
+        if now - self._last_config_reload >= 1.0:
+            importlib.reload(config)
+            self._last_config_reload = now
 
         signature = self._current_config_signature()
         if signature != self._config_signature:
             self._config_signature = signature
             self._invalidate_cached_rows(now)
             self.last_fetch = 0.0
+            self._fetch_wake.set()  # refetch immediately for the new config
 
-        if now - self.last_fetch <= 30:
-            return
-
-        system = self._metro_system()
-        if system == "nyc":
-            self._fetch_nyc()
-        elif system == "ttc":
-            self._fetch_ttc()
-        else:
-            self._fetch_wmata()
-
-        self.last_fetch = now
+    def _fetch_worker(self):
+        """Daemon loop — refetch every 30s, or sooner when poked."""
+        while True:
+            try:
+                system = self._metro_system()
+                if system == "nyc":
+                    self._fetch_nyc()
+                elif system == "ttc":
+                    self._fetch_ttc()
+                else:
+                    self._fetch_wmata()
+                self.last_fetch = time.time()
+            except Exception as exc:
+                print(f"Metro worker error: {exc}")
+            # Wait up to 30s, but wake immediately if config changed.
+            self._fetch_wake.wait(timeout=30.0)
+            self._fetch_wake.clear()
 
     def _current_config_signature(self):
         return (
@@ -367,16 +384,17 @@ class MetroWidget(Widget):
         return output
 
     def _replace_trains(self, trains, now):
-        previous_trains = self.trains
-        self.trains = trains
+        with self._trains_lock:
+            previous_trains = self.trains
+            self.trains = list(trains)
 
-        if not self.trains:
-            self.scroll_index = 0
-        else:
-            self.scroll_index %= len(self.trains)
+            if not self.trains:
+                self.scroll_index = 0
+            else:
+                self.scroll_index %= len(self.trains)
 
-        if self.trains != previous_trains:
-            self.page_start_time = now
+            if self.trains != previous_trains:
+                self.page_start_time = now
 
     def _normalize_wmata_mins(self, raw):
         text = str(raw or "").strip().upper()
@@ -741,6 +759,11 @@ class MetroWidget(Widget):
         draw.text((time_x, row_y + 3), mins, font=self.font_tall, fill=config.COLOR_WHITE)
 
     def draw(self):
+        # Snapshot the trains list under the lock so the rest of draw() sees
+        # a stable view, even if the worker thread replaces it mid-frame.
+        with self._trains_lock:
+            self.trains = list(self.trains)
+
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
