@@ -418,7 +418,12 @@ class MetroWidget(Widget):
     def _replace_trains(self, trains, now):
         with self._trains_lock:
             previous_trains = self.trains
-            self.trains = list(trains)
+            self.trains = []
+            for train in trains:
+                row = dict(train)
+                row["_FetchedAt"] = now
+                row["_FetchedMin"] = row.get("Min", "--")
+                self.trains.append(row)
 
             if not self.trains:
                 self.scroll_index = 0
@@ -427,6 +432,30 @@ class MetroWidget(Widget):
 
             if self.trains != previous_trains:
                 self.page_start_time = now
+
+    def _project_train_minutes(self, trains, now=None):
+        """Return a draw-time snapshot with arrival minutes aged from fetch time."""
+        now = time.time() if now is None else now
+        projected = []
+
+        for train in trains:
+            row = dict(train)
+            raw_min = str(row.get("_FetchedMin", row.get("Min", "--")) or "--").strip()
+            match = re.search(r"\d+", raw_min)
+            if not match:
+                projected.append(row)
+                continue
+
+            try:
+                fetched_at = float(row.get("_FetchedAt", self.last_fetch) or self.last_fetch or now)
+            except Exception:
+                fetched_at = now
+
+            elapsed_minutes = max(0, int((now - fetched_at) // 60))
+            row["Min"] = str(max(0, int(match.group(0)) - elapsed_minutes))
+            projected.append(row)
+
+        return projected
 
     def _normalize_wmata_mins(self, raw):
         text = str(raw or "").strip().upper()
