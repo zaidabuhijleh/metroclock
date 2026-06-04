@@ -71,6 +71,7 @@ class MetroWidget(Widget):
         self._last_success_ts = 0.0
         self._initial_fetch_done = False
         self._config_signature = None
+        self._last_empty_draw_log = 0.0
         # Beyond this many seconds since the last successful upstream call,
         # stop treating the cached trains list as fresh and let it blank.
         self._max_stale_seconds = 120.0
@@ -111,10 +112,17 @@ class MetroWidget(Widget):
 
         signature = self._current_config_signature()
         if signature != self._config_signature:
+            self._log(
+                "config changed; invalidating cache "
+                f"old={self._config_signature!r} new={signature!r}"
+            )
             self._config_signature = signature
             self._invalidate_cached_rows(now)
             self.last_fetch = 0.0
             self._fetch_wake.set()  # refetch immediately for the new config
+
+    def _log(self, message):
+        print(f"[MetroWidget {time.strftime('%H:%M:%S')}] {message}", flush=True)
 
     def _fetch_worker(self):
         """Daemon loop — refetch every 30s normally, every 10s after a failure."""
@@ -141,7 +149,16 @@ class MetroWidget(Widget):
 
     def _should_keep_stale_on_failure(self):
         """True when we have cached trains and the cache is still within the grace window."""
-        return bool(self.trains) and (time.time() - self._last_success_ts) < self._max_stale_seconds
+        with self._trains_lock:
+            has_trains = bool(self.trains)
+        return has_trains and (time.time() - self._last_success_ts) < self._max_stale_seconds
+
+    def _cache_status(self):
+        with self._trains_lock:
+            count = len(self.trains)
+        age = time.time() - self._last_success_ts if self._last_success_ts else None
+        age_text = "never" if age is None else f"{age:.1f}s"
+        return f"cached={count} last_success_age={age_text}"
 
     def _current_config_signature(self):
         return (
@@ -239,6 +256,10 @@ class MetroWidget(Widget):
             deduped.append(row)
 
         if (not any_success or not deduped) and self._should_keep_stale_on_failure():
+            self._log(
+                "WMATA keeping stale cache "
+                f"any_success={any_success} fetched_rows={len(deduped)} {self._cache_status()}"
+            )
             return
         if any_success and deduped:
             self._last_success_ts = time.time()
@@ -322,6 +343,10 @@ class MetroWidget(Widget):
             for row in deduped
         ]
         if (not any_success or not trains) and self._should_keep_stale_on_failure():
+            self._log(
+                "NYC keeping stale cache "
+                f"any_success={any_success} fetched_rows={len(trains)} {self._cache_status()}"
+            )
             return
         if any_success and trains:
             self._last_success_ts = time.time()
@@ -374,6 +399,10 @@ class MetroWidget(Widget):
             for row in deduped
         ]
         if (source_count == 0 or not trains) and self._should_keep_stale_on_failure():
+            self._log(
+                "TTC keeping stale cache "
+                f"source_count={source_count} fetched_rows={len(trains)} {self._cache_status()}"
+            )
             return
         if source_count > 0 and trains:
             self._last_success_ts = time.time()
@@ -417,6 +446,9 @@ class MetroWidget(Widget):
         return output
 
     def _replace_trains(self, trains, now):
+        changed = False
+        old_count = 0
+        new_count = 0
         with self._trains_lock:
             previous_trains = self.trains
             self.trains = []
@@ -433,6 +465,12 @@ class MetroWidget(Widget):
 
             if self.trains != previous_trains:
                 self.page_start_time = now
+                changed = True
+                old_count = len(previous_trains)
+                new_count = len(self.trains)
+
+        if changed:
+            self._log(f"replaced trains old={old_count} new={new_count} {self._cache_status()}")
 
     def _project_train_minutes(self, trains, now=None):
         """Return a draw-time snapshot with arrival minutes aged from fetch time."""
@@ -839,6 +877,10 @@ class MetroWidget(Widget):
                     label = "NYC NO DATA"
                 if self._metro_system() == "ttc":
                     label = "TTC NO DATA"
+            now = time.time()
+            if now - self._last_empty_draw_log >= 1.0:
+                self._last_empty_draw_log = now
+                self._log(f"draw empty label={label!r} {self._cache_status()}")
             draw.text((1, 12), label, font=self.font_small, fill=config.COLOR_GREY)
             return self.canvas
 

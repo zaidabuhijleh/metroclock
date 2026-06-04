@@ -169,6 +169,7 @@ class MetroClockApp:
         self._display = display
         self._loop_delay = loop_delay
         self._error_delay = error_delay
+        self._last_black_frame_log = 0.0
 
     @classmethod
     def build_default(cls) -> "MetroClockApp":
@@ -197,6 +198,11 @@ class MetroClockApp:
         try:
             self._display.ensure_mode(mode)
             frame = self._widgets.render_mode(mode)
+            if mode == "metro" and hasattr(frame, "getbbox") and frame.getbbox() is None:
+                now = time.time()
+                if now - self._last_black_frame_log >= 1.0:
+                    self._last_black_frame_log = now
+                    print(f"[MetroClockApp {time.strftime('%H:%M:%S')}] metro rendered all-black frame", flush=True)
             brightness = self._state_provider.get_brightness()
             self._display.present(frame, brightness)
             time.sleep(self._loop_delay)
