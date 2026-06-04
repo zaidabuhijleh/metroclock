@@ -451,20 +451,11 @@ class MetroWidget(Widget):
         new_count = 0
         with self._trains_lock:
             previous_trains = self.trains
-            previous_by_key = {
-                self._train_projection_key(train): train
-                for train in previous_trains
-            }
             self.trains = []
             for train in trains:
                 row = dict(train)
-                previous = previous_by_key.get(self._train_projection_key(row))
-                if previous is not None:
-                    row["_FetchedAt"] = previous.get("_FetchedAt", now)
-                    row["_FetchedMin"] = previous.get("_FetchedMin", row.get("Min", "--"))
-                else:
-                    row["_FetchedAt"] = now
-                    row["_FetchedMin"] = row.get("Min", "--")
+                row["_FetchedAt"] = now
+                row["_FetchedMin"] = row.get("Min", "--")
                 self.trains.append(row)
 
             if not self.trains:
@@ -480,13 +471,6 @@ class MetroWidget(Widget):
 
         if changed:
             self._log(f"replaced trains old={old_count} new={new_count} {self._cache_status()}")
-
-    def _train_projection_key(self, train):
-        return (
-            str(train.get("Line", "") or "").strip().upper(),
-            str(train.get("Destination", "") or "").strip(),
-            str(train.get("_FetchedMin", train.get("Min", "--")) or "--").strip(),
-        )
 
     def _project_train_minutes(self, trains, now=None):
         """Return a draw-time snapshot with arrival minutes aged from fetch time."""
