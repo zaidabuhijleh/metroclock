@@ -177,10 +177,14 @@ class MetroWidget(Widget):
         return f"cached={count} last_success_age={age_text}"
 
     def _format_train_rows(self, trains, limit=8):
-        parts = [
-            f"{row.get('Line', '?')} {row.get('Destination', '?')} {row.get('Min', '?')}"
-            for row in trains[:limit]
-        ]
+        parts = []
+        for row in trains[:limit]:
+            source = row.get("_Source")
+            source_text = f" src={source}" if source else ""
+            parts.append(
+                f"{row.get('Line', '?')} {row.get('Destination', '?')} "
+                f"{row.get('Min', '?')}{source_text}"
+            )
         if len(trains) > limit:
             parts.append(f"+{len(trains) - limit} more")
         return "[" + "; ".join(parts) + "]"
@@ -194,7 +198,8 @@ class MetroWidget(Widget):
             age = max(0, int(now - fetched_at))
             parts.append(
                 f"{row.get('Line', '?')} {row.get('Destination', '?')} "
-                f"api={row.get('_FetchedMin', '?')} display={row.get('Min', '?')} age={age}s"
+                f"api={row.get('_FetchedMin', '?')} display={row.get('Min', '?')} "
+                f"age={age}s src={row.get('_Source', '?')}"
             )
         if len(projected) > limit:
             parts.append(f"+{len(projected) - limit} more")
@@ -350,6 +355,7 @@ class MetroWidget(Widget):
             "Line": line,
             "Destination": dest,
             "Min": mins,
+            "_Source": "website",
         }
 
     def _fetch_wmata_legacy(self, station_codes):
@@ -398,6 +404,7 @@ class MetroWidget(Widget):
                         "Line": line,
                         "Destination": dest,
                         "Min": mins,
+                        "_Source": "legacy",
                     }
                 )
 
