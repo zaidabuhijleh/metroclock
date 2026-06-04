@@ -62,6 +62,21 @@ TTC_ROUTE_TO_LINE = {
     "sheppard_subway": "4",
 }
 
+WMATA_WEBSITE_STATION_IDS = {
+    # The WMATA website's GTFS station ids differ from the legacy prediction
+    # API station codes on the Green/Yellow segment around Georgia Ave.
+    "E01": "E01",  # Mt Vernon Sq
+    "E02": "E02",  # Shaw-Howard U
+    "E10": "E03",  # U Street
+    "E03": "E04",  # Columbia Heights
+    "E04": "E05",  # Georgia Av-Petworth
+    "E05": "E06",  # Fort Totten
+    "E06": "E07",  # West Hyattsville
+    "E07": "E08",  # Hyattsville Crossing
+    "E08": "E09",  # College Park-U of Md
+    "E09": "E10",  # Greenbelt
+}
+
 
 class MetroWidget(Widget):
     def __init__(self, width, height):
@@ -231,13 +246,15 @@ class MetroWidget(Widget):
             return True
 
         website_success, website_rows = self._fetch_wmata_website_rows(station_codes)
-        if website_success:
+        if website_success and website_rows:
             deduped = self._dedupe_wmata_rows(website_rows)
             self._log(f"WMATA website rows {self._format_train_rows(deduped)}")
             now = time.time()
             self._mark_fetch_success(now)
             self._replace_trains(deduped, now)
             return True
+        if website_success:
+            self._log("WMATA website returned no rows; falling back to legacy API")
 
         return self._fetch_wmata_legacy(station_codes)
 
@@ -247,13 +264,17 @@ class MetroWidget(Widget):
 
         for station_code in station_codes:
             try:
+                website_station_id = self._wmata_website_station_id(station_code)
                 url = (
                     "https://www.wmata.com/ridertools/api/station/"
-                    f"WMATA_RAIL_BUS_GTFS_STATIC%3ASTN_{station_code}?v=1"
+                    f"WMATA_RAIL_BUS_GTFS_STATIC%3ASTN_{website_station_id}?v=1"
                 )
                 resp = requests.get(url, timeout=8)
                 if resp.status_code != 200:
-                    print(f"WMATA website API Error ({station_code}): status {resp.status_code}")
+                    print(
+                        "WMATA website API Error "
+                        f"({station_code}->{website_station_id}): status {resp.status_code}"
+                    )
                     continue
                 data = resp.json()
             except Exception as exc:
@@ -292,6 +313,10 @@ class MetroWidget(Widget):
             )
             return False, []
         return any_success, valid
+
+    def _wmata_website_station_id(self, station_code):
+        code = str(station_code or "").strip().upper()
+        return WMATA_WEBSITE_STATION_IDS.get(code, code)
 
     def _website_stop_to_train_row(self, stop, override_min=None):
         if not isinstance(stop, dict):
