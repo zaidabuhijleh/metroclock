@@ -223,17 +223,115 @@ class MetroWidget(Widget):
         return "cut" if value == "cut" else "slide"
 
     def _fetch_wmata(self):
-        headers = {}
-        key = str(getattr(config, "WMATA_API_KEY", "") or "").strip()
-        if key:
-            headers["api_key"] = key
-
         station_codes = self._wmata_station_codes()
         if not station_codes:
             now = time.time()
             self._replace_trains([], now)
             self._mark_fetch_success(now)
             return True
+
+        website_success, website_rows = self._fetch_wmata_website_rows(station_codes)
+        if website_success:
+            deduped = self._dedupe_wmata_rows(website_rows)
+            self._log(f"WMATA website rows {self._format_train_rows(deduped)}")
+            now = time.time()
+            self._mark_fetch_success(now)
+            self._replace_trains(deduped, now)
+            return True
+
+        return self._fetch_wmata_legacy(station_codes)
+
+    def _fetch_wmata_website_rows(self, station_codes):
+        valid = []
+        any_success = False
+
+        for station_code in station_codes:
+            try:
+                url = (
+                    "https://www.wmata.com/ridertools/api/station/"
+                    f"WMATA_RAIL_BUS_GTFS_STATIC%3ASTN_{station_code}?v=1"
+                )
+                resp = requests.get(url, timeout=8)
+                if resp.status_code != 200:
+                    print(f"WMATA website API Error ({station_code}): status {resp.status_code}")
+                    continue
+                data = resp.json()
+            except Exception as exc:
+                print(f"WMATA website API Error ({station_code}): {exc}")
+                continue
+
+            platforms = data.get("stopsByPlatform", [])
+            if not isinstance(platforms, list):
+                continue
+
+            any_success = True
+            for platform in platforms:
+                if not isinstance(platform, dict):
+                    continue
+                for direction_key in ("directionOne", "directionTwo"):
+                    direction = platform.get(direction_key, {})
+                    if not isinstance(direction, dict):
+                        continue
+                    for stop in direction.get("stops", []) or []:
+                        row = self._website_stop_to_train_row(stop)
+                        if row is not None:
+                            valid.append(row)
+                    for stop in direction.get("arrivingStops", []) or []:
+                        row = self._website_stop_to_train_row(stop, override_min="0")
+                        if row is not None:
+                            valid.append(row)
+                    for stop in direction.get("brdStops", []) or []:
+                        row = self._website_stop_to_train_row(stop, override_min="0")
+                        if row is not None:
+                            valid.append(row)
+
+        if not any_success and self._should_keep_stale_on_failure():
+            self._log(
+                "WMATA website keeping stale cache "
+                f"fetched_rows={len(valid)} {self._cache_status()}"
+            )
+            return False, []
+        return any_success, valid
+
+    def _website_stop_to_train_row(self, stop, override_min=None):
+        if not isinstance(stop, dict):
+            return None
+
+        trip = stop.get("trip", {})
+        if not isinstance(trip, dict):
+            trip = {}
+
+        line = str(trip.get("shortName", "") or "").strip().upper()
+        dest = str(stop.get("headsign", "") or "").strip()
+        if not line or not dest:
+            return None
+        line = line[:2]
+        if not self._is_wmata_line_enabled(line):
+            return None
+        if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
+            return None
+
+        raw_mins = override_min
+        if raw_mins is None:
+            raw_mins = stop.get("arrivalTimeMins")
+        mins = self._normalize_wmata_mins(raw_mins)
+        if mins == "--":
+            return None
+        mins_int = int(mins)
+        if not self._is_in_arrival_window(mins_int):
+            return None
+
+        return {
+            "Line": line,
+            "Destination": dest,
+            "Min": mins,
+        }
+
+    def _fetch_wmata_legacy(self, station_codes):
+        headers = {}
+        key = str(getattr(config, "WMATA_API_KEY", "") or "").strip()
+        if key:
+            headers["api_key"] = key
 
         valid = []
         any_success = False
@@ -278,17 +376,10 @@ class MetroWidget(Widget):
                     }
                 )
 
-        deduped = []
-        seen = set()
-        for row in sorted(valid, key=lambda item: (int(item["Min"]), item["Line"], item["Destination"])):
-            key = (row["Line"], row["Destination"], row["Min"])
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(row)
+        deduped = self._dedupe_wmata_rows(valid)
 
         if any_success:
-            self._log(f"WMATA fetched rows {self._format_train_rows(deduped)}")
+            self._log(f"WMATA legacy rows {self._format_train_rows(deduped)}")
 
         if not any_success and self._should_keep_stale_on_failure():
             self._log(
@@ -303,6 +394,17 @@ class MetroWidget(Widget):
             return True
         self._replace_trains([], time.time())
         return False
+
+    def _dedupe_wmata_rows(self, rows):
+        deduped = []
+        seen = set()
+        for row in sorted(rows, key=lambda item: (int(item["Min"]), item["Line"], item["Destination"])):
+            key = (row["Line"], row["Destination"], row["Min"])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        return deduped
 
     def _fetch_nyc(self):
         if gtfs_realtime_pb2 is None:
