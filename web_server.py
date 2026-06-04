@@ -627,6 +627,41 @@ def preview_png():
     )
 
 
+@app.route("/preview.pngstream")
+def preview_pngstream():
+    boundary = "frame"
+    target_fps = 10
+    target_interval = 1.0 / target_fps
+
+    def generate():
+        while True:
+            frame = get_latest_frame()
+            if frame is None:
+                time.sleep(target_interval)
+                continue
+            buf = io.BytesIO()
+            try:
+                frame.convert("RGB").save(buf, format="PNG")
+            except Exception:
+                time.sleep(target_interval)
+                continue
+            png = buf.getvalue()
+            yield (
+                b"--" + boundary.encode() + b"\r\n"
+                + b"Content-Type: image/png\r\n"
+                + f"Content-Length: {len(png)}\r\n\r\n".encode()
+                + png
+                + b"\r\n"
+            )
+            time.sleep(target_interval)
+
+    return Response(
+        generate(),
+        mimetype=f"multipart/x-mixed-replace; boundary={boundary}",
+        headers={"Cache-Control": "no-store", "Connection": "close"},
+    )
+
+
 @app.route("/preview.mjpg")
 def preview_mjpg():
     boundary = "frame"
