@@ -102,11 +102,10 @@ class MetroWidget(Widget):
         self._last_success_ts = 0.0
         self._initial_fetch_done = False
         self._config_signature = None
-        self._last_empty_draw_log = 0.0
-        self._fetch_interval_seconds = 15.0
+        self._fetch_interval_seconds = 30.0
         self._failure_retry_seconds = 10.0
         # Keep stale rows long enough to bridge several missed polls plus
-        # quick retries. The displayed ETAs continue aging locally.
+        # quick retries. Displayed ETAs remain exactly as last fetched.
         self._max_stale_seconds = 120.0
 
         # Animation state
@@ -145,17 +144,10 @@ class MetroWidget(Widget):
                 self._last_config_reload = now
             signature = self._current_config_signature()
         if signature != self._config_signature:
-            self._log(
-                "config changed; invalidating cache "
-                f"old={self._config_signature!r} new={signature!r}"
-            )
             self._config_signature = signature
             self._invalidate_cached_rows(now)
             self.last_fetch = 0.0
             self._fetch_wake.set()  # refetch immediately for the new config
-
-    def _log(self, message):
-        print(f"[MetroWidget {time.strftime('%H:%M:%S')}] {message}", flush=True)
 
     def _fetch_worker(self):
         """Daemon loop — resync frequently, retry quickly after failures."""
@@ -183,42 +175,6 @@ class MetroWidget(Widget):
         with self._trains_lock:
             has_trains = bool(self.trains)
         return has_trains and (time.time() - self._last_success_ts) < self._max_stale_seconds
-
-    def _cache_status(self):
-        with self._trains_lock:
-            count = len(self.trains)
-        age = time.time() - self._last_success_ts if self._last_success_ts else None
-        age_text = "never" if age is None else f"{age:.1f}s"
-        return f"cached={count} last_success_age={age_text}"
-
-    def _format_train_rows(self, trains, limit=8):
-        parts = []
-        for row in trains[:limit]:
-            source = row.get("_Source")
-            source_text = f" src={source}" if source else ""
-            parts.append(
-                f"{row.get('Line', '?')} {row.get('Destination', '?')} "
-                f"{row.get('Min', '?')}{source_text}"
-            )
-        if len(trains) > limit:
-            parts.append(f"+{len(trains) - limit} more")
-        return "[" + "; ".join(parts) + "]"
-
-    def _format_projected_rows(self, trains, limit=8):
-        now = time.time()
-        projected = self._project_train_minutes(trains, now=now)
-        parts = []
-        for row in projected[:limit]:
-            fetched_at = self._safe_float(row.get("_FetchedAt"), now)
-            age = max(0, int(now - fetched_at))
-            parts.append(
-                f"{row.get('Line', '?')} {row.get('Destination', '?')} "
-                f"api={row.get('_FetchedMin', '?')} display={row.get('Min', '?')} "
-                f"age={age}s src={row.get('_Source', '?')}"
-            )
-        if len(projected) > limit:
-            parts.append(f"+{len(projected) - limit} more")
-        return "[" + "; ".join(parts) + "]"
 
     def _mark_fetch_success(self, timestamp=None):
         timestamp = time.time() if timestamp is None else float(timestamp)
@@ -268,13 +224,10 @@ class MetroWidget(Widget):
         website_success, website_rows = self._fetch_wmata_website_rows(station_codes)
         if website_success and website_rows:
             deduped = self._dedupe_wmata_rows(website_rows)
-            self._log(f"WMATA website rows {self._format_train_rows(deduped)}")
             now = time.time()
             self._mark_fetch_success(now)
             self._replace_trains(deduped, now)
             return True
-        if website_success:
-            self._log("WMATA website returned no rows; falling back to legacy API")
 
         return self._fetch_wmata_legacy(station_codes)
 
@@ -327,10 +280,6 @@ class MetroWidget(Widget):
                             valid.append(row)
 
         if not any_success and self._should_keep_stale_on_failure():
-            self._log(
-                "WMATA website keeping stale cache "
-                f"fetched_rows={len(valid)} {self._cache_status()}"
-            )
             return False, []
         return any_success, valid
 
@@ -369,7 +318,6 @@ class MetroWidget(Widget):
             "Line": line,
             "Destination": dest,
             "Min": mins,
-            "_Source": "website",
         }
 
     def _wmata_website_line_code(self, trip):
@@ -427,20 +375,12 @@ class MetroWidget(Widget):
                         "Line": line,
                         "Destination": dest,
                         "Min": mins,
-                        "_Source": "legacy",
                     }
                 )
 
         deduped = self._dedupe_wmata_rows(valid)
 
-        if any_success:
-            self._log(f"WMATA legacy rows {self._format_train_rows(deduped)}")
-
         if not any_success and self._should_keep_stale_on_failure():
-            self._log(
-                "WMATA keeping stale cache "
-                f"any_success={any_success} fetched_rows={len(deduped)} {self._cache_status()}"
-            )
             return False
         if any_success:
             now = time.time()
@@ -541,10 +481,6 @@ class MetroWidget(Widget):
             for row in deduped
         ]
         if not any_success and self._should_keep_stale_on_failure():
-            self._log(
-                "NYC keeping stale cache "
-                f"any_success={any_success} fetched_rows={len(trains)} {self._cache_status()}"
-            )
             return False
         if any_success:
             now = time.time()
@@ -603,10 +539,6 @@ class MetroWidget(Widget):
             for row in deduped
         ]
         if source_count == 0 and self._should_keep_stale_on_failure():
-            self._log(
-                "TTC keeping stale cache "
-                f"source_count={source_count} fetched_rows={len(trains)} {self._cache_status()}"
-            )
             return False
         if source_count > 0:
             now = time.time()
@@ -654,18 +586,11 @@ class MetroWidget(Widget):
         return output
 
     def _replace_trains(self, trains, now):
-        changed = False
-        old_count = 0
-        new_count = 0
         with self._trains_lock:
             previous_trains = self.trains
             self.trains = []
             for train in trains:
-                row = dict(train)
-                row["_FetchedAt"] = now
-                row["_FetchedMin"] = row.get("Min", "--")
-                row["_EtaTs"] = self._eta_timestamp(row.get("Min", "--"), now)
-                self.trains.append(row)
+                self.trains.append(dict(train))
 
             if not self.trains:
                 self.scroll_index = 0
@@ -674,53 +599,6 @@ class MetroWidget(Widget):
 
             if self.trains != previous_trains:
                 self.page_start_time = now
-                changed = True
-                old_count = len(previous_trains)
-                new_count = len(self.trains)
-
-        if changed:
-            self._log(f"replaced trains old={old_count} new={new_count} {self._cache_status()}")
-            with self._trains_lock:
-                rows = list(self.trains)
-            self._log(f"projected rows {self._format_projected_rows(rows)}")
-
-    def _project_train_minutes(self, trains, now=None):
-        """Return a draw-time snapshot with arrival minutes aged from fetch time."""
-        now = time.time() if now is None else now
-        projected = []
-
-        for train in trains:
-            row = dict(train)
-            raw_min = str(row.get("_FetchedMin", row.get("Min", "--")) or "--").strip()
-            match = re.search(r"\d+", raw_min)
-            if not match:
-                projected.append(row)
-                continue
-
-            try:
-                eta_ts = float(row.get("_EtaTs", 0) or 0)
-            except Exception:
-                eta_ts = 0
-
-            if eta_ts <= 0:
-                try:
-                    fetched_at = float(row.get("_FetchedAt", self.last_fetch) or self.last_fetch or now)
-                except Exception:
-                    fetched_at = now
-                eta_ts = fetched_at + (int(match.group(0)) * 60)
-
-            remaining_seconds = max(0, eta_ts - now)
-            row["Min"] = str(int((remaining_seconds + 59) // 60))
-            projected.append(row)
-
-        return projected
-
-    def _eta_timestamp(self, raw_min, observed_at):
-        text = str(raw_min or "").strip()
-        match = re.search(r"\d+", text)
-        if not match:
-            return None
-        return float(observed_at) + (int(match.group(0)) * 60)
 
     def _normalize_wmata_mins(self, raw):
         text = str(raw or "").strip().upper()
@@ -748,12 +626,6 @@ class MetroWidget(Widget):
     def _safe_int(self, value, fallback):
         try:
             return int(value)
-        except Exception:
-            return fallback
-
-    def _safe_float(self, value, fallback):
-        try:
-            return float(value)
         except Exception:
             return fallback
 
@@ -1095,7 +967,7 @@ class MetroWidget(Widget):
         # Snapshot the trains list under the lock so the rest of draw() sees
         # a stable view, even if the worker thread replaces it mid-frame.
         with self._trains_lock:
-            trains = self._project_train_minutes(self.trains)
+            trains = list(self.trains)
 
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
@@ -1109,10 +981,6 @@ class MetroWidget(Widget):
                     label = "NYC NO DATA"
                 if self._metro_system() == "ttc":
                     label = "TTC NO DATA"
-            now = time.time()
-            if now - self._last_empty_draw_log >= 1.0:
-                self._last_empty_draw_log = now
-                self._log(f"draw empty label={label!r} {self._cache_status()}")
             draw.text((1, 12), label, font=self.font_small, fill=config.COLOR_GREY)
             return self.canvas
 
