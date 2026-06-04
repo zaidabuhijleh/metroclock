@@ -1,5 +1,4 @@
 import hmac
-import importlib
 import os
 import socket
 import subprocess
@@ -563,7 +562,6 @@ def index():
 
 @app.route("/api/status")
 def api_status():
-    importlib.reload(config)
     cfg = config_manager.read_config()
     masked = _mask_config(cfg)
     masked["ip"] = _get_ip()

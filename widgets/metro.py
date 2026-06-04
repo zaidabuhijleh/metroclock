@@ -1,4 +1,3 @@
-import importlib
 import json
 import os
 import re
@@ -9,6 +8,7 @@ import requests
 from PIL import ImageDraw, ImageFont
 
 import config
+import config_manager
 from core import scroll
 from core.widget import Widget
 from widgets.metrolines import NYC_LINE_COLORS, TTC_LINE_COLORS, WMATA_LINE_COLORS
@@ -106,11 +106,11 @@ class MetroWidget(Widget):
     def update(self):
         """Lightweight: reload config + nudge worker on changes. No HTTP here."""
         now = time.time()
-        if now - self._last_config_reload >= 1.0:
-            importlib.reload(config)
-            self._last_config_reload = now
-
-        signature = self._current_config_signature()
+        with config_manager.CONFIG_LOCK:
+            if now - self._last_config_reload >= 1.0:
+                config_manager.reload_config()
+                self._last_config_reload = now
+            signature = self._current_config_signature()
         if signature != self._config_signature:
             self._log(
                 "config changed; invalidating cache "

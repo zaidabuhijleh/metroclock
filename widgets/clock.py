@@ -1,4 +1,3 @@
-import importlib
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -6,6 +5,7 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+import config_manager
 import web_server
 from core import scroll
 from core.widget import Widget
@@ -540,7 +540,7 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- state
 
     def update(self):
-        importlib.reload(config)
+        config_manager.reload_config()
 
         if web_server.get_display_mode() != "clock_widget":
             return

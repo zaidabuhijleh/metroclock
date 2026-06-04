@@ -1,11 +1,18 @@
 import importlib
 import json
 import os
+import threading
 
 import config
 
 
 EDITABLE_FIELDS = set(getattr(config, "RUNTIME_EDITABLE_FIELDS", set()))
+CONFIG_LOCK = threading.RLock()
+
+
+def reload_config():
+    with CONFIG_LOCK:
+        return importlib.reload(config)
 
 
 def _runtime_config_path() -> str:
@@ -38,11 +45,12 @@ def _save_runtime_config(data: dict):
 
 
 def read_config() -> dict:
-    importlib.reload(config)
-    result = {}
-    for field in EDITABLE_FIELDS:
-        result[field] = getattr(config, field, None)
-    return result
+    with CONFIG_LOCK:
+        reload_config()
+        result = {}
+        for field in EDITABLE_FIELDS:
+            result[field] = getattr(config, field, None)
+        return result
 
 
 def write_config(updates: dict) -> dict:
@@ -50,12 +58,13 @@ def write_config(updates: dict) -> dict:
     if not filtered:
         return {}
 
-    runtime_data = _load_runtime_config()
-    changed = {}
-    for key, value in filtered.items():
-        runtime_data[key] = value
-        changed[key] = value
+    with CONFIG_LOCK:
+        runtime_data = _load_runtime_config()
+        changed = {}
+        for key, value in filtered.items():
+            runtime_data[key] = value
+            changed[key] = value
 
-    _save_runtime_config(runtime_data)
-    importlib.reload(config)
-    return changed
+        _save_runtime_config(runtime_data)
+        reload_config()
+        return changed
