@@ -61,6 +61,9 @@ class RuntimeState:
         self._brightness_lock = threading.Lock()
         self._brightness = None
 
+        self._metro_status_lock = threading.Lock()
+        self._metro_last_success_ts = None
+
         self._device_id_lock = threading.Lock()
         self._device_id = None
 
@@ -161,6 +164,17 @@ class RuntimeState:
     def set_brightness(self, brightness):
         with self._brightness_lock:
             self._brightness = max(1, min(100, int(brightness)))
+
+    def get_metro_last_success_ts(self):
+        with self._metro_status_lock:
+            return self._metro_last_success_ts
+
+    def set_metro_last_success_ts(self, timestamp):
+        with self._metro_status_lock:
+            try:
+                self._metro_last_success_ts = float(timestamp)
+            except Exception:
+                self._metro_last_success_ts = None
 
     def get_weather_preview(self):
         with self._weather_preview_lock:
@@ -497,6 +511,14 @@ def set_brightness(brightness):
     _runtime_state.set_brightness(brightness)
 
 
+def get_metro_last_success_ts():
+    return _runtime_state.get_metro_last_success_ts()
+
+
+def set_metro_last_success_ts(timestamp):
+    _runtime_state.set_metro_last_success_ts(timestamp)
+
+
 def get_weather_preview():
     return _runtime_state.get_weather_preview()
 
@@ -567,6 +589,7 @@ def api_status():
     masked["ip"] = _get_ip()
     masked["hostname"] = socket.gethostname()
     masked["display_mode"] = get_display_mode()
+    masked["metro_last_success_ts"] = get_metro_last_success_ts()
     masked["weather_preview"] = get_weather_preview()
     masked["ambient_scene"] = get_ambient_scene()
     masked["pomodoro_state"] = get_pomodoro_state()

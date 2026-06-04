@@ -9,6 +9,7 @@ from PIL import ImageDraw, ImageFont
 
 import config
 import config_manager
+import web_server
 from core import scroll
 from core.widget import Widget
 from widgets.metrolines import NYC_LINE_COLORS, TTC_LINE_COLORS, WMATA_LINE_COLORS
@@ -72,11 +73,11 @@ class MetroWidget(Widget):
         self._initial_fetch_done = False
         self._config_signature = None
         self._last_empty_draw_log = 0.0
-        self._fetch_interval_seconds = 120.0
+        self._fetch_interval_seconds = 30.0
         self._failure_retry_seconds = 10.0
-        # Keep stale rows long enough to bridge a missed 2-minute poll plus
+        # Keep stale rows long enough to bridge several missed polls plus
         # quick retries. The displayed ETAs continue aging locally.
-        self._max_stale_seconds = 180.0
+        self._max_stale_seconds = 120.0
 
         # Animation state
         self.page_start_time = time.time()
@@ -127,7 +128,7 @@ class MetroWidget(Widget):
         print(f"[MetroWidget {time.strftime('%H:%M:%S')}] {message}", flush=True)
 
     def _fetch_worker(self):
-        """Daemon loop — resync every 2 minutes, retry quickly after failures."""
+        """Daemon loop — resync frequently, retry quickly after failures."""
         while True:
             succeeded = False
             try:
@@ -159,6 +160,20 @@ class MetroWidget(Widget):
         age = time.time() - self._last_success_ts if self._last_success_ts else None
         age_text = "never" if age is None else f"{age:.1f}s"
         return f"cached={count} last_success_age={age_text}"
+
+    def _format_train_rows(self, trains, limit=8):
+        parts = [
+            f"{row.get('Line', '?')} {row.get('Destination', '?')} {row.get('Min', '?')}"
+            for row in trains[:limit]
+        ]
+        if len(trains) > limit:
+            parts.append(f"+{len(trains) - limit} more")
+        return "[" + "; ".join(parts) + "]"
+
+    def _mark_fetch_success(self, timestamp=None):
+        timestamp = time.time() if timestamp is None else float(timestamp)
+        self._last_success_ts = timestamp
+        web_server.set_metro_last_success_ts(timestamp)
 
     def _current_config_signature(self):
         return (
@@ -200,8 +215,9 @@ class MetroWidget(Widget):
 
         station_codes = self._wmata_station_codes()
         if not station_codes:
-            self._replace_trains([], time.time())
-            self._last_success_ts = time.time()
+            now = time.time()
+            self._replace_trains([], now)
+            self._mark_fetch_success(now)
             return True
 
         valid = []
@@ -256,6 +272,9 @@ class MetroWidget(Widget):
             seen.add(key)
             deduped.append(row)
 
+        if any_success:
+            self._log(f"WMATA fetched rows {self._format_train_rows(deduped)}")
+
         if not any_success and self._should_keep_stale_on_failure():
             self._log(
                 "WMATA keeping stale cache "
@@ -263,8 +282,9 @@ class MetroWidget(Widget):
             )
             return False
         if any_success:
-            self._last_success_ts = time.time()
-            self._replace_trains(deduped, time.time())
+            now = time.time()
+            self._mark_fetch_success(now)
+            self._replace_trains(deduped, now)
             return True
         self._replace_trains([], time.time())
         return False
@@ -277,8 +297,9 @@ class MetroWidget(Widget):
         feed_urls = self._nyc_feed_urls()
         stop_ids = self._nyc_stop_ids()
         if not feed_urls or not stop_ids:
-            self._replace_trains([], time.time())
-            self._last_success_ts = time.time()
+            now = time.time()
+            self._replace_trains([], now)
+            self._mark_fetch_success(now)
             return True
 
         now_ts = int(time.time())
@@ -354,8 +375,9 @@ class MetroWidget(Widget):
             )
             return False
         if any_success:
-            self._last_success_ts = time.time()
-            self._replace_trains(trains, time.time())
+            now = time.time()
+            self._mark_fetch_success(now)
+            self._replace_trains(trains, now)
             return True
         self._replace_trains([], time.time())
         return False
@@ -364,8 +386,9 @@ class MetroWidget(Widget):
         station_id = self._ttc_station_id()
         stop_uris = self._ttc_stop_uris()
         if not stop_uris:
-            self._replace_trains([], time.time())
-            self._last_success_ts = time.time()
+            now = time.time()
+            self._replace_trains([], now)
+            self._mark_fetch_success(now)
             return True
 
         now_ts = int(time.time())
@@ -414,8 +437,9 @@ class MetroWidget(Widget):
             )
             return False
         if source_count > 0:
-            self._last_success_ts = time.time()
-            self._replace_trains(trains, time.time())
+            now = time.time()
+            self._mark_fetch_success(now)
+            self._replace_trains(trains, now)
             return True
         self._replace_trains([], time.time())
         return False
