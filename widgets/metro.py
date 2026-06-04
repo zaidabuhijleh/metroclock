@@ -175,6 +175,7 @@ class MetroWidget(Widget):
             return
 
         valid = []
+        any_success = False
 
         for station_code in station_codes:
             try:
@@ -187,6 +188,8 @@ class MetroWidget(Widget):
 
             if "Trains" not in data:
                 continue
+
+            any_success = True
 
             for train in data.get("Trains", []):
                 line = str(train.get("Line", "") or "").strip().upper()
@@ -223,6 +226,9 @@ class MetroWidget(Widget):
             seen.add(key)
             deduped.append(row)
 
+        if not any_success and self.trains:
+            # All upstream calls failed — keep stale data rather than blanking the display.
+            return
         self._replace_trains(deduped, time.time())
 
     def _fetch_nyc(self):
@@ -238,6 +244,7 @@ class MetroWidget(Widget):
 
         now_ts = int(time.time())
         arrivals = []
+        any_success = False
 
         for feed_url in feed_urls:
             try:
@@ -251,6 +258,8 @@ class MetroWidget(Widget):
             except Exception as exc:
                 print(f"NYC API Error for {feed_url}: {exc}")
                 continue
+
+            any_success = True
 
             for entity in feed.entity:
                 if not entity.HasField("trip_update"):
@@ -299,6 +308,8 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
+        if not any_success and self.trains:
+            return
         self._replace_trains(trains, time.time())
 
     def _fetch_ttc(self):
@@ -347,6 +358,8 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
+        if source_count == 0 and self.trains:
+            return
         self._replace_trains(trains, time.time())
 
     def _ttc_collect_arrivals(self, data, now_ts, allowed_stop_uris):
