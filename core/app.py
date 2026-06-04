@@ -199,6 +199,7 @@ class MetroClockApp:
             frame = self._widgets.render_mode(mode)
             brightness = self._state_provider.get_brightness()
             self._display.present(frame, brightness)
+            web_server.set_latest_frame(frame)
             time.sleep(self._loop_delay)
         except Exception as exc:
             print(f"Render loop error ({mode}): {exc}")

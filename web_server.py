@@ -1,5 +1,6 @@
 import hmac
 import importlib
+import io
 import os
 import socket
 import subprocess
@@ -10,7 +11,7 @@ import uuid
 import config
 import config_manager
 from core.modes import DEFAULT_MODE_CATALOG
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 API_VERSION = "1.0"
 
@@ -67,6 +68,9 @@ class RuntimeState:
 
         self._app_version_lock = threading.Lock()
         self._app_version = None
+
+        self._preview_lock = threading.Lock()
+        self._preview_frame = None  # latest PIL.Image, copied on read
 
     @staticmethod
     def _device_id_path():
@@ -162,6 +166,19 @@ class RuntimeState:
     def set_brightness(self, brightness):
         with self._brightness_lock:
             self._brightness = max(1, min(100, int(brightness)))
+
+    def set_latest_frame(self, image):
+        # Keep a defensive copy; the render loop mutates its own buffer.
+        try:
+            snapshot = image.copy()
+        except Exception:
+            return
+        with self._preview_lock:
+            self._preview_frame = snapshot
+
+    def get_latest_frame(self):
+        with self._preview_lock:
+            return self._preview_frame
 
     def get_weather_preview(self):
         with self._weather_preview_lock:
@@ -498,6 +515,14 @@ def set_brightness(brightness):
     _runtime_state.set_brightness(brightness)
 
 
+def set_latest_frame(image):
+    _runtime_state.set_latest_frame(image)
+
+
+def get_latest_frame():
+    return _runtime_state.get_latest_frame()
+
+
 def get_weather_preview():
     return _runtime_state.get_weather_preview()
 
@@ -583,6 +608,23 @@ def api_status():
 def api_settings_get():
     cfg = config_manager.read_config()
     return jsonify(_mask_config(cfg))
+
+
+@app.route("/preview.png")
+def preview_png():
+    frame = get_latest_frame()
+    if frame is None:
+        return jsonify({"ok": False, "error": "No frame yet"}), 503
+    buf = io.BytesIO()
+    try:
+        frame.convert("RGB").save(buf, format="PNG")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return Response(
+        buf.getvalue(),
+        mimetype="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.route("/api/clock/styles")
