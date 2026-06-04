@@ -68,7 +68,12 @@ class MetroWidget(Widget):
         self.trains = []
         self.scroll_index = 0
         self.last_fetch = 0.0
+        self._last_success_ts = 0.0
+        self._initial_fetch_done = False
         self._config_signature = None
+        # Beyond this many seconds since the last successful upstream call,
+        # stop treating the cached trains list as fresh and let it blank.
+        self._max_stale_seconds = 120.0
 
         # Animation state
         self.page_start_time = time.time()
@@ -112,7 +117,7 @@ class MetroWidget(Widget):
             self._fetch_wake.set()  # refetch immediately for the new config
 
     def _fetch_worker(self):
-        """Daemon loop — refetch every 30s, or sooner when poked."""
+        """Daemon loop — refetch every 30s normally, every 10s after a failure."""
         while True:
             try:
                 system = self._metro_system()
@@ -125,9 +130,18 @@ class MetroWidget(Widget):
                 self.last_fetch = time.time()
             except Exception as exc:
                 print(f"Metro worker error: {exc}")
-            # Wait up to 30s, but wake immediately if config changed.
-            self._fetch_wake.wait(timeout=30.0)
+            finally:
+                self._initial_fetch_done = True
+            # If the most recent attempt didn't succeed, retry sooner so the
+            # display recovers quickly instead of waiting a full 30s cycle.
+            succeeded_recently = (time.time() - self._last_success_ts) < 5.0
+            wait_seconds = 30.0 if succeeded_recently else 10.0
+            self._fetch_wake.wait(timeout=wait_seconds)
             self._fetch_wake.clear()
+
+    def _should_keep_stale_on_failure(self):
+        """True when we have cached trains and the cache is still within the grace window."""
+        return bool(self.trains) and (time.time() - self._last_success_ts) < self._max_stale_seconds
 
     def _current_config_signature(self):
         return (
@@ -172,11 +186,12 @@ class MetroWidget(Widget):
             return
 
         valid = []
+        any_success = False
 
         for station_code in station_codes:
             try:
                 url = f"https://api.wmata.com/StationPrediction.svc/json/GetPrediction/{station_code}"
-                resp = requests.get(url, headers=headers, timeout=6)
+                resp = requests.get(url, headers=headers, timeout=8)
                 data = resp.json()
             except Exception as exc:
                 print(f"WMATA API Error ({station_code}): {exc}")
@@ -184,6 +199,8 @@ class MetroWidget(Widget):
 
             if "Trains" not in data:
                 continue
+
+            any_success = True
 
             for train in data.get("Trains", []):
                 line = str(train.get("Line", "") or "").strip().upper()
@@ -220,6 +237,10 @@ class MetroWidget(Widget):
             seen.add(key)
             deduped.append(row)
 
+        if not any_success and self._should_keep_stale_on_failure():
+            return
+        if any_success:
+            self._last_success_ts = time.time()
         self._replace_trains(deduped, time.time())
 
     def _fetch_nyc(self):
@@ -235,10 +256,11 @@ class MetroWidget(Widget):
 
         now_ts = int(time.time())
         arrivals = []
+        any_success = False
 
         for feed_url in feed_urls:
             try:
-                response = requests.get(feed_url, timeout=6)
+                response = requests.get(feed_url, timeout=8)
                 if response.status_code != 200:
                     print(f"NYC API Error: status {response.status_code} for {feed_url}")
                     continue
@@ -248,6 +270,8 @@ class MetroWidget(Widget):
             except Exception as exc:
                 print(f"NYC API Error for {feed_url}: {exc}")
                 continue
+
+            any_success = True
 
             for entity in feed.entity:
                 if not entity.HasField("trip_update"):
@@ -296,6 +320,10 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
+        if not any_success and self._should_keep_stale_on_failure():
+            return
+        if any_success:
+            self._last_success_ts = time.time()
         self._replace_trains(trains, time.time())
 
     def _fetch_ttc(self):
@@ -344,6 +372,10 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
+        if source_count == 0 and self._should_keep_stale_on_failure():
+            return
+        if source_count > 0:
+            self._last_success_ts = time.time()
         self._replace_trains(trains, time.time())
 
     def _ttc_collect_arrivals(self, data, now_ts, allowed_stop_uris):
@@ -762,17 +794,20 @@ class MetroWidget(Widget):
         # Snapshot the trains list under the lock so the rest of draw() sees
         # a stable view, even if the worker thread replaces it mid-frame.
         with self._trains_lock:
-            self.trains = list(self.trains)
+            self.trains = self._project_train_minutes(self.trains)
 
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
         if not self.trains:
-            label = "NO TRAINS"
-            if self._metro_system() == "nyc":
-                label = "NYC NO DATA"
-            if self._metro_system() == "ttc":
-                label = "TTC NO DATA"
+            if not self._initial_fetch_done:
+                label = "LOADING..."
+            else:
+                label = "NO TRAINS"
+                if self._metro_system() == "nyc":
+                    label = "NYC NO DATA"
+                if self._metro_system() == "ttc":
+                    label = "TTC NO DATA"
             draw.text((1, 12), label, font=self.font_small, fill=config.COLOR_GREY)
             return self.canvas
 
