@@ -72,9 +72,11 @@ class MetroWidget(Widget):
         self._initial_fetch_done = False
         self._config_signature = None
         self._last_empty_draw_log = 0.0
-        # Keep stale rows long enough to bridge transient upstream gaps. The
-        # displayed ETAs still age locally while cached rows are retained.
-        self._max_stale_seconds = 120.0
+        self._fetch_interval_seconds = 120.0
+        self._failure_retry_seconds = 10.0
+        # Keep stale rows long enough to bridge a missed 2-minute poll plus
+        # quick retries. The displayed ETAs continue aging locally.
+        self._max_stale_seconds = 180.0
 
         # Animation state
         self.page_start_time = time.time()
@@ -125,25 +127,23 @@ class MetroWidget(Widget):
         print(f"[MetroWidget {time.strftime('%H:%M:%S')}] {message}", flush=True)
 
     def _fetch_worker(self):
-        """Daemon loop — refetch every 30s normally, every 10s after a failure."""
+        """Daemon loop — resync every 2 minutes, retry quickly after failures."""
         while True:
+            succeeded = False
             try:
                 system = self._metro_system()
                 if system == "nyc":
-                    self._fetch_nyc()
+                    succeeded = self._fetch_nyc()
                 elif system == "ttc":
-                    self._fetch_ttc()
+                    succeeded = self._fetch_ttc()
                 else:
-                    self._fetch_wmata()
+                    succeeded = self._fetch_wmata()
                 self.last_fetch = time.time()
             except Exception as exc:
                 print(f"Metro worker error: {exc}")
             finally:
                 self._initial_fetch_done = True
-            # If the most recent attempt didn't succeed, retry sooner so the
-            # display recovers quickly instead of waiting a full 30s cycle.
-            succeeded_recently = (time.time() - self._last_success_ts) < 5.0
-            wait_seconds = 30.0 if succeeded_recently else 10.0
+            wait_seconds = self._fetch_interval_seconds if succeeded else self._failure_retry_seconds
             self._fetch_wake.wait(timeout=wait_seconds)
             self._fetch_wake.clear()
 
@@ -201,7 +201,8 @@ class MetroWidget(Widget):
         station_codes = self._wmata_station_codes()
         if not station_codes:
             self._replace_trains([], time.time())
-            return
+            self._last_success_ts = time.time()
+            return True
 
         valid = []
         any_success = False
@@ -255,26 +256,30 @@ class MetroWidget(Widget):
             seen.add(key)
             deduped.append(row)
 
-        if (not any_success or not deduped) and self._should_keep_stale_on_failure():
+        if not any_success and self._should_keep_stale_on_failure():
             self._log(
                 "WMATA keeping stale cache "
                 f"any_success={any_success} fetched_rows={len(deduped)} {self._cache_status()}"
             )
-            return
-        if any_success and deduped:
+            return False
+        if any_success:
             self._last_success_ts = time.time()
-        self._replace_trains(deduped, time.time())
+            self._replace_trains(deduped, time.time())
+            return True
+        self._replace_trains([], time.time())
+        return False
 
     def _fetch_nyc(self):
         if gtfs_realtime_pb2 is None:
             print("NYC API Error: missing gtfs-realtime-bindings")
-            return
+            return False
 
         feed_urls = self._nyc_feed_urls()
         stop_ids = self._nyc_stop_ids()
         if not feed_urls or not stop_ids:
             self._replace_trains([], time.time())
-            return
+            self._last_success_ts = time.time()
+            return True
 
         now_ts = int(time.time())
         arrivals = []
@@ -342,22 +347,26 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
-        if (not any_success or not trains) and self._should_keep_stale_on_failure():
+        if not any_success and self._should_keep_stale_on_failure():
             self._log(
                 "NYC keeping stale cache "
                 f"any_success={any_success} fetched_rows={len(trains)} {self._cache_status()}"
             )
-            return
-        if any_success and trains:
+            return False
+        if any_success:
             self._last_success_ts = time.time()
-        self._replace_trains(trains, time.time())
+            self._replace_trains(trains, time.time())
+            return True
+        self._replace_trains([], time.time())
+        return False
 
     def _fetch_ttc(self):
         station_id = self._ttc_station_id()
         stop_uris = self._ttc_stop_uris()
         if not stop_uris:
             self._replace_trains([], time.time())
-            return
+            self._last_success_ts = time.time()
+            return True
 
         now_ts = int(time.time())
         arrivals = []
@@ -398,15 +407,18 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
-        if (source_count == 0 or not trains) and self._should_keep_stale_on_failure():
+        if source_count == 0 and self._should_keep_stale_on_failure():
             self._log(
                 "TTC keeping stale cache "
                 f"source_count={source_count} fetched_rows={len(trains)} {self._cache_status()}"
             )
-            return
-        if source_count > 0 and trains:
+            return False
+        if source_count > 0:
             self._last_success_ts = time.time()
-        self._replace_trains(trains, time.time())
+            self._replace_trains(trains, time.time())
+            return True
+        self._replace_trains([], time.time())
+        return False
 
     def _ttc_collect_arrivals(self, data, now_ts, allowed_stop_uris):
         output = []
@@ -456,6 +468,7 @@ class MetroWidget(Widget):
                 row = dict(train)
                 row["_FetchedAt"] = now
                 row["_FetchedMin"] = row.get("Min", "--")
+                row["_EtaTs"] = self._eta_timestamp(row.get("Min", "--"), now)
                 self.trains.append(row)
 
             if not self.trains:
@@ -486,15 +499,29 @@ class MetroWidget(Widget):
                 continue
 
             try:
-                fetched_at = float(row.get("_FetchedAt", self.last_fetch) or self.last_fetch or now)
+                eta_ts = float(row.get("_EtaTs", 0) or 0)
             except Exception:
-                fetched_at = now
+                eta_ts = 0
 
-            elapsed_minutes = max(0, int((now - fetched_at) // 60))
-            row["Min"] = str(max(0, int(match.group(0)) - elapsed_minutes))
+            if eta_ts <= 0:
+                try:
+                    fetched_at = float(row.get("_FetchedAt", self.last_fetch) or self.last_fetch or now)
+                except Exception:
+                    fetched_at = now
+                eta_ts = fetched_at + (int(match.group(0)) * 60)
+
+            remaining_seconds = max(0, eta_ts - now)
+            row["Min"] = str(int((remaining_seconds + 59) // 60))
             projected.append(row)
 
         return projected
+
+    def _eta_timestamp(self, raw_min, observed_at):
+        text = str(raw_min or "").strip()
+        match = re.search(r"\d+", text)
+        if not match:
+            return None
+        return float(observed_at) + (int(match.group(0)) * 60)
 
     def _normalize_wmata_mins(self, raw):
         text = str(raw or "").strip().upper()
