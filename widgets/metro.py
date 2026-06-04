@@ -160,9 +160,10 @@ class MetroWidget(Widget):
         )
 
     def _invalidate_cached_rows(self, now):
-        self.trains = []
-        self.scroll_index = 0
-        self.page_start_time = now
+        with self._trains_lock:
+            self.trains = []
+            self.scroll_index = 0
+            self.page_start_time = now
 
     def _metro_system(self):
         value = str(getattr(config, "METRO_SYSTEM", "wmata") or "wmata").strip().lower()
@@ -237,9 +238,9 @@ class MetroWidget(Widget):
             seen.add(key)
             deduped.append(row)
 
-        if not any_success and self._should_keep_stale_on_failure():
+        if (not any_success or not deduped) and self._should_keep_stale_on_failure():
             return
-        if any_success:
+        if any_success and deduped:
             self._last_success_ts = time.time()
         self._replace_trains(deduped, time.time())
 
@@ -320,9 +321,9 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
-        if not any_success and self._should_keep_stale_on_failure():
+        if (not any_success or not trains) and self._should_keep_stale_on_failure():
             return
-        if any_success:
+        if any_success and trains:
             self._last_success_ts = time.time()
         self._replace_trains(trains, time.time())
 
@@ -372,9 +373,9 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
-        if source_count == 0 and self._should_keep_stale_on_failure():
+        if (source_count == 0 or not trains) and self._should_keep_stale_on_failure():
             return
-        if source_count > 0:
+        if source_count > 0 and trains:
             self._last_success_ts = time.time()
         self._replace_trains(trains, time.time())
 
@@ -766,12 +767,13 @@ class MetroWidget(Widget):
             output.append(row)
         return output
 
-    def _pair_for_index(self, start_index):
-        if not self.trains:
+    def _pair_for_index(self, start_index, trains=None):
+        trains = self.trains if trains is None else trains
+        if not trains:
             return []
-        pair = [self.trains[start_index % len(self.trains)]]
-        if len(self.trains) > 1:
-            pair.append(self.trains[(start_index + 1) % len(self.trains)])
+        pair = [trains[start_index % len(trains)]]
+        if len(trains) > 1:
+            pair.append(trains[(start_index + 1) % len(trains)])
         return pair
 
     def _draw_train_row(self, draw, train, row_y, text_start_x, time_on_page):
@@ -823,12 +825,12 @@ class MetroWidget(Widget):
         # Snapshot the trains list under the lock so the rest of draw() sees
         # a stable view, even if the worker thread replaces it mid-frame.
         with self._trains_lock:
-            self.trains = self._project_train_minutes(self.trains)
+            trains = self._project_train_minutes(self.trains)
 
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
-        if not self.trains:
+        if not trains:
             if not self._initial_fetch_done:
                 label = "LOADING..."
             else:
@@ -841,10 +843,10 @@ class MetroWidget(Widget):
             return self.canvas
 
         # Trains list can shrink between fetches; keep index in range.
-        self.scroll_index %= len(self.trains)
+        self.scroll_index %= len(trains)
 
         # Determine which trains to show.
-        current_pair = self._pair_for_index(self.scroll_index)
+        current_pair = self._pair_for_index(self.scroll_index, trains)
 
         # Calculate page duration.
         longest_scroll_time = 0
@@ -875,16 +877,16 @@ class MetroWidget(Widget):
         time_on_page = now - self.page_start_time
         transition_style = self._metro_page_transition()
         transition_duration = 0.35
-        page_step = 2 if len(self.trains) > 1 else 1
-        can_slide = transition_style == "slide" and len(self.trains) > page_step
+        page_step = 2 if len(trains) > 1 else 1
+        can_slide = transition_style == "slide" and len(trains) > page_step
         rows_to_draw = []
 
         if can_slide and time_on_page > page_duration:
             transition_elapsed = time_on_page - page_duration
             if transition_elapsed >= transition_duration:
-                self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+                self.scroll_index = (self.scroll_index + page_step) % len(trains)
                 self.page_start_time = now
-                current_pair = self._pair_for_index(self.scroll_index)
+                current_pair = self._pair_for_index(self.scroll_index, trains)
                 rows_to_draw = [
                     (current_pair[0], 0, 0.0),
                 ]
@@ -892,7 +894,7 @@ class MetroWidget(Widget):
                     rows_to_draw.append((current_pair[1], 16, 0.0))
             else:
                 shift = int(round((transition_elapsed / transition_duration) * 32))
-                next_pair = self._pair_for_index(self.scroll_index + page_step)
+                next_pair = self._pair_for_index(self.scroll_index + page_step, trains)
                 if current_pair:
                     rows_to_draw.append((current_pair[0], -shift, page_duration))
                 if len(current_pair) > 1:
@@ -903,11 +905,11 @@ class MetroWidget(Widget):
                     rows_to_draw.append((next_pair[1], 48 - shift, 0.0))
         else:
             if time_on_page > page_duration:
-                if len(self.trains) > page_step:
-                    self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+                if len(trains) > page_step:
+                    self.scroll_index = (self.scroll_index + page_step) % len(trains)
                 self.page_start_time = now
                 time_on_page = 0
-                current_pair = self._pair_for_index(self.scroll_index)
+                current_pair = self._pair_for_index(self.scroll_index, trains)
 
             rows_to_draw = [
                 (current_pair[0], 0, time_on_page),
