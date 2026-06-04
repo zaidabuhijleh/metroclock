@@ -627,6 +627,42 @@ def preview_png():
     )
 
 
+@app.route("/preview.mjpg")
+def preview_mjpg():
+    boundary = "frame"
+    target_fps = 20
+    target_interval = 1.0 / target_fps
+    jpeg_quality = 85
+
+    def generate():
+        while True:
+            frame = get_latest_frame()
+            if frame is None:
+                time.sleep(target_interval)
+                continue
+            buf = io.BytesIO()
+            try:
+                frame.convert("RGB").save(buf, format="JPEG", quality=jpeg_quality)
+            except Exception:
+                time.sleep(target_interval)
+                continue
+            jpeg = buf.getvalue()
+            yield (
+                b"--" + boundary.encode() + b"\r\n"
+                + b"Content-Type: image/jpeg\r\n"
+                + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
+                + jpeg
+                + b"\r\n"
+            )
+            time.sleep(target_interval)
+
+    return Response(
+        generate(),
+        mimetype=f"multipart/x-mixed-replace; boundary={boundary}",
+        headers={"Cache-Control": "no-store", "Connection": "close"},
+    )
+
+
 @app.route("/api/clock/styles")
 def api_clock_styles():
     return jsonify({
