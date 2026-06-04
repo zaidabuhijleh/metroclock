@@ -62,6 +62,21 @@ TTC_ROUTE_TO_LINE = {
     "sheppard_subway": "4",
 }
 
+WMATA_WEBSITE_ROUTE_TO_LINE = {
+    "R": "RD",
+    "RD": "RD",
+    "O": "OR",
+    "OR": "OR",
+    "S": "SV",
+    "SV": "SV",
+    "B": "BL",
+    "BL": "BL",
+    "Y": "YL",
+    "YL": "YL",
+    "G": "GR",
+    "GR": "GR",
+}
+
 WMATA_WEBSITE_STATION_IDS = {
     # The WMATA website's GTFS station ids differ from the legacy prediction
     # API station codes on the Green/Yellow segment around Georgia Ave.
@@ -331,11 +346,10 @@ class MetroWidget(Widget):
         if not isinstance(trip, dict):
             trip = {}
 
-        line = str(trip.get("shortName", "") or "").strip().upper()
+        line = self._wmata_website_line_code(trip)
         dest = str(stop.get("headsign", "") or "").strip()
         if not line or not dest:
             return None
-        line = line[:2]
         if not self._is_wmata_line_enabled(line):
             return None
         if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
@@ -357,6 +371,15 @@ class MetroWidget(Widget):
             "Min": mins,
             "_Source": "website",
         }
+
+    def _wmata_website_line_code(self, trip):
+        short_name = str(trip.get("shortName", "") or "").strip().upper()
+        if short_name in WMATA_WEBSITE_ROUTE_TO_LINE:
+            return WMATA_WEBSITE_ROUTE_TO_LINE[short_name]
+
+        gtfs_id = str(trip.get("gtfsId", "") or "").strip().upper()
+        token = gtfs_id.rsplit(":", 1)[-1]
+        return WMATA_WEBSITE_ROUTE_TO_LINE.get(token, short_name[:2])
 
     def _fetch_wmata_legacy(self, station_codes):
         headers = {}
