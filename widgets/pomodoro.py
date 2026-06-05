@@ -1,8 +1,7 @@
-import importlib
-
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+import config_manager
 import web_server
 from core.widget import Widget
 
@@ -34,7 +33,7 @@ class PomodoroWidget(Widget):
             self.font_small = ImageFont.load_default()
 
     def update(self):
-        importlib.reload(config)
+        config_manager.reload_config()
         self.state = web_server.get_pomodoro_state()
 
     def _fit_text(self, text, max_width, font):

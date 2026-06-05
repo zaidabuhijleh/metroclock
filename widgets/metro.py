@@ -1,4 +1,3 @@
-import importlib
 import json
 import os
 import re
@@ -9,6 +8,8 @@ import requests
 from PIL import ImageDraw, ImageFont
 
 import config
+import config_manager
+import web_server
 from core import scroll
 from core.widget import Widget
 from widgets.metrolines import NYC_LINE_COLORS, TTC_LINE_COLORS, WMATA_LINE_COLORS
@@ -61,6 +62,36 @@ TTC_ROUTE_TO_LINE = {
     "sheppard_subway": "4",
 }
 
+WMATA_WEBSITE_ROUTE_TO_LINE = {
+    "R": "RD",
+    "RD": "RD",
+    "O": "OR",
+    "OR": "OR",
+    "S": "SV",
+    "SV": "SV",
+    "B": "BL",
+    "BL": "BL",
+    "Y": "YL",
+    "YL": "YL",
+    "G": "GR",
+    "GR": "GR",
+}
+
+WMATA_WEBSITE_STATION_IDS = {
+    # The WMATA website's GTFS station ids differ from the legacy prediction
+    # API station codes on the Green/Yellow segment around Georgia Ave.
+    "E01": "E01",  # Mt Vernon Sq
+    "E02": "E02",  # Shaw-Howard U
+    "E10": "E03",  # U Street
+    "E03": "E04",  # Columbia Heights
+    "E04": "E05",  # Georgia Av-Petworth
+    "E05": "E06",  # Fort Totten
+    "E06": "E07",  # West Hyattsville
+    "E07": "E08",  # Hyattsville Crossing
+    "E08": "E09",  # College Park-U of Md
+    "E09": "E10",  # Greenbelt
+}
+
 
 class MetroWidget(Widget):
     def __init__(self, width, height):
@@ -68,7 +99,14 @@ class MetroWidget(Widget):
         self.trains = []
         self.scroll_index = 0
         self.last_fetch = 0.0
+        self._last_success_ts = 0.0
+        self._initial_fetch_done = False
         self._config_signature = None
+        self._fetch_interval_seconds = 30.0
+        self._failure_retry_seconds = 10.0
+        # Keep stale rows long enough to bridge several missed polls plus
+        # quick retries. Displayed ETAs remain exactly as last fetched.
+        self._max_stale_seconds = 120.0
 
         # Animation state
         self.page_start_time = time.time()
@@ -100,11 +138,11 @@ class MetroWidget(Widget):
     def update(self):
         """Lightweight: reload config + nudge worker on changes. No HTTP here."""
         now = time.time()
-        if now - self._last_config_reload >= 1.0:
-            importlib.reload(config)
-            self._last_config_reload = now
-
-        signature = self._current_config_signature()
+        with config_manager.CONFIG_LOCK:
+            if now - self._last_config_reload >= 1.0:
+                config_manager.reload_config()
+                self._last_config_reload = now
+            signature = self._current_config_signature()
         if signature != self._config_signature:
             self._config_signature = signature
             self._invalidate_cached_rows(now)
@@ -112,22 +150,36 @@ class MetroWidget(Widget):
             self._fetch_wake.set()  # refetch immediately for the new config
 
     def _fetch_worker(self):
-        """Daemon loop — refetch every 30s, or sooner when poked."""
+        """Daemon loop — resync frequently, retry quickly after failures."""
         while True:
+            succeeded = False
             try:
                 system = self._metro_system()
                 if system == "nyc":
-                    self._fetch_nyc()
+                    succeeded = self._fetch_nyc()
                 elif system == "ttc":
-                    self._fetch_ttc()
+                    succeeded = self._fetch_ttc()
                 else:
-                    self._fetch_wmata()
+                    succeeded = self._fetch_wmata()
                 self.last_fetch = time.time()
             except Exception as exc:
                 print(f"Metro worker error: {exc}")
-            # Wait up to 30s, but wake immediately if config changed.
-            self._fetch_wake.wait(timeout=30.0)
+            finally:
+                self._initial_fetch_done = True
+            wait_seconds = self._fetch_interval_seconds if succeeded else self._failure_retry_seconds
+            self._fetch_wake.wait(timeout=wait_seconds)
             self._fetch_wake.clear()
+
+    def _should_keep_stale_on_failure(self):
+        """True when we have cached trains and the cache is still within the grace window."""
+        with self._trains_lock:
+            has_trains = bool(self.trains)
+        return has_trains and (time.time() - self._last_success_ts) < self._max_stale_seconds
+
+    def _mark_fetch_success(self, timestamp=None):
+        timestamp = time.time() if timestamp is None else float(timestamp)
+        self._last_success_ts = timestamp
+        web_server.set_metro_last_success_ts(timestamp)
 
     def _current_config_signature(self):
         return (
@@ -146,9 +198,10 @@ class MetroWidget(Widget):
         )
 
     def _invalidate_cached_rows(self, now):
-        self.trains = []
-        self.scroll_index = 0
-        self.page_start_time = now
+        with self._trains_lock:
+            self.trains = []
+            self.scroll_index = 0
+            self.page_start_time = now
 
     def _metro_system(self):
         value = str(getattr(config, "METRO_SYSTEM", "wmata") or "wmata").strip().lower()
@@ -161,22 +214,134 @@ class MetroWidget(Widget):
         return "cut" if value == "cut" else "slide"
 
     def _fetch_wmata(self):
+        station_codes = self._wmata_station_codes()
+        if not station_codes:
+            now = time.time()
+            self._replace_trains([], now)
+            self._mark_fetch_success(now)
+            return True
+
+        website_success, website_rows = self._fetch_wmata_website_rows(station_codes)
+        if website_success and website_rows:
+            deduped = self._dedupe_wmata_rows(website_rows)
+            now = time.time()
+            self._mark_fetch_success(now)
+            self._replace_trains(deduped, now)
+            return True
+
+        return self._fetch_wmata_legacy(station_codes)
+
+    def _fetch_wmata_website_rows(self, station_codes):
+        valid = []
+        any_success = False
+
+        for station_code in station_codes:
+            try:
+                website_station_id = self._wmata_website_station_id(station_code)
+                url = (
+                    "https://www.wmata.com/ridertools/api/station/"
+                    f"WMATA_RAIL_BUS_GTFS_STATIC%3ASTN_{website_station_id}?v=1"
+                )
+                resp = requests.get(url, timeout=8)
+                if resp.status_code != 200:
+                    print(
+                        "WMATA website API Error "
+                        f"({station_code}->{website_station_id}): status {resp.status_code}"
+                    )
+                    continue
+                data = resp.json()
+            except Exception as exc:
+                print(f"WMATA website API Error ({station_code}): {exc}")
+                continue
+
+            platforms = data.get("stopsByPlatform", [])
+            if not isinstance(platforms, list):
+                continue
+
+            any_success = True
+            for platform in platforms:
+                if not isinstance(platform, dict):
+                    continue
+                for direction_key in ("directionOne", "directionTwo"):
+                    direction = platform.get(direction_key, {})
+                    if not isinstance(direction, dict):
+                        continue
+                    for stop in direction.get("stops", []) or []:
+                        row = self._website_stop_to_train_row(stop)
+                        if row is not None:
+                            valid.append(row)
+                    for stop in direction.get("arrivingStops", []) or []:
+                        row = self._website_stop_to_train_row(stop, override_min="0")
+                        if row is not None:
+                            valid.append(row)
+                    for stop in direction.get("brdStops", []) or []:
+                        row = self._website_stop_to_train_row(stop, override_min="0")
+                        if row is not None:
+                            valid.append(row)
+
+        if not any_success and self._should_keep_stale_on_failure():
+            return False, []
+        return any_success, valid
+
+    def _wmata_website_station_id(self, station_code):
+        code = str(station_code or "").strip().upper()
+        return WMATA_WEBSITE_STATION_IDS.get(code, code)
+
+    def _website_stop_to_train_row(self, stop, override_min=None):
+        if not isinstance(stop, dict):
+            return None
+
+        trip = stop.get("trip", {})
+        if not isinstance(trip, dict):
+            trip = {}
+
+        line = self._wmata_website_line_code(trip)
+        dest = str(stop.get("headsign", "") or "").strip()
+        if not line or not dest:
+            return None
+        if not self._is_wmata_line_enabled(line):
+            return None
+        if dest in {"No Passenger", "Train", ""} or "ssenge" in dest:
+            return None
+
+        raw_mins = override_min
+        if raw_mins is None:
+            raw_mins = stop.get("arrivalTimeMins")
+        mins = self._normalize_wmata_mins(raw_mins)
+        if mins == "--":
+            return None
+        mins_int = int(mins)
+        if not self._is_in_arrival_window(mins_int):
+            return None
+
+        return {
+            "Line": line,
+            "Destination": dest,
+            "Min": mins,
+        }
+
+    def _wmata_website_line_code(self, trip):
+        short_name = str(trip.get("shortName", "") or "").strip().upper()
+        if short_name in WMATA_WEBSITE_ROUTE_TO_LINE:
+            return WMATA_WEBSITE_ROUTE_TO_LINE[short_name]
+
+        gtfs_id = str(trip.get("gtfsId", "") or "").strip().upper()
+        token = gtfs_id.rsplit(":", 1)[-1]
+        return WMATA_WEBSITE_ROUTE_TO_LINE.get(token, short_name[:2])
+
+    def _fetch_wmata_legacy(self, station_codes):
         headers = {}
         key = str(getattr(config, "WMATA_API_KEY", "") or "").strip()
         if key:
             headers["api_key"] = key
 
-        station_codes = self._wmata_station_codes()
-        if not station_codes:
-            self._replace_trains([], time.time())
-            return
-
         valid = []
+        any_success = False
 
         for station_code in station_codes:
             try:
                 url = f"https://api.wmata.com/StationPrediction.svc/json/GetPrediction/{station_code}"
-                resp = requests.get(url, headers=headers, timeout=6)
+                resp = requests.get(url, headers=headers, timeout=8)
                 data = resp.json()
             except Exception as exc:
                 print(f"WMATA API Error ({station_code}): {exc}")
@@ -184,6 +349,8 @@ class MetroWidget(Widget):
 
             if "Trains" not in data:
                 continue
+
+            any_success = True
 
             for train in data.get("Trains", []):
                 line = str(train.get("Line", "") or "").strip().upper()
@@ -211,34 +378,49 @@ class MetroWidget(Widget):
                     }
                 )
 
+        deduped = self._dedupe_wmata_rows(valid)
+
+        if not any_success and self._should_keep_stale_on_failure():
+            return False
+        if any_success:
+            now = time.time()
+            self._mark_fetch_success(now)
+            self._replace_trains(deduped, now)
+            return True
+        self._replace_trains([], time.time())
+        return False
+
+    def _dedupe_wmata_rows(self, rows):
         deduped = []
         seen = set()
-        for row in sorted(valid, key=lambda item: (int(item["Min"]), item["Line"], item["Destination"])):
+        for row in sorted(rows, key=lambda item: (int(item["Min"]), item["Line"], item["Destination"])):
             key = (row["Line"], row["Destination"], row["Min"])
             if key in seen:
                 continue
             seen.add(key)
             deduped.append(row)
-
-        self._replace_trains(deduped, time.time())
+        return deduped
 
     def _fetch_nyc(self):
         if gtfs_realtime_pb2 is None:
             print("NYC API Error: missing gtfs-realtime-bindings")
-            return
+            return False
 
         feed_urls = self._nyc_feed_urls()
         stop_ids = self._nyc_stop_ids()
         if not feed_urls or not stop_ids:
-            self._replace_trains([], time.time())
-            return
+            now = time.time()
+            self._replace_trains([], now)
+            self._mark_fetch_success(now)
+            return True
 
         now_ts = int(time.time())
         arrivals = []
+        any_success = False
 
         for feed_url in feed_urls:
             try:
-                response = requests.get(feed_url, timeout=6)
+                response = requests.get(feed_url, timeout=8)
                 if response.status_code != 200:
                     print(f"NYC API Error: status {response.status_code} for {feed_url}")
                     continue
@@ -248,6 +430,8 @@ class MetroWidget(Widget):
             except Exception as exc:
                 print(f"NYC API Error for {feed_url}: {exc}")
                 continue
+
+            any_success = True
 
             for entity in feed.entity:
                 if not entity.HasField("trip_update"):
@@ -296,14 +480,24 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
-        self._replace_trains(trains, time.time())
+        if not any_success and self._should_keep_stale_on_failure():
+            return False
+        if any_success:
+            now = time.time()
+            self._mark_fetch_success(now)
+            self._replace_trains(trains, now)
+            return True
+        self._replace_trains([], time.time())
+        return False
 
     def _fetch_ttc(self):
         station_id = self._ttc_station_id()
         stop_uris = self._ttc_stop_uris()
         if not stop_uris:
-            self._replace_trains([], time.time())
-            return
+            now = time.time()
+            self._replace_trains([], now)
+            self._mark_fetch_success(now)
+            return True
 
         now_ts = int(time.time())
         arrivals = []
@@ -344,7 +538,15 @@ class MetroWidget(Widget):
             }
             for row in deduped
         ]
-        self._replace_trains(trains, time.time())
+        if source_count == 0 and self._should_keep_stale_on_failure():
+            return False
+        if source_count > 0:
+            now = time.time()
+            self._mark_fetch_success(now)
+            self._replace_trains(trains, now)
+            return True
+        self._replace_trains([], time.time())
+        return False
 
     def _ttc_collect_arrivals(self, data, now_ts, allowed_stop_uris):
         output = []
@@ -386,7 +588,9 @@ class MetroWidget(Widget):
     def _replace_trains(self, trains, now):
         with self._trains_lock:
             previous_trains = self.trains
-            self.trains = list(trains)
+            self.trains = []
+            for train in trains:
+                self.trains.append(dict(train))
 
             if not self.trains:
                 self.scroll_index = 0
@@ -705,12 +909,13 @@ class MetroWidget(Widget):
             output.append(row)
         return output
 
-    def _pair_for_index(self, start_index):
-        if not self.trains:
+    def _pair_for_index(self, start_index, trains=None):
+        trains = self.trains if trains is None else trains
+        if not trains:
             return []
-        pair = [self.trains[start_index % len(self.trains)]]
-        if len(self.trains) > 1:
-            pair.append(self.trains[(start_index + 1) % len(self.trains)])
+        pair = [trains[start_index % len(trains)]]
+        if len(trains) > 1:
+            pair.append(trains[(start_index + 1) % len(trains)])
         return pair
 
     def _draw_train_row(self, draw, train, row_y, text_start_x, time_on_page):
@@ -762,25 +967,28 @@ class MetroWidget(Widget):
         # Snapshot the trains list under the lock so the rest of draw() sees
         # a stable view, even if the worker thread replaces it mid-frame.
         with self._trains_lock:
-            self.trains = list(self.trains)
+            trains = list(self.trains)
 
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
-        if not self.trains:
-            label = "NO TRAINS"
-            if self._metro_system() == "nyc":
-                label = "NYC NO DATA"
-            if self._metro_system() == "ttc":
-                label = "TTC NO DATA"
+        if not trains:
+            if not self._initial_fetch_done:
+                label = "LOADING..."
+            else:
+                label = "NO TRAINS"
+                if self._metro_system() == "nyc":
+                    label = "NYC NO DATA"
+                if self._metro_system() == "ttc":
+                    label = "TTC NO DATA"
             draw.text((1, 12), label, font=self.font_small, fill=config.COLOR_GREY)
             return self.canvas
 
         # Trains list can shrink between fetches; keep index in range.
-        self.scroll_index %= len(self.trains)
+        self.scroll_index %= len(trains)
 
         # Determine which trains to show.
-        current_pair = self._pair_for_index(self.scroll_index)
+        current_pair = self._pair_for_index(self.scroll_index, trains)
 
         # Calculate page duration.
         longest_scroll_time = 0
@@ -811,16 +1019,16 @@ class MetroWidget(Widget):
         time_on_page = now - self.page_start_time
         transition_style = self._metro_page_transition()
         transition_duration = 0.35
-        page_step = 2 if len(self.trains) > 1 else 1
-        can_slide = transition_style == "slide" and len(self.trains) > page_step
+        page_step = 2 if len(trains) > 1 else 1
+        can_slide = transition_style == "slide" and len(trains) > page_step
         rows_to_draw = []
 
         if can_slide and time_on_page > page_duration:
             transition_elapsed = time_on_page - page_duration
             if transition_elapsed >= transition_duration:
-                self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+                self.scroll_index = (self.scroll_index + page_step) % len(trains)
                 self.page_start_time = now
-                current_pair = self._pair_for_index(self.scroll_index)
+                current_pair = self._pair_for_index(self.scroll_index, trains)
                 rows_to_draw = [
                     (current_pair[0], 0, 0.0),
                 ]
@@ -828,7 +1036,7 @@ class MetroWidget(Widget):
                     rows_to_draw.append((current_pair[1], 16, 0.0))
             else:
                 shift = int(round((transition_elapsed / transition_duration) * 32))
-                next_pair = self._pair_for_index(self.scroll_index + page_step)
+                next_pair = self._pair_for_index(self.scroll_index + page_step, trains)
                 if current_pair:
                     rows_to_draw.append((current_pair[0], -shift, page_duration))
                 if len(current_pair) > 1:
@@ -839,11 +1047,11 @@ class MetroWidget(Widget):
                     rows_to_draw.append((next_pair[1], 48 - shift, 0.0))
         else:
             if time_on_page > page_duration:
-                if len(self.trains) > page_step:
-                    self.scroll_index = (self.scroll_index + page_step) % len(self.trains)
+                if len(trains) > page_step:
+                    self.scroll_index = (self.scroll_index + page_step) % len(trains)
                 self.page_start_time = now
                 time_on_page = 0
-                current_pair = self._pair_for_index(self.scroll_index)
+                current_pair = self._pair_for_index(self.scroll_index, trains)
 
             rows_to_draw = [
                 (current_pair[0], 0, time_on_page),

@@ -1,4 +1,3 @@
-import importlib
 import re
 import time
 from datetime import datetime
@@ -7,6 +6,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+import config_manager
 from core.widget import Widget
 
 
@@ -66,7 +66,7 @@ class SportsWidget(Widget):
 
     def update(self):
         now = time.time()
-        importlib.reload(config)
+        config_manager.reload_config()
 
         test_date = self._get_test_date()
         fetch_key = test_date or "today"

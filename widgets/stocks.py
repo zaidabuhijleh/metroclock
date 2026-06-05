@@ -1,4 +1,3 @@
-import importlib
 import threading
 import time
 from queue import Empty, Queue
@@ -7,6 +6,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+import config_manager
 from core import scroll
 from core.widget import Widget
 
@@ -115,7 +115,7 @@ class StocksWidget(Widget):
     def update(self):
         now = time.time()
         if now - self._last_config_reload >= 1.0:
-            importlib.reload(config)
+            config_manager.reload_config()
             self._last_config_reload = now
 
         symbols = self._symbols()
