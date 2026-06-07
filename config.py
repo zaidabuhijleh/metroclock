@@ -28,6 +28,28 @@ CLOCK_BUILTIN_FONT_STYLES = (
     {"key": "matrix", "label": "Matrix", "type": "builtin"},
     {"key": "segment", "label": "Segment", "type": "builtin"},
 )
+CLOCK_FONT_FAMILIES = (
+    {
+        "key": "font_default",
+        "label": "Default",
+        "type": "font_family",
+        "sizes": {
+            "small": "default/4x6.bdf",
+            "medium": "default/8x13.bdf",
+            "large": "default/10x20.bdf",
+        },
+    },
+    {
+        "key": "font_spleen",
+        "label": "Spleen",
+        "type": "font_family",
+        "sizes": {
+            "small": "spleen/5x8.bdf",
+            "medium": "spleen/8x16.bdf",
+            "large": "spleen/12x24.bdf",
+        },
+    },
+)
 
 # --- WMATA (DC Metro) ---
 METRO_SYSTEM = "wmata"  # "wmata", "nyc", or "ttc"
@@ -261,57 +283,20 @@ def _clock_font_root():
     return os.path.join(os.path.dirname(__file__), CLOCK_FONT_DIR)
 
 
-def _clock_font_label(filename):
-    label = filename
-    for suffix in (".bdf.txt", ".pcf.txt", ".ttf.txt", ".otf.txt", ".bdf", ".pcf", ".ttf", ".otf"):
-        if label.lower().endswith(suffix):
-            label = label[: -len(suffix)]
-            break
-    return label
-
-
-def _clock_font_key(label):
-    cleaned = []
-    for ch in label.lower():
-        if ch.isalnum():
-            cleaned.append(ch)
-        elif cleaned and cleaned[-1] != "_":
-            cleaned.append("_")
-    key = "".join(cleaned).strip("_") or "font"
-    return f"font_{key}"
-
-
 def get_clock_font_faces():
     faces = [dict(face) for face in CLOCK_BUILTIN_FONT_STYLES]
     root = _clock_font_root()
-    try:
-        filenames = sorted(os.listdir(root), key=str.lower)
-    except Exception:
-        return faces
-
-    seen = {face["key"] for face in faces}
-    for filename in filenames:
-        lowered = filename.lower()
-        if not lowered.endswith((".bdf", ".bdf.txt", ".pcf", ".pcf.txt", ".ttf", ".ttf.txt", ".otf", ".otf.txt")):
-            continue
-        path = os.path.join(root, filename)
-        if not os.path.isfile(path):
-            continue
-        label = _clock_font_label(filename)
-        key = _clock_font_key(label)
-        if key in seen:
-            base = key
-            suffix = 2
-            while key in seen:
-                key = f"{base}_{suffix}"
-                suffix += 1
-        seen.add(key)
-        faces.append({
-            "key": key,
-            "label": label,
-            "path": path,
-            "type": "font",
-        })
+    for family in CLOCK_FONT_FAMILIES:
+        sizes = {}
+        available = False
+        for size_key, rel_path in family["sizes"].items():
+            path = os.path.join(root, rel_path)
+            sizes[size_key] = path
+            available = available or os.path.isfile(path)
+        if available:
+            face = dict(family)
+            face["sizes"] = sizes
+            faces.append(face)
     return faces
 
 
@@ -321,6 +306,15 @@ def get_clock_font_style_options():
 
 def get_clock_font_face(style):
     style = str(style or "").strip().lower()
+    legacy_family_map = {
+        "font_4x6": "font_default",
+        "font_8x13": "font_default",
+        "font_10x20": "font_default",
+        "font_spleen_5x8": "font_spleen",
+        "font_spleen_8x16": "font_spleen",
+        "font_spleen_12x24": "font_spleen",
+    }
+    style = legacy_family_map.get(style, style)
     for face in get_clock_font_faces():
         if face["key"] == style:
             return face

@@ -232,8 +232,9 @@ class ClockWidget(Widget):
         style = str(getattr(config, "CLOCK_FONT_STYLE", "matrix") or "matrix").strip().lower()
         if style in self.FONT_STYLE_OPTIONS:
             return style
-        if style in config.get_clock_font_style_options():
-            return style
+        face = config.get_clock_font_face(style)
+        if face:
+            return face["key"]
         return "matrix"
 
     def _clock_size(self):
@@ -904,18 +905,31 @@ class ClockWidget(Widget):
             ampm_y = max(0, (metrics["top_band"] - 6) // 2)
             draw.text((max(0, (w - aw) // 2), ampm_y), ampm, font=self.font_small, fill=theme.accent_2)
 
-    def _clock_face_font_size(self, face):
-        label = str((face or {}).get("label") or "")
+    def _clock_face_size_key(self):
+        size = self._effective_clock_size()
+        if size >= 1.0:
+            return "large"
+        if size >= 0.75:
+            return "medium"
+        return "small"
+
+    def _clock_face_font_path(self, face):
+        sizes = (face or {}).get("sizes") or {}
+        size_key = self._clock_face_size_key()
+        return sizes.get(size_key) or sizes.get("medium") or sizes.get("small") or sizes.get("large")
+
+    def _clock_face_font_size(self, path):
+        label = str(path or "")
         match = re.search(r"(\d+)x(\d+)", label, re.IGNORECASE)
         if match:
             return max(1, int(match.group(2)))
         return 10
 
     def _load_clock_face_font(self, face):
-        path = (face or {}).get("path")
+        path = self._clock_face_font_path(face)
         if not path:
             return None
-        size = self._clock_face_font_size(face)
+        size = self._clock_face_font_size(path)
         cache_key = (path, size)
         if cache_key not in self._clock_face_font_cache:
             self._clock_face_font_cache[cache_key] = ImageFont.truetype(path, size)
@@ -930,7 +944,7 @@ class ClockWidget(Widget):
 
     def _draw_face_font(self, draw, w, h, variant, theme, style):
         face = config.get_clock_font_face(style)
-        if not face or face.get("type") != "font":
+        if not face or face.get("type") != "font_family":
             self._draw_face_digital_matrix(draw, w, h, variant, theme)
             return
 
