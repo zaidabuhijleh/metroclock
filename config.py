@@ -36,7 +36,7 @@ CLOCK_FONT_FAMILIES = (
         "sizes": {
             "small": "default/4x6.bdf",
             "medium": "default/8x13.bdf",
-            "large": "default/10x20.bdf",
+            "large": {"path": "default/6x12.bdf", "scale": 2},
         },
     },
     {
@@ -289,9 +289,18 @@ def get_clock_font_faces():
     for family in CLOCK_FONT_FAMILIES:
         sizes = {}
         available = False
-        for size_key, rel_path in family["sizes"].items():
+        for size_key, spec in family["sizes"].items():
+            if isinstance(spec, dict):
+                rel_path = spec.get("path", "")
+                scale = spec.get("scale", 1)
+            else:
+                rel_path = spec
+                scale = 1
             path = os.path.join(root, rel_path)
-            sizes[size_key] = path
+            sizes[size_key] = {
+                "path": path,
+                "scale": scale,
+            }
             available = available or os.path.isfile(path)
         if available:
             face = dict(family)

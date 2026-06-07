@@ -913,10 +913,19 @@ class ClockWidget(Widget):
             return "medium"
         return "small"
 
-    def _clock_face_font_path(self, face):
+    def _clock_face_font_spec(self, face):
         sizes = (face or {}).get("sizes") or {}
         size_key = self._clock_face_size_key()
-        return sizes.get(size_key) or sizes.get("medium") or sizes.get("small") or sizes.get("large")
+        spec = sizes.get(size_key) or sizes.get("medium") or sizes.get("small") or sizes.get("large")
+        if isinstance(spec, dict):
+            return {
+                "path": spec.get("path"),
+                "scale": max(1, int(spec.get("scale") or 1)),
+            }
+        return {
+            "path": spec,
+            "scale": 1,
+        }
 
     def _clock_face_font_size(self, path):
         label = str(path or "")
@@ -926,7 +935,7 @@ class ClockWidget(Widget):
         return 10
 
     def _load_clock_face_font(self, face):
-        path = self._clock_face_font_path(face)
+        path = self._clock_face_font_spec(face)["path"]
         if not path:
             return None
         size = self._clock_face_font_size(path)
@@ -965,9 +974,22 @@ class ClockWidget(Widget):
         clock_top = metrics["top_band"]
         clock_bottom = max(clock_top + 1, h - metrics["bottom_band"])
         text_left, text_top, text_w, text_h = self._font_text_metrics(draw, time_text, font)
-        x = max(0, (w - text_w) // 2) - text_left
-        y = clock_top + max(0, (clock_bottom - clock_top - text_h) // 2) - text_top
-        draw.text((x, y), time_text, font=font, fill=theme.primary)
+        scale = self._clock_face_font_spec(face)["scale"]
+        if scale > 1:
+            text_img = Image.new("RGB", (max(1, text_w), max(1, text_h)), theme.bg)
+            text_draw = ImageDraw.Draw(text_img)
+            text_draw.text((-text_left, -text_top), time_text, font=font, fill=theme.primary)
+            text_img = text_img.resize((text_w * scale, text_h * scale), Image.NEAREST)
+            x = max(0, (w - text_img.width) // 2)
+            y = clock_top + max(0, (clock_bottom - clock_top - text_img.height) // 2)
+            if hasattr(draw, "_image"):
+                draw._image.paste(text_img, (x, y))
+            else:
+                draw.text((x - text_left, y - text_top), time_text, font=font, fill=theme.primary)
+        else:
+            x = max(0, (w - text_w) // 2) - text_left
+            y = clock_top + max(0, (clock_bottom - clock_top - text_h) // 2) - text_top
+            draw.text((x, y), time_text, font=font, fill=theme.primary)
 
         self._draw_clock_overlays(
             draw,
