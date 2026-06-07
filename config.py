@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 
 # --- HARDWARE ---
@@ -21,35 +22,14 @@ MATRIX_PWM_BITS_CLOCK_WIDGET = 4
 MATRIX_PWM_BITS_POMODORO = 5
 
 # --- FONTS ---
-FONT_PATH_TALL = "assets/fonts/6x10.bdf"
-FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
-CLOCK_FONT_DIR = "assets/fonts/watchfaces"
+FONT_ROOT = "assets/fonts"
+FONT_PATH_TALL = "assets/fonts/original/6x10.bdf"
+FONT_PATH_SMALL = "assets/fonts/original/4x6.bdf"
 CLOCK_BUILTIN_FONT_STYLES = (
     {"key": "matrix", "label": "Matrix", "type": "builtin"},
     {"key": "segment", "label": "Segment", "type": "builtin"},
 )
-CLOCK_FONT_FAMILIES = (
-    {
-        "key": "font_default",
-        "label": "Default",
-        "type": "font_family",
-        "sizes": {
-            "small": "default/4x6.bdf",
-            "medium": "default/8x13.bdf",
-            "large": {"path": "default/6x12.bdf", "scale": 2},
-        },
-    },
-    {
-        "key": "font_spleen",
-        "label": "Spleen",
-        "type": "font_family",
-        "sizes": {
-            "small": "spleen/5x8.bdf",
-            "medium": "spleen/8x16.bdf",
-            "large": "spleen/12x24.bdf",
-        },
-    },
-)
+METRO_FONT_STYLE = "original/6x10"
 
 # --- WMATA (DC Metro) ---
 METRO_SYSTEM = "wmata"  # "wmata", "nyc", or "ttc"
@@ -136,10 +116,12 @@ POMODORO_TODO_ITEMS = ""
 
 # --- CLOCK ---
 # Font style options:
-#   matrix, segment, or a discovered font_* key from CLOCK_FONT_DIR
+#   matrix, segment, or a discovered font_* family key from FONT_ROOT
 CLOCK_FONT_STYLE = "matrix"
-# One sizing control for all styles.
+# Numeric sizing for built-in styles.
 CLOCK_SIZE = 1.0  # 0.5, 0.75, 1.0
+# Selected size key for font-family styles.
+CLOCK_FONT_SIZE = ""
 CLOCK_COLOR_PRIMARY = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT_2 = ""  # Optional #RRGGBB override
@@ -235,8 +217,10 @@ RUNTIME_EDITABLE_FIELDS = {
     "POMODORO_AUTO_START_FOCUS",
     "POMODORO_LAYOUT",
     "POMODORO_TODO_ITEMS",
+    "METRO_FONT_STYLE",
     "CLOCK_FONT_STYLE",
     "CLOCK_SIZE",
+    "CLOCK_FONT_SIZE",
     "CLOCK_COLOR_PRIMARY",
     "CLOCK_COLOR_ACCENT",
     "CLOCK_COLOR_ACCENT_2",
@@ -277,36 +261,110 @@ def get_runtime_config_path() -> str:
     return RUNTIME_CONFIG_PATH
 
 
-def _clock_font_root():
-    if os.path.isabs(CLOCK_FONT_DIR):
-        return CLOCK_FONT_DIR
-    return os.path.join(os.path.dirname(__file__), CLOCK_FONT_DIR)
+def _font_root():
+    if os.path.isabs(FONT_ROOT):
+        return FONT_ROOT
+    return os.path.join(os.path.dirname(__file__), FONT_ROOT)
+
+
+def _font_family_key(name):
+    cleaned = re.sub(r"[^a-z0-9]+", "_", str(name or "").strip().lower()).strip("_")
+    return f"font_{cleaned or 'family'}"
+
+
+def _font_size_key(label):
+    cleaned = re.sub(r"[^a-z0-9]+", "_", str(label or "").strip().lower()).strip("_")
+    return cleaned or "size"
+
+
+def _font_label_from_filename(filename):
+    label = os.path.basename(filename)
+    for suffix in (".bdf.txt", ".pcf.txt", ".ttf.txt", ".otf.txt", ".bdf", ".pcf", ".ttf", ".otf"):
+        if label.lower().endswith(suffix):
+            return label[: -len(suffix)]
+    return os.path.splitext(label)[0]
+
+
+def _font_display_label(name):
+    raw = str(name or "").replace("_", " ").replace("-", " ").strip()
+    if not raw:
+        return "Font"
+    return " ".join(part[:1].upper() + part[1:] for part in raw.split())
+
+
+def _bdf_metadata(path):
+    metadata = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                parts = line.split()
+                if line.startswith("SIZE ") and len(parts) >= 2:
+                    metadata.setdefault("font_size", int(parts[1]))
+                elif line.startswith("FONTBOUNDINGBOX ") and len(parts) >= 3:
+                    metadata["width"] = int(parts[1])
+                    metadata["height"] = int(parts[2])
+                elif line.startswith("PIXEL_SIZE ") and len(parts) >= 2:
+                    metadata["font_size"] = int(parts[1])
+    except Exception:
+        return {}
+    return metadata
+
+
+def _discover_font_families():
+    root = _font_root()
+    try:
+        family_names = sorted(os.listdir(root), key=str.lower)
+    except Exception:
+        return []
+
+    families = []
+    for family_name in family_names:
+        family_dir = os.path.join(root, family_name)
+        if not os.path.isdir(family_dir) or family_name.startswith(".") or family_name == "disabled":
+            continue
+
+        sizes = []
+        try:
+            filenames = sorted(os.listdir(family_dir), key=str.lower)
+        except Exception:
+            continue
+        for filename in filenames:
+            lowered = filename.lower()
+            if not lowered.endswith((".bdf", ".pcf", ".ttf", ".otf")):
+                continue
+            path = os.path.join(family_dir, filename)
+            if not os.path.isfile(path):
+                continue
+            label = _font_label_from_filename(filename)
+            if label.lower().startswith(f"{family_name.lower()}-"):
+                label = label[len(family_name) + 1:]
+            metadata = _bdf_metadata(path) if lowered.endswith(".bdf") else {}
+            size = {
+                "key": _font_size_key(label),
+                "label": label,
+                "path": path,
+                "scale": 1,
+            }
+            size.update(metadata)
+            sizes.append(size)
+        sizes.sort(key=lambda size: (
+            int(size.get("height") or 9999),
+            int(size.get("width") or 9999),
+            str(size.get("label") or ""),
+        ))
+        if sizes:
+            families.append({
+                "key": _font_family_key(family_name),
+                "name": family_name,
+                "label": _font_display_label(family_name),
+                "type": "font_family",
+                "sizes": sizes,
+            })
+    return families
 
 
 def get_clock_font_faces():
-    faces = [dict(face) for face in CLOCK_BUILTIN_FONT_STYLES]
-    root = _clock_font_root()
-    for family in CLOCK_FONT_FAMILIES:
-        sizes = {}
-        available = False
-        for size_key, spec in family["sizes"].items():
-            if isinstance(spec, dict):
-                rel_path = spec.get("path", "")
-                scale = spec.get("scale", 1)
-            else:
-                rel_path = spec
-                scale = 1
-            path = os.path.join(root, rel_path)
-            sizes[size_key] = {
-                "path": path,
-                "scale": scale,
-            }
-            available = available or os.path.isfile(path)
-        if available:
-            face = dict(family)
-            face["sizes"] = sizes
-            faces.append(face)
-    return faces
+    return [dict(face) for face in CLOCK_BUILTIN_FONT_STYLES] + _discover_font_families()
 
 
 def get_clock_font_style_options():
@@ -316,6 +374,9 @@ def get_clock_font_style_options():
 def get_clock_font_face(style):
     style = str(style or "").strip().lower()
     legacy_family_map = {
+        "font_original": "font_original",
+        "font_default": "font_default",
+        "font_spleen": "font_spleen",
         "font_4x6": "font_default",
         "font_8x13": "font_default",
         "font_10x20": "font_default",
@@ -328,6 +389,57 @@ def get_clock_font_face(style):
         if face["key"] == style:
             return face
     return None
+
+
+def get_clock_font_sizes(style):
+    face = get_clock_font_face(style)
+    if not face or face.get("type") != "font_family":
+        return []
+    return list(face.get("sizes") or [])
+
+
+def get_clock_font_size(style, size_key=None):
+    sizes = get_clock_font_sizes(style)
+    if not sizes:
+        return None
+    wanted = str(size_key or "").strip().lower()
+    for size in sizes:
+        if size["key"] == wanted:
+            return size
+    for preferred in ("6x10", "8x13", "10x20", "12x24"):
+        for size in sizes:
+            if size["key"] == preferred:
+                return size
+    return sizes[0]
+
+
+def get_metro_font_options():
+    options = []
+    for family in _discover_font_families():
+        for size in family.get("sizes") or []:
+            if size.get("width") == 6 and size.get("height") == 10:
+                key = f"{family['name']}/{size['key']}"
+                options.append({
+                    "key": key,
+                    "label": f"{family['label']} {size['label']}",
+                    "family": family["key"],
+                    "size": size["key"],
+                    "path": size["path"],
+                    "font_size": size.get("font_size", 10),
+                })
+    return options
+
+
+def get_metro_font_option(style=None):
+    wanted = str(style or METRO_FONT_STYLE or "").strip().lower()
+    options = get_metro_font_options()
+    for option in options:
+        if option["key"].lower() == wanted:
+            return option
+    for option in options:
+        if option["key"] == "original/6x10":
+            return option
+    return options[0] if options else None
 
 
 def _parse_bool(value):

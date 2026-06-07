@@ -618,8 +618,32 @@ def api_clock_styles():
                     "key": face["key"],
                     "label": face["label"],
                     "type": face["type"],
+                    "sizes": [
+                        {
+                            "key": size["key"],
+                            "label": size["label"],
+                            "width": size.get("width"),
+                            "height": size.get("height"),
+                        }
+                        for size in face.get("sizes", [])
+                    ],
                 }
                 for face in clock_faces
+            ],
+        },
+        "clock_font_size": {
+            "key": "CLOCK_FONT_SIZE",
+            "default": "",
+        },
+        "metro_font_style": {
+            "key": "METRO_FONT_STYLE",
+            "default": "original/6x10",
+            "options": [
+                {
+                    "key": option["key"],
+                    "label": option["label"],
+                }
+                for option in config.get_metro_font_options()
             ],
         },
         "clock_size": {

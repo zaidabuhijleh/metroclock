@@ -115,15 +115,14 @@ class MetroWidget(Widget):
         self._row_scroll_state = {}   # row_y -> (key, frames)
         self._scroll_hold_frames = 50  # ~1s at 50fps
 
-        try:
-            self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
-        except Exception:
-            self.font_tall = ImageFont.load_default()
+        self._metro_font_key = None
+        self.font_tall = ImageFont.load_default()
 
         try:
             self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
         except Exception:
             self.font_small = ImageFont.load_default()
+        self._refresh_fonts()
 
         self._nyc_stop_name_map = self._load_nyc_stop_name_map()
 
@@ -148,6 +147,27 @@ class MetroWidget(Widget):
             self._invalidate_cached_rows(now)
             self.last_fetch = 0.0
             self._fetch_wake.set()  # refetch immediately for the new config
+
+    def _refresh_fonts(self):
+        option = config.get_metro_font_option()
+        key = (option or {}).get("key") or "original/6x10"
+        if key == self._metro_font_key:
+            return
+        path = (option or {}).get("path") or config.FONT_PATH_TALL
+        try:
+            font_size = int((option or {}).get("font_size") or 10)
+        except Exception:
+            font_size = 10
+        try:
+            self.font_tall = ImageFont.truetype(path, font_size)
+            self._metro_font_key = key
+        except Exception:
+            try:
+                self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
+                self._metro_font_key = "original/6x10"
+            except Exception:
+                self.font_tall = ImageFont.load_default()
+                self._metro_font_key = None
 
     def _fetch_worker(self):
         """Daemon loop — resync frequently, retry quickly after failures."""
@@ -964,6 +984,7 @@ class MetroWidget(Widget):
         draw.text((time_x, row_y + 3), mins, font=self.font_tall, fill=config.COLOR_WHITE)
 
     def draw(self):
+        self._refresh_fonts()
         # Snapshot the trains list under the lock so the rest of draw() sees
         # a stable view, even if the worker thread replaces it mid-frame.
         with self._trains_lock:

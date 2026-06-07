@@ -511,7 +511,7 @@
         <option value="matrix">Matrix</option>
       </select>
 
-      <label>Clock Size</label>
+      <label>Font Size</label>
       <select id="clock-size">
         <option value="0.5">S</option>
         <option value="0.75">M</option>
@@ -601,6 +601,13 @@
         <button class="unit-btn" data-metro-transition="cut" onclick="setMetroTransition('cut')">Cut</button>
       </div>
       <p class="hint">Slide animates rows to the next page. Cut switches immediately.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Metro Font</div>
+      <label>Font</label>
+      <select id="metro-font-style">
+        <option value="original/6x10">Original 6x10</option>
+      </select>
     </div>
     <button class="btn btn-primary" onclick="saveMetro()">Save</button>
   </div>
@@ -1013,8 +1020,10 @@ let selectedWmataLineFilters = new Set();
 let selectedNycLineFilters = new Set();
 let selectedTtcLineFilters = new Set();
 let selectedMetroTransition = "slide";
+let selectedMetroFontStyle = "original/6x10";
 let selectedClockFontStyle = "matrix";
 let selectedClockSize = 1.0;
+let selectedClockFontSize = "";
 let selectedClockSizeBeforeWidget = 1.0;
 let selectedClockWidgetPreset = "auto";
 let selectedClockLayout = "horizontal";
@@ -1040,6 +1049,7 @@ let currentDisplayMode = "clock";
 const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
 let CLOCK_FONT_STYLE_OPTIONS = ["matrix"];
 let clockFaceOptions = [{ key: "matrix", label: "Matrix", type: "builtin" }];
+let metroFontOptions = [{ key: "original/6x10", label: "Original 6x10" }];
 const CLOCK_WIDGET_PRESET_OPTIONS = [
   "auto",
   "horizontal_single",
@@ -1081,6 +1091,28 @@ function normalizeClockFontStyle(value) {
   return CLOCK_FONT_STYLE_OPTIONS.includes(raw) ? raw : "matrix";
 }
 
+function selectedClockFace() {
+  return clockFaceOptions.find(face => face.key === selectedClockFontStyle) || clockFaceOptions[0];
+}
+
+function builtinClockSizeOptions() {
+  return [
+    { key: "0.5", label: "S" },
+    { key: "0.75", label: "M" },
+    { key: "1", label: "L" }
+  ];
+}
+
+function normalizeClockFontSize(value) {
+  const face = selectedClockFace();
+  const sizes = Array.isArray(face?.sizes) && face.sizes.length
+    ? face.sizes
+    : builtinClockSizeOptions();
+  const raw = String(value || (sizes.length ? sizes[0].key : "")).trim().toLowerCase();
+  if (sizes.some(size => String(size.key).toLowerCase() === raw)) return raw;
+  return String(sizes[0]?.key || "").toLowerCase();
+}
+
 function renderClockFaceOptions() {
   const select = document.getElementById("clock-font-style");
   if (!select) return;
@@ -1091,6 +1123,47 @@ function renderClockFaceOptions() {
     option.textContent = face.label;
     select.appendChild(option);
   }
+}
+
+function renderClockSizeOptions() {
+  const select = document.getElementById("clock-size");
+  if (!select) return;
+  const face = selectedClockFace();
+  const sizes = Array.isArray(face?.sizes) && face.sizes.length
+    ? face.sizes
+    : builtinClockSizeOptions();
+  select.innerHTML = "";
+  for (const size of sizes) {
+    const option = document.createElement("option");
+    option.value = size.key;
+    const dims = Number.isFinite(Number(size.width)) && Number.isFinite(Number(size.height))
+      ? ` (${size.width}x${size.height})`
+      : "";
+    option.textContent = `${size.label}${dims}`;
+    select.appendChild(option);
+  }
+  selectedClockFontSize = normalizeClockFontSize(
+    Array.isArray(face?.sizes) && face.sizes.length
+      ? selectedClockFontSize
+      : String(selectedClockSize)
+  );
+  select.value = selectedClockFontSize;
+}
+
+function renderMetroFontOptions() {
+  const select = document.getElementById("metro-font-style");
+  if (!select) return;
+  select.innerHTML = "";
+  for (const font of metroFontOptions) {
+    const option = document.createElement("option");
+    option.value = font.key;
+    option.textContent = font.label;
+    select.appendChild(option);
+  }
+  if (!metroFontOptions.some(font => font.key === selectedMetroFontStyle)) {
+    selectedMetroFontStyle = metroFontOptions[0]?.key || "original/6x10";
+  }
+  select.value = selectedMetroFontStyle;
 }
 
 async function loadClockFaceOptions() {
@@ -1104,14 +1177,23 @@ async function loadClockFaceOptions() {
         .map(face => ({
           key: face.key,
           label: face.label,
-          type: face.type || "font"
+          type: face.type || "font",
+          sizes: Array.isArray(face.sizes) ? face.sizes : []
         }));
       CLOCK_FONT_STYLE_OPTIONS = clockFaceOptions.map(face => face.key);
+    }
+    const metroOptions = data?.metro_font_style?.options;
+    if (Array.isArray(metroOptions) && metroOptions.length) {
+      metroFontOptions = metroOptions
+        .filter(font => font && typeof font.key === "string" && typeof font.label === "string")
+        .map(font => ({key: font.key, label: font.label}));
     }
   } catch (e) {
     // Keep the built-in Matrix option if style metadata is unavailable.
   }
   renderClockFaceOptions();
+  renderClockSizeOptions();
+  renderMetroFontOptions();
 }
 
 function normalizeClockWidgetScrollMode(value, fallback = "metro") {
@@ -1159,6 +1241,11 @@ function updateClockSizeControl(mode) {
   const sizeEl = document.getElementById("clock-size");
   if (!sizeEl) return;
   sizeEl.disabled = false;
+  const face = selectedClockFace();
+  if (Array.isArray(face?.sizes) && face.sizes.length) {
+    renderClockSizeOptions();
+    return;
+  }
   const restore = normalizeClockSize(selectedClockSizeBeforeWidget || selectedClockSize || 1.0);
   selectedClockSize = restore;
   sizeEl.value = String(restore);
@@ -1526,6 +1613,20 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   if (!el) return;
   el.addEventListener("change", refreshClockWidgetControls);
 });
+const clockFontStyleEl = document.getElementById("clock-font-style");
+if (clockFontStyleEl) {
+  clockFontStyleEl.addEventListener("change", () => {
+    selectedClockFontStyle = normalizeClockFontStyle(clockFontStyleEl.value);
+    selectedClockFontSize = "";
+    renderClockSizeOptions();
+  });
+}
+const clockSizeEl = document.getElementById("clock-size");
+if (clockSizeEl) {
+  clockSizeEl.addEventListener("change", () => {
+    selectedClockFontSize = normalizeClockFontSize(clockSizeEl.value);
+  });
+}
 refreshClockWidgetControls();
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -1556,6 +1657,7 @@ async function init() {
     // Clock
     selectedClockFontStyle = normalizeClockFontStyle(data.CLOCK_FONT_STYLE);
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
+    selectedClockFontSize = String(data.CLOCK_FONT_SIZE || "").trim().toLowerCase();
     selectedClockWidgetPreset = normalizeClockWidgetPreset(data.CLOCK_WIDGET_PRESET, "auto");
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";
     selectedClockWidgetSource = ["metro", "weather", "pomodoro", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE)
@@ -1577,7 +1679,7 @@ async function init() {
     selectedClockShowDate = data.CLOCK_SHOW_DATE !== false;
     selectedClockShowAmpm = data.CLOCK_SHOW_AMPM !== false;
     document.getElementById("clock-font-style").value = selectedClockFontStyle;
-    document.getElementById("clock-size").value = String(selectedClockSize);
+    renderClockSizeOptions();
     selectedClockSizeBeforeWidget = selectedClockSize;
     document.getElementById("clock-format").value = selectedClockUse24h ? "24h" : "12h";
     document.getElementById("clock-show-date").value = selectedClockShowDate ? "on" : "off";
@@ -1612,6 +1714,8 @@ async function init() {
     selectedNycLineFilters = parseCsvSet(data.NYC_LINE_FILTER);
     selectedTtcLineFilters = parseCsvSet(data.TTC_LINE_FILTER);
     setMetroTransition(data.METRO_PAGE_TRANSITION, false);
+    selectedMetroFontStyle = String(data.METRO_FONT_STYLE || "original/6x10").trim().toLowerCase();
+    renderMetroFontOptions();
     setMetroSystem(selectedMetroSystem, false);
     if (data.WMATA_STATION_CODE) {
       selectStation(data.WMATA_STATION_CODE, false);
@@ -2076,15 +2180,21 @@ async function saveSettings(payload) {
 
 async function saveClock() {
   selectedClockFontStyle = normalizeClockFontStyle(document.getElementById("clock-font-style").value);
-  selectedClockSize = normalizeClockSize(document.getElementById("clock-size").value);
-  selectedClockSizeBeforeWidget = selectedClockSize;
-  document.getElementById("clock-size").value = String(selectedClockSize);
+  const face = selectedClockFace();
+  const familySized = Array.isArray(face?.sizes) && face.sizes.length;
+  selectedClockFontSize = normalizeClockFontSize(document.getElementById("clock-size").value);
+  if (!familySized) {
+    selectedClockSize = normalizeClockSize(document.getElementById("clock-size").value);
+    selectedClockSizeBeforeWidget = selectedClockSize;
+    document.getElementById("clock-size").value = String(selectedClockSize);
+  }
   selectedClockUse24h = document.getElementById("clock-format").value === "24h";
   selectedClockShowDate = document.getElementById("clock-show-date").value === "on";
   selectedClockShowAmpm = document.getElementById("clock-show-ampm").value === "on";
 
   const payload = {
     CLOCK_FONT_STYLE: selectedClockFontStyle,
+    CLOCK_FONT_SIZE: familySized ? selectedClockFontSize : "",
     CLOCK_SIZE: selectedClockSize,
     CLOCK_USE_24H: selectedClockUse24h,
     CLOCK_SHOW_DATE: selectedClockShowDate,
@@ -2116,7 +2226,8 @@ async function saveMetro() {
     METRO_SYSTEM: selectedMetroSystem,
     METRO_MIN_ARRIVAL_MINUTES: minMinutes,
     METRO_MAX_ARRIVAL_MINUTES: maxMinutes,
-    METRO_PAGE_TRANSITION: selectedMetroTransition
+    METRO_PAGE_TRANSITION: selectedMetroTransition,
+    METRO_FONT_STYLE: document.getElementById("metro-font-style").value
   };
 
   if (selectedMetroSystem === "wmata") {

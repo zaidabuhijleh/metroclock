@@ -906,6 +906,9 @@ class ClockWidget(Widget):
             draw.text((max(0, (w - aw) // 2), ampm_y), ampm, font=self.font_small, fill=theme.accent_2)
 
     def _clock_face_size_key(self):
+        selected = str(getattr(config, "CLOCK_FONT_SIZE", "") or "").strip().lower()
+        if selected:
+            return selected
         size = self._effective_clock_size()
         if size >= 1.0:
             return "large"
@@ -914,17 +917,13 @@ class ClockWidget(Widget):
         return "small"
 
     def _clock_face_font_spec(self, face):
-        sizes = (face or {}).get("sizes") or {}
+        sizes = (face or {}).get("sizes") or []
         size_key = self._clock_face_size_key()
-        spec = sizes.get(size_key) or sizes.get("medium") or sizes.get("small") or sizes.get("large")
-        if isinstance(spec, dict):
-            return {
-                "path": spec.get("path"),
-                "scale": max(1, int(spec.get("scale") or 1)),
-            }
+        spec = config.get_clock_font_size((face or {}).get("key"), size_key)
         return {
-            "path": spec,
-            "scale": 1,
+            "path": (spec or {}).get("path"),
+            "scale": max(1, int((spec or {}).get("scale") or 1)),
+            "font_size": (spec or {}).get("font_size"),
         }
 
     def _clock_face_font_size(self, path):
@@ -935,10 +934,14 @@ class ClockWidget(Widget):
         return 10
 
     def _load_clock_face_font(self, face):
-        path = self._clock_face_font_spec(face)["path"]
+        spec = self._clock_face_font_spec(face)
+        path = spec["path"]
         if not path:
             return None
-        size = self._clock_face_font_size(path)
+        try:
+            size = int(spec.get("font_size") or self._clock_face_font_size(path))
+        except Exception:
+            size = self._clock_face_font_size(path)
         cache_key = (path, size)
         if cache_key not in self._clock_face_font_cache:
             self._clock_face_font_cache[cache_key] = ImageFont.truetype(path, size)

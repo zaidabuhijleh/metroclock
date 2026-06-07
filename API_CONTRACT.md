@@ -40,7 +40,9 @@ Primary device status payload. Includes:
 
 - Returns app-facing metadata for dynamic clock customization controls:
   - `CLOCK_FONT_STYLE` options/default, plus `faces` entries with display labels for built-in and font-family watch faces
-  - `CLOCK_SIZE` options/default (`0.5`=S, `0.75`=M, `1.0`=L)
+  - `CLOCK_FONT_SIZE` metadata for font-family size selection
+  - `CLOCK_SIZE` options/default (`0.5`=S, `0.75`=M, `1.0`=L) for built-in clock faces
+  - `METRO_FONT_STYLE` options for fonts that match the main Metro row height
   - `CLOCK_SHOW_DATE` and `CLOCK_SHOW_AMPM` metadata/defaults
   - Clock color override keys + expected `#RRGGBB` format
 
