@@ -23,6 +23,11 @@ MATRIX_PWM_BITS_POMODORO = 5
 # --- FONTS ---
 FONT_PATH_TALL = "assets/fonts/6x10.bdf"
 FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
+CLOCK_FONT_DIR = "assets/fonts/watchfaces"
+CLOCK_BUILTIN_FONT_STYLES = (
+    {"key": "matrix", "label": "Matrix", "type": "builtin"},
+    {"key": "segment", "label": "Segment", "type": "builtin"},
+)
 
 # --- WMATA (DC Metro) ---
 METRO_SYSTEM = "wmata"  # "wmata", "nyc", or "ttc"
@@ -109,7 +114,7 @@ POMODORO_TODO_ITEMS = ""
 
 # --- CLOCK ---
 # Font style options:
-#   matrix
+#   matrix, segment, or a discovered font_* key from CLOCK_FONT_DIR
 CLOCK_FONT_STYLE = "matrix"
 # One sizing control for all styles.
 CLOCK_SIZE = 1.0  # 0.5, 0.75, 1.0
@@ -248,6 +253,78 @@ RUNTIME_CONFIG_PATH = _default_runtime_config_path()
 
 def get_runtime_config_path() -> str:
     return RUNTIME_CONFIG_PATH
+
+
+def _clock_font_root():
+    if os.path.isabs(CLOCK_FONT_DIR):
+        return CLOCK_FONT_DIR
+    return os.path.join(os.path.dirname(__file__), CLOCK_FONT_DIR)
+
+
+def _clock_font_label(filename):
+    label = filename
+    for suffix in (".bdf.txt", ".pcf.txt", ".ttf.txt", ".otf.txt", ".bdf", ".pcf", ".ttf", ".otf"):
+        if label.lower().endswith(suffix):
+            label = label[: -len(suffix)]
+            break
+    return label
+
+
+def _clock_font_key(label):
+    cleaned = []
+    for ch in label.lower():
+        if ch.isalnum():
+            cleaned.append(ch)
+        elif cleaned and cleaned[-1] != "_":
+            cleaned.append("_")
+    key = "".join(cleaned).strip("_") or "font"
+    return f"font_{key}"
+
+
+def get_clock_font_faces():
+    faces = [dict(face) for face in CLOCK_BUILTIN_FONT_STYLES]
+    root = _clock_font_root()
+    try:
+        filenames = sorted(os.listdir(root), key=str.lower)
+    except Exception:
+        return faces
+
+    seen = {face["key"] for face in faces}
+    for filename in filenames:
+        lowered = filename.lower()
+        if not lowered.endswith((".bdf", ".bdf.txt", ".pcf", ".pcf.txt", ".ttf", ".ttf.txt", ".otf", ".otf.txt")):
+            continue
+        path = os.path.join(root, filename)
+        if not os.path.isfile(path):
+            continue
+        label = _clock_font_label(filename)
+        key = _clock_font_key(label)
+        if key in seen:
+            base = key
+            suffix = 2
+            while key in seen:
+                key = f"{base}_{suffix}"
+                suffix += 1
+        seen.add(key)
+        faces.append({
+            "key": key,
+            "label": label,
+            "path": path,
+            "type": "font",
+        })
+    return faces
+
+
+def get_clock_font_style_options():
+    return tuple(face["key"] for face in get_clock_font_faces())
+
+
+def get_clock_font_face(style):
+    style = str(style or "").strip().lower()
+    for face in get_clock_font_faces():
+        if face["key"] == style:
+            return face
+    return None
 
 
 def _parse_bool(value):

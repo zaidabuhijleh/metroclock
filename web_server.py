@@ -13,7 +13,6 @@ from flask import Flask, jsonify, request, send_from_directory
 
 API_VERSION = "1.0"
 
-CLOCK_FONT_STYLE_OPTIONS = ("matrix",)
 CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
 CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 CLOCK_WIDGET_PRESET_OPTIONS = (
@@ -608,11 +607,20 @@ def api_settings_get():
 
 @app.route("/api/clock/styles")
 def api_clock_styles():
+    clock_faces = config.get_clock_font_faces()
     return jsonify({
         "clock_font_style": {
             "key": "CLOCK_FONT_STYLE",
             "default": "matrix",
-            "options": list(CLOCK_FONT_STYLE_OPTIONS),
+            "options": [face["key"] for face in clock_faces],
+            "faces": [
+                {
+                    "key": face["key"],
+                    "label": face["label"],
+                    "type": face["type"],
+                }
+                for face in clock_faces
+            ],
         },
         "clock_size": {
             "key": "CLOCK_SIZE",

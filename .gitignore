@@ -208,3 +208,5 @@ __marimo__/
 config.py
 run.sh
 preview.py
+assets/.DS_Store
+.DS_Store

@@ -39,7 +39,7 @@ Primary device status payload. Includes:
 ### `GET /api/clock/styles`
 
 - Returns app-facing metadata for dynamic clock customization controls:
-  - `CLOCK_FONT_STYLE` options/default
+  - `CLOCK_FONT_STYLE` options/default, plus `faces` entries with display labels for built-in and discovered font-backed watch faces
   - `CLOCK_SIZE` options/default (`0.5`=S, `0.75`=M, `1.0`=L)
   - `CLOCK_SHOW_DATE` and `CLOCK_SHOW_AMPM` metadata/defaults
   - Clock color override keys + expected `#RRGGBB` format
@@ -60,4 +60,3 @@ If token auth is enabled and token is missing/invalid, responses return:
 - JSON:
   - `ok: false`
   - `error: "Unauthorized"`
-

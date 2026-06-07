@@ -506,7 +506,7 @@
     </div>
     <div class="card">
       <div class="card-title">Clock Settings</div>
-      <label>Font Style</label>
+      <label>Watch Face</label>
       <select id="clock-font-style">
         <option value="matrix">Matrix</option>
       </select>
@@ -1112,6 +1112,8 @@ let selectedPomodoroState = null;
 let pomodoroPollHandle = null;
 let currentDisplayMode = "clock";
 const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
+let CLOCK_FONT_STYLE_OPTIONS = ["matrix"];
+let clockFaceOptions = [{ key: "matrix", label: "Matrix", type: "builtin" }];
 const CLOCK_WIDGET_PRESET_OPTIONS = [
   "auto",
   "horizontal_single",
@@ -1137,6 +1139,44 @@ function normalizeClockSize(value) {
     }
   }
   return best;
+}
+
+function normalizeClockFontStyle(value) {
+  const raw = String(value || "matrix").trim().toLowerCase();
+  return CLOCK_FONT_STYLE_OPTIONS.includes(raw) ? raw : "matrix";
+}
+
+function renderClockFaceOptions() {
+  const select = document.getElementById("clock-font-style");
+  if (!select) return;
+  select.innerHTML = "";
+  for (const face of clockFaceOptions) {
+    const option = document.createElement("option");
+    option.value = face.key;
+    option.textContent = face.label;
+    select.appendChild(option);
+  }
+}
+
+async function loadClockFaceOptions() {
+  try {
+    const res = await fetch("/api/clock/styles");
+    const data = await res.json();
+    const faces = data?.clock_font_style?.faces;
+    if (Array.isArray(faces) && faces.length) {
+      clockFaceOptions = faces
+        .filter(face => face && typeof face.key === "string" && typeof face.label === "string")
+        .map(face => ({
+          key: face.key,
+          label: face.label,
+          type: face.type || "font"
+        }));
+      CLOCK_FONT_STYLE_OPTIONS = clockFaceOptions.map(face => face.key);
+    }
+  } catch (e) {
+    // Keep the built-in Matrix option if style metadata is unavailable.
+  }
+  renderClockFaceOptions();
 }
 
 function normalizeClockWidgetScrollMode(value, fallback = "metro") {
@@ -1566,6 +1606,7 @@ refreshClockWidgetControls();
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   await Promise.all([loadWMATAStations(), loadNYCStations(), loadTTCStations()]);
+  await loadClockFaceOptions();
   renderStations(WMATA_STATION_GROUPS);
   setMetroTransition(selectedMetroTransition, false);
   try {
@@ -1588,9 +1629,7 @@ async function init() {
     setActiveMode(currentDisplayMode);
 
     // Clock
-    selectedClockFontStyle = ["matrix"].includes(data.CLOCK_FONT_STYLE)
-      ? data.CLOCK_FONT_STYLE
-      : "matrix";
+    selectedClockFontStyle = normalizeClockFontStyle(data.CLOCK_FONT_STYLE);
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
     selectedClockWidgetPreset = normalizeClockWidgetPreset(data.CLOCK_WIDGET_PRESET, "auto");
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";
@@ -2123,7 +2162,7 @@ async function saveSettings(payload) {
 }
 
 async function saveClock() {
-  selectedClockFontStyle = document.getElementById("clock-font-style").value;
+  selectedClockFontStyle = normalizeClockFontStyle(document.getElementById("clock-font-style").value);
   selectedClockWidgetPreset = normalizeClockWidgetPreset(
     document.getElementById("clock-widget-preset").value,
     "auto"
