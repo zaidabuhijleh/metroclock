@@ -139,7 +139,7 @@ class MetroWidget(Widget):
         now = time.time()
         with config_manager.CONFIG_LOCK:
             if now - self._last_config_reload >= 1.0:
-                config_manager.reload_config()
+                config_manager.reload_config_if_changed()
                 self._last_config_reload = now
             signature = self._current_config_signature()
         if signature != self._config_signature:

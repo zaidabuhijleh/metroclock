@@ -115,7 +115,7 @@ class StocksWidget(Widget):
     def update(self):
         now = time.time()
         if now - self._last_config_reload >= 1.0:
-            config_manager.reload_config()
+            config_manager.reload_config_if_changed()
             self._last_config_reload = now
 
         symbols = self._symbols()

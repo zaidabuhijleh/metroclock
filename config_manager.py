@@ -8,11 +8,31 @@ import config
 
 EDITABLE_FIELDS = set(getattr(config, "RUNTIME_EDITABLE_FIELDS", set()))
 CONFIG_LOCK = threading.RLock()
+_LAST_RUNTIME_MTIME = None
 
 
-def reload_config():
+def _runtime_config_mtime():
+    try:
+        return os.path.getmtime(_runtime_config_path())
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+
+
+def reload_config(force=True):
+    global _LAST_RUNTIME_MTIME
     with CONFIG_LOCK:
-        return importlib.reload(config)
+        current_mtime = _runtime_config_mtime()
+        if not force and _LAST_RUNTIME_MTIME == current_mtime:
+            return config
+        reloaded = importlib.reload(config)
+        _LAST_RUNTIME_MTIME = _runtime_config_mtime()
+        return reloaded
+
+
+def reload_config_if_changed():
+    return reload_config(force=False)
 
 
 def _runtime_config_path() -> str:
@@ -46,7 +66,7 @@ def _save_runtime_config(data: dict):
 
 def read_config() -> dict:
     with CONFIG_LOCK:
-        reload_config()
+        reload_config_if_changed()
         result = {}
         for field in EDITABLE_FIELDS:
             result[field] = getattr(config, field, None)
@@ -66,5 +86,5 @@ def write_config(updates: dict) -> dict:
             changed[key] = value
 
         _save_runtime_config(runtime_data)
-        reload_config()
+        reload_config(force=True)
         return changed

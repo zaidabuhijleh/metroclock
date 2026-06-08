@@ -66,7 +66,7 @@ class SportsWidget(Widget):
 
     def update(self):
         now = time.time()
-        config_manager.reload_config()
+        config_manager.reload_config_if_changed()
 
         test_date = self._get_test_date()
         fetch_key = test_date or "today"

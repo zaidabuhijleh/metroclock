@@ -552,7 +552,7 @@ class ClockWidget(Widget):
         # request path. This periodic reload only catches out-of-band edits.
         now = time.time()
         if now - self._last_config_reload >= 1.0:
-            config_manager.reload_config()
+            config_manager.reload_config_if_changed()
             self._last_config_reload = now
 
         if web_server.get_display_mode() != "clock_widget":

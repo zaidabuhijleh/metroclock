@@ -33,7 +33,7 @@ class PomodoroWidget(Widget):
             self.font_small = ImageFont.load_default()
 
     def update(self):
-        config_manager.reload_config()
+        config_manager.reload_config_if_changed()
         self.state = web_server.get_pomodoro_state()
 
     def _fit_text(self, text, max_width, font):
