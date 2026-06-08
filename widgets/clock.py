@@ -826,6 +826,23 @@ class ClockWidget(Widget):
             return 0
         return 6
 
+    def _overlay_order(self):
+        order = str(getattr(config, "CLOCK_OVERLAY_ORDER", "ampm_date") or "ampm_date").strip().lower()
+        return order if order in {"ampm_date", "date_ampm"} else "ampm_date"
+
+    def _clock_overlay_slots(self, ampm=""):
+        ampm_enabled = self._show_ampm() and (not self._use_24h()) and (not ampm or bool(ampm))
+        date_enabled = self._show_date()
+        if self._overlay_order() == "date_ampm":
+            return {
+                "top": "date" if date_enabled else None,
+                "bottom": "ampm" if ampm_enabled else None,
+            }
+        return {
+            "top": "ampm" if ampm_enabled else None,
+            "bottom": "date" if date_enabled else None,
+        }
+
     def _font_line_profile(self, style):
         fallback = self.FONT_LINE_SHAPES["segment"]
         profile = self.FONT_LINE_SHAPES.get(style, fallback)
@@ -857,10 +874,9 @@ class ClockWidget(Widget):
         style = self._font_style()
         profile = self._font_line_profile(style)
         size = self._effective_clock_size()
-        show_top_overlay = self._show_ampm() and (not self._use_24h())
-        show_bottom_overlay = self._show_date()
-        top_band = self._overlay_band_height(h, variant, show_top_overlay)
-        bottom_band = self._overlay_band_height(h, variant, show_bottom_overlay)
+        overlay_slots = self._clock_overlay_slots()
+        top_band = self._overlay_band_height(h, variant, overlay_slots["top"] is not None)
+        bottom_band = self._overlay_band_height(h, variant, overlay_slots["bottom"] is not None)
 
         clock_top = top_band
         clock_bottom = max(clock_top + 1, h - bottom_band)
@@ -898,21 +914,39 @@ class ClockWidget(Widget):
         }
 
     def _draw_clock_overlays(self, draw, w, h, variant, ampm, theme, date_text, metrics):
-        if self._show_date() and metrics["bottom_band"] > 0:
-            font = self._load_small_text_font(getattr(config, "CLOCK_DATE_FONT_STYLE", "original/4x6"))
-            color = self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")) or theme.accent
-            left, top, dw, dh = self._font_text_metrics(draw, date_text, font)
-            date_y = h - metrics["bottom_band"] + max(0, (metrics["bottom_band"] - dh) // 2) - top
-            # Allow a true 1px downward nudge; previous clamp could pin to same row.
-            date_y = min(h - max(1, dh), date_y + 3)
-            draw.text((max(0, (w - dw) // 2) - left, date_y), date_text, font=font, fill=color)
+        def draw_overlay(slot, content):
+            if content == "date":
+                if not self._show_date():
+                    return
+                text = date_text
+                font = self._load_small_text_font(getattr(config, "CLOCK_DATE_FONT_STYLE", "original/4x6"))
+                color = self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")) or theme.accent
+                y_offset = 4 if slot == "bottom" else 1
+            elif content == "ampm":
+                if not (self._show_ampm() and ampm and not self._use_24h()):
+                    return
+                text = ampm
+                font = self._load_small_text_font(getattr(config, "CLOCK_AMPM_FONT_STYLE", "original/4x6"))
+                color = self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")) or theme.accent_2
+                y_offset = -1
+            else:
+                return
 
-        if self._show_ampm() and ampm and not self._use_24h() and metrics["top_band"] > 0:
-            font = self._load_small_text_font(getattr(config, "CLOCK_AMPM_FONT_STYLE", "original/4x6"))
-            color = self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")) or theme.accent_2
-            left, top, aw, ah = self._font_text_metrics(draw, ampm, font)
-            ampm_y = max(0, (metrics["top_band"] - ah) // 2) - top
-            draw.text((max(0, (w - aw) // 2) - left, ampm_y), ampm, font=font, fill=color)
+            left, top, text_w, text_h = self._font_text_metrics(draw, text, font)
+            band_key = "top_band" if slot == "top" else "bottom_band"
+            band_h = metrics.get(band_key, 0)
+            if band_h <= 0:
+                return
+            if slot == "top":
+                y = max(0, (band_h - text_h) // 2) - top
+            else:
+                y = h - band_h + max(0, (band_h - text_h) // 2) - top
+            y = max(0, min(h - max(1, text_h), y + y_offset))
+            draw.text((max(0, (w - text_w) // 2) - left, y), text, font=font, fill=color)
+
+        slots = self._clock_overlay_slots(ampm)
+        draw_overlay("top", slots["top"])
+        draw_overlay("bottom", slots["bottom"])
 
     def _load_small_text_font(self, style):
         option = config.get_small_text_font_option(style)
@@ -991,11 +1025,10 @@ class ClockWidget(Widget):
         now, hour, ampm = self._time_parts()
         blink_on = (time.time() % 1.0) > 0.25
         time_text = f"{hour:02d}{':' if blink_on else ' '}{now.minute:02d}"
-        show_top_overlay = self._show_ampm() and ampm and (not self._use_24h())
-        show_bottom_overlay = self._show_date()
+        overlay_slots = self._clock_overlay_slots(ampm)
         metrics = {
-            "top_band": self._overlay_band_height(h, variant, show_top_overlay),
-            "bottom_band": self._overlay_band_height(h, variant, show_bottom_overlay),
+            "top_band": self._overlay_band_height(h, variant, overlay_slots["top"] is not None),
+            "bottom_band": self._overlay_band_height(h, variant, overlay_slots["bottom"] is not None),
         }
         clock_top = metrics["top_band"]
         clock_bottom = max(clock_top + 1, h - metrics["bottom_band"])

@@ -524,6 +524,12 @@
         <option value="24h">24-hour</option>
       </select>
 
+      <label>Overlay Positions</label>
+      <select id="clock-overlay-order">
+        <option value="ampm_date">AM/PM top, date bottom</option>
+        <option value="date_ampm">Date top, AM/PM bottom</option>
+      </select>
+
       <label>Show Date</label>
       <select id="clock-show-date">
         <option value="on">On</option>
@@ -1051,6 +1057,7 @@ let selectedClockDateFont = "original/4x6";
 let selectedClockAmpmFont = "original/4x6";
 let selectedClockDateColor = "";
 let selectedClockAmpmColor = "";
+let selectedClockOverlayOrder = "ampm_date";
 let selectedPomodoroFocusMinutes = 25;
 let selectedPomodoroShortBreakMinutes = 5;
 let selectedPomodoroLongBreakMinutes = 15;
@@ -1067,6 +1074,10 @@ let CLOCK_FONT_STYLE_OPTIONS = ["matrix"];
 let clockFaceOptions = [{ key: "matrix", label: "Matrix", type: "builtin" }];
 let metroFontOptions = [{ key: "original/6x10", label: "Original 6x10" }];
 let smallTextFontOptions = [{ key: "original/4x6", label: "Original 4x6" }];
+let clockOverlayOrderOptions = [
+  { key: "ampm_date", label: "AM/PM top, date bottom" },
+  { key: "date_ampm", label: "Date top, AM/PM bottom" }
+];
 const CLOCK_WIDGET_PRESET_OPTIONS = [
   "auto",
   "horizontal_single",
@@ -1190,6 +1201,24 @@ function normalizeSmallTextFont(value) {
     : (smallTextFontOptions[0]?.key || "original/4x6");
 }
 
+function normalizeClockOverlayOrder(value) {
+  const raw = String(value || "ampm_date").trim().toLowerCase();
+  return clockOverlayOrderOptions.some(option => option.key === raw) ? raw : "ampm_date";
+}
+
+function renderClockOverlayOrderOptions(selectedValue) {
+  const select = document.getElementById("clock-overlay-order");
+  if (!select) return;
+  select.innerHTML = "";
+  for (const order of clockOverlayOrderOptions) {
+    const option = document.createElement("option");
+    option.value = order.key;
+    option.textContent = order.label;
+    select.appendChild(option);
+  }
+  select.value = normalizeClockOverlayOrder(selectedValue);
+}
+
 function renderSmallTextFontOptions(selectId, selectedValue) {
   const select = document.getElementById(selectId);
   if (!select) return;
@@ -1231,12 +1260,19 @@ async function loadClockFaceOptions() {
         .filter(font => font && typeof font.key === "string" && typeof font.label === "string")
         .map(font => ({key: font.key, label: font.label}));
     }
+    const overlayOrderOptions = data?.clock_overlays?.order_options;
+    if (Array.isArray(overlayOrderOptions) && overlayOrderOptions.length) {
+      clockOverlayOrderOptions = overlayOrderOptions
+        .filter(option => option && typeof option.key === "string" && typeof option.label === "string")
+        .map(option => ({key: option.key, label: option.label}));
+    }
   } catch (e) {
     // Keep the built-in Matrix option if style metadata is unavailable.
   }
   renderClockFaceOptions();
   renderClockSizeOptions();
   renderMetroFontOptions();
+  renderClockOverlayOrderOptions(selectedClockOverlayOrder);
   renderSmallTextFontOptions("clock-date-font", selectedClockDateFont);
   renderSmallTextFontOptions("clock-ampm-font", selectedClockAmpmFont);
 }
@@ -1727,10 +1763,12 @@ async function init() {
     selectedClockAmpmFont = normalizeSmallTextFont(data.CLOCK_AMPM_FONT_STYLE);
     selectedClockDateColor = data.CLOCK_DATE_COLOR || "";
     selectedClockAmpmColor = data.CLOCK_AMPM_COLOR || "";
+    selectedClockOverlayOrder = normalizeClockOverlayOrder(data.CLOCK_OVERLAY_ORDER);
     document.getElementById("clock-font-style").value = selectedClockFontStyle;
     renderClockSizeOptions();
     selectedClockSizeBeforeWidget = selectedClockSize;
     document.getElementById("clock-format").value = selectedClockUse24h ? "24h" : "12h";
+    renderClockOverlayOrderOptions(selectedClockOverlayOrder);
     document.getElementById("clock-show-date").value = selectedClockShowDate ? "on" : "off";
     document.getElementById("clock-show-ampm").value = selectedClockShowAmpm ? "on" : "off";
     renderSmallTextFontOptions("clock-date-font", selectedClockDateFont);
@@ -2248,6 +2286,7 @@ async function saveClock() {
   selectedClockAmpmFont = normalizeSmallTextFont(document.getElementById("clock-ampm-font").value);
   selectedClockDateColor = document.getElementById("clock-date-color").value.trim();
   selectedClockAmpmColor = document.getElementById("clock-ampm-color").value.trim();
+  selectedClockOverlayOrder = normalizeClockOverlayOrder(document.getElementById("clock-overlay-order").value);
 
   const payload = {
     CLOCK_FONT_STYLE: selectedClockFontStyle,
@@ -2259,7 +2298,8 @@ async function saveClock() {
     CLOCK_DATE_FONT_STYLE: selectedClockDateFont,
     CLOCK_AMPM_FONT_STYLE: selectedClockAmpmFont,
     CLOCK_DATE_COLOR: selectedClockDateColor,
-    CLOCK_AMPM_COLOR: selectedClockAmpmColor
+    CLOCK_AMPM_COLOR: selectedClockAmpmColor,
+    CLOCK_OVERLAY_ORDER: selectedClockOverlayOrder
   };
   await saveSettings(payload);
 }

@@ -134,6 +134,7 @@ CLOCK_AMPM_FONT_STYLE = "original/4x6"
 CLOCK_DATE_FONT_STYLE = "original/4x6"
 CLOCK_AMPM_COLOR = ""  # Optional #RRGGBB override
 CLOCK_DATE_COLOR = ""  # Optional #RRGGBB override
+CLOCK_OVERLAY_ORDER = "ampm_date"  # ampm_date or date_ampm
 # "horizontal" -> clock top 2/3, widget bottom 1/3
 # "vertical"   -> clock left 2/3, widget right 1/3
 CLOCK_WIDGET_LAYOUT = "horizontal"
@@ -237,6 +238,7 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_DATE_FONT_STYLE",
     "CLOCK_AMPM_COLOR",
     "CLOCK_DATE_COLOR",
+    "CLOCK_OVERLAY_ORDER",
     "CLOCK_WIDGET_LAYOUT",
     "CLOCK_WIDGET_PRESET",
     "CLOCK_WIDGET_SOURCE",

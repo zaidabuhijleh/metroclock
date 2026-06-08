@@ -658,6 +658,7 @@ def api_clock_styles():
             "ampm_font_key": "CLOCK_AMPM_FONT_STYLE",
             "date_color_key": "CLOCK_DATE_COLOR",
             "ampm_color_key": "CLOCK_AMPM_COLOR",
+            "order_key": "CLOCK_OVERLAY_ORDER",
             "font_options": [
                 {
                     "key": option["key"],
@@ -670,7 +671,12 @@ def api_clock_styles():
             "defaults": {
                 "show_date": True,
                 "show_ampm": True,
+                "order": "ampm_date",
             },
+            "order_options": [
+                {"key": "ampm_date", "label": "AM/PM top, date bottom"},
+                {"key": "date_ampm", "label": "Date top, AM/PM bottom"},
+            ],
         },
         "clock_widget_preset": {
             "key": "CLOCK_WIDGET_PRESET",
