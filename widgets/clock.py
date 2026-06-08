@@ -921,14 +921,14 @@ class ClockWidget(Widget):
                 text = date_text
                 font = self._load_small_text_font(getattr(config, "CLOCK_DATE_FONT_STYLE", "original/4x6"))
                 color = self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")) or theme.accent
-                y_offset = 4 if slot == "bottom" else 1
+                y_offset = -1 if slot == "top" else 1
             elif content == "ampm":
                 if not (self._show_ampm() and ampm and not self._use_24h()):
                     return
                 text = ampm
                 font = self._load_small_text_font(getattr(config, "CLOCK_AMPM_FONT_STYLE", "original/4x6"))
                 color = self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")) or theme.accent_2
-                y_offset = -1
+                y_offset = -1 if slot == "top" else 1
             else:
                 return
 
@@ -941,7 +941,9 @@ class ClockWidget(Widget):
                 y = max(0, (band_h - text_h) // 2) - top
             else:
                 y = h - band_h + max(0, (band_h - text_h) // 2) - top
-            y = max(0, min(h - max(1, text_h), y + y_offset))
+            min_y = -1 if slot == "top" else 0
+            max_y = h - max(1, text_h) + (1 if slot == "bottom" else 0)
+            y = max(min_y, min(max_y, y + y_offset))
             draw.text((max(0, (w - text_w) // 2) - left, y), text, font=font, fill=color)
 
         slots = self._clock_overlay_slots(ampm)
