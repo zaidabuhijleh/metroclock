@@ -212,6 +212,7 @@ class ClockWidget(Widget):
         self._stocks_mini_hold_key = None
         self._stocks_mini_hold_started = 0.0
         self._pomodoro_state_cache = None
+        self._last_config_reload = 0.0
 
         try:
             self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
@@ -547,12 +548,16 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- state
 
     def update(self):
-        config_manager.reload_config()
+        # Settings saved through the web UI reload config immediately in that
+        # request path. This periodic reload only catches out-of-band edits.
+        now = time.time()
+        if now - self._last_config_reload >= 1.0:
+            config_manager.reload_config()
+            self._last_config_reload = now
 
         if web_server.get_display_mode() != "clock_widget":
             return
 
-        now = time.time()
         screen_layout = self._build_clock_screen_layout()
         sources_to_update = {pane.source for pane in screen_layout.widget_panes}
 

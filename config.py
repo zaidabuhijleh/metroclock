@@ -30,6 +30,7 @@ CLOCK_BUILTIN_FONT_STYLES = (
     {"key": "segment", "label": "Segment", "type": "builtin"},
 )
 METRO_FONT_STYLE = "original/6x10"
+_FONT_FAMILIES_CACHE = None
 
 # --- WMATA (DC Metro) ---
 METRO_SYSTEM = "wmata"  # "wmata", "nyc", or "ttc"
@@ -311,11 +312,16 @@ def _bdf_metadata(path):
 
 
 def _discover_font_families():
+    global _FONT_FAMILIES_CACHE
+    if _FONT_FAMILIES_CACHE is not None:
+        return _FONT_FAMILIES_CACHE
+
     root = _font_root()
     try:
         family_names = sorted(os.listdir(root), key=str.lower)
     except Exception:
-        return []
+        _FONT_FAMILIES_CACHE = []
+        return _FONT_FAMILIES_CACHE
 
     families = []
     for family_name in family_names:
@@ -360,7 +366,8 @@ def _discover_font_families():
                 "type": "font_family",
                 "sizes": sizes,
             })
-    return families
+    _FONT_FAMILIES_CACHE = families
+    return _FONT_FAMILIES_CACHE
 
 
 def get_clock_font_faces():
