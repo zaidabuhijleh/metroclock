@@ -64,6 +64,13 @@ def _save_runtime_config(data: dict):
     os.replace(tmp_path, path)
 
 
+def _apply_updates_to_live_config(updates: dict):
+    for key, value in updates.items():
+        if not hasattr(config, key):
+            continue
+        setattr(config, key, config._coerce_value(value, getattr(config, key)))
+
+
 def read_config() -> dict:
     with CONFIG_LOCK:
         reload_config_if_changed()
@@ -74,6 +81,7 @@ def read_config() -> dict:
 
 
 def write_config(updates: dict) -> dict:
+    global _LAST_RUNTIME_MTIME
     filtered = {k: v for k, v in updates.items() if k in EDITABLE_FIELDS}
     if not filtered:
         return {}
@@ -86,5 +94,6 @@ def write_config(updates: dict) -> dict:
             changed[key] = value
 
         _save_runtime_config(runtime_data)
-        reload_config(force=True)
+        _apply_updates_to_live_config(changed)
+        _LAST_RUNTIME_MTIME = _runtime_config_mtime()
         return changed
