@@ -654,6 +654,19 @@ def api_clock_styles():
         "clock_overlays": {
             "show_date_key": "CLOCK_SHOW_DATE",
             "show_ampm_key": "CLOCK_SHOW_AMPM",
+            "date_font_key": "CLOCK_DATE_FONT_STYLE",
+            "ampm_font_key": "CLOCK_AMPM_FONT_STYLE",
+            "date_color_key": "CLOCK_DATE_COLOR",
+            "ampm_color_key": "CLOCK_AMPM_COLOR",
+            "font_options": [
+                {
+                    "key": option["key"],
+                    "label": option["label"],
+                    "width": option.get("width"),
+                    "height": option.get("height"),
+                }
+                for option in config.get_small_text_font_options()
+            ],
             "defaults": {
                 "show_date": True,
                 "show_ampm": True,

@@ -529,12 +529,24 @@
         <option value="on">On</option>
         <option value="off">Off</option>
       </select>
+      <label>Date Font</label>
+      <select id="clock-date-font">
+        <option value="original/4x6">Original 4x6</option>
+      </select>
+      <label>Date Color (#RRGGBB)</label>
+      <input type="text" id="clock-date-color" placeholder="Default accent" />
 
       <label>Show AM/PM (12-hour mode)</label>
       <select id="clock-show-ampm">
         <option value="on">On</option>
         <option value="off">Off</option>
       </select>
+      <label>AM/PM Font</label>
+      <select id="clock-ampm-font">
+        <option value="original/4x6">Original 4x6</option>
+      </select>
+      <label>AM/PM Color (#RRGGBB)</label>
+      <input type="text" id="clock-ampm-color" placeholder="Default accent 2" />
       <button class="btn btn-primary" onclick="saveClock()">Save Clock Settings</button>
     </div>
   </div>
@@ -1035,6 +1047,10 @@ let selectedClockWidgetScrollModeSecondary = "metro";
 let selectedClockUse24h = false;
 let selectedClockShowDate = true;
 let selectedClockShowAmpm = true;
+let selectedClockDateFont = "original/4x6";
+let selectedClockAmpmFont = "original/4x6";
+let selectedClockDateColor = "";
+let selectedClockAmpmColor = "";
 let selectedPomodoroFocusMinutes = 25;
 let selectedPomodoroShortBreakMinutes = 5;
 let selectedPomodoroLongBreakMinutes = 15;
@@ -1050,6 +1066,7 @@ const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
 let CLOCK_FONT_STYLE_OPTIONS = ["matrix"];
 let clockFaceOptions = [{ key: "matrix", label: "Matrix", type: "builtin" }];
 let metroFontOptions = [{ key: "original/6x10", label: "Original 6x10" }];
+let smallTextFontOptions = [{ key: "original/4x6", label: "Original 4x6" }];
 const CLOCK_WIDGET_PRESET_OPTIONS = [
   "auto",
   "horizontal_single",
@@ -1166,6 +1183,26 @@ function renderMetroFontOptions() {
   select.value = selectedMetroFontStyle;
 }
 
+function normalizeSmallTextFont(value) {
+  const raw = String(value || "original/4x6").trim().toLowerCase();
+  return smallTextFontOptions.some(font => font.key.toLowerCase() === raw)
+    ? raw
+    : (smallTextFontOptions[0]?.key || "original/4x6");
+}
+
+function renderSmallTextFontOptions(selectId, selectedValue) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  select.innerHTML = "";
+  for (const font of smallTextFontOptions) {
+    const option = document.createElement("option");
+    option.value = font.key;
+    option.textContent = font.label;
+    select.appendChild(option);
+  }
+  select.value = normalizeSmallTextFont(selectedValue);
+}
+
 async function loadClockFaceOptions() {
   try {
     const res = await fetch("/api/clock/styles");
@@ -1188,12 +1225,20 @@ async function loadClockFaceOptions() {
         .filter(font => font && typeof font.key === "string" && typeof font.label === "string")
         .map(font => ({key: font.key, label: font.label}));
     }
+    const overlayFontOptions = data?.clock_overlays?.font_options;
+    if (Array.isArray(overlayFontOptions) && overlayFontOptions.length) {
+      smallTextFontOptions = overlayFontOptions
+        .filter(font => font && typeof font.key === "string" && typeof font.label === "string")
+        .map(font => ({key: font.key, label: font.label}));
+    }
   } catch (e) {
     // Keep the built-in Matrix option if style metadata is unavailable.
   }
   renderClockFaceOptions();
   renderClockSizeOptions();
   renderMetroFontOptions();
+  renderSmallTextFontOptions("clock-date-font", selectedClockDateFont);
+  renderSmallTextFontOptions("clock-ampm-font", selectedClockAmpmFont);
 }
 
 function normalizeClockWidgetScrollMode(value, fallback = "metro") {
@@ -1678,12 +1723,20 @@ async function init() {
     selectedClockUse24h = data.CLOCK_USE_24H === true;
     selectedClockShowDate = data.CLOCK_SHOW_DATE !== false;
     selectedClockShowAmpm = data.CLOCK_SHOW_AMPM !== false;
+    selectedClockDateFont = normalizeSmallTextFont(data.CLOCK_DATE_FONT_STYLE);
+    selectedClockAmpmFont = normalizeSmallTextFont(data.CLOCK_AMPM_FONT_STYLE);
+    selectedClockDateColor = data.CLOCK_DATE_COLOR || "";
+    selectedClockAmpmColor = data.CLOCK_AMPM_COLOR || "";
     document.getElementById("clock-font-style").value = selectedClockFontStyle;
     renderClockSizeOptions();
     selectedClockSizeBeforeWidget = selectedClockSize;
     document.getElementById("clock-format").value = selectedClockUse24h ? "24h" : "12h";
     document.getElementById("clock-show-date").value = selectedClockShowDate ? "on" : "off";
     document.getElementById("clock-show-ampm").value = selectedClockShowAmpm ? "on" : "off";
+    renderSmallTextFontOptions("clock-date-font", selectedClockDateFont);
+    renderSmallTextFontOptions("clock-ampm-font", selectedClockAmpmFont);
+    document.getElementById("clock-date-color").value = selectedClockDateColor;
+    document.getElementById("clock-ampm-color").value = selectedClockAmpmColor;
     updateClockSizeControl(currentDisplayMode);
     refreshClockWidgetControls();
     renderPomodoroState(data.pomodoro_state || null);
@@ -2191,6 +2244,10 @@ async function saveClock() {
   selectedClockUse24h = document.getElementById("clock-format").value === "24h";
   selectedClockShowDate = document.getElementById("clock-show-date").value === "on";
   selectedClockShowAmpm = document.getElementById("clock-show-ampm").value === "on";
+  selectedClockDateFont = normalizeSmallTextFont(document.getElementById("clock-date-font").value);
+  selectedClockAmpmFont = normalizeSmallTextFont(document.getElementById("clock-ampm-font").value);
+  selectedClockDateColor = document.getElementById("clock-date-color").value.trim();
+  selectedClockAmpmColor = document.getElementById("clock-ampm-color").value.trim();
 
   const payload = {
     CLOCK_FONT_STYLE: selectedClockFontStyle,
@@ -2198,7 +2255,11 @@ async function saveClock() {
     CLOCK_SIZE: selectedClockSize,
     CLOCK_USE_24H: selectedClockUse24h,
     CLOCK_SHOW_DATE: selectedClockShowDate,
-    CLOCK_SHOW_AMPM: selectedClockShowAmpm
+    CLOCK_SHOW_AMPM: selectedClockShowAmpm,
+    CLOCK_DATE_FONT_STYLE: selectedClockDateFont,
+    CLOCK_AMPM_FONT_STYLE: selectedClockAmpmFont,
+    CLOCK_DATE_COLOR: selectedClockDateColor,
+    CLOCK_AMPM_COLOR: selectedClockAmpmColor
   };
   await saveSettings(payload);
 }

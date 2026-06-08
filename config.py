@@ -130,6 +130,10 @@ CLOCK_COLOR_DIM = ""  # Optional #RRGGBB override
 CLOCK_COLOR_BG = ""  # Optional #RRGGBB override
 CLOCK_SHOW_DATE = True
 CLOCK_SHOW_AMPM = True
+CLOCK_AMPM_FONT_STYLE = "original/4x6"
+CLOCK_DATE_FONT_STYLE = "original/4x6"
+CLOCK_AMPM_COLOR = ""  # Optional #RRGGBB override
+CLOCK_DATE_COLOR = ""  # Optional #RRGGBB override
 # "horizontal" -> clock top 2/3, widget bottom 1/3
 # "vertical"   -> clock left 2/3, widget right 1/3
 CLOCK_WIDGET_LAYOUT = "horizontal"
@@ -229,6 +233,10 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_COLOR_BG",
     "CLOCK_SHOW_DATE",
     "CLOCK_SHOW_AMPM",
+    "CLOCK_AMPM_FONT_STYLE",
+    "CLOCK_DATE_FONT_STYLE",
+    "CLOCK_AMPM_COLOR",
+    "CLOCK_DATE_COLOR",
     "CLOCK_WIDGET_LAYOUT",
     "CLOCK_WIDGET_PRESET",
     "CLOCK_WIDGET_SOURCE",
@@ -445,6 +453,42 @@ def get_metro_font_option(style=None):
             return option
     for option in options:
         if option["key"] == "original/6x10":
+            return option
+    return options[0] if options else None
+
+
+def get_small_text_font_options(max_height=8):
+    options = []
+    for family in _discover_font_families():
+        for size in family.get("sizes") or []:
+            try:
+                height = int(size.get("height") or 999)
+            except Exception:
+                height = 999
+            if height > max_height:
+                continue
+            key = f"{family['name']}/{size['key']}"
+            options.append({
+                "key": key,
+                "label": f"{family['label']} {size['label']}",
+                "family": family["key"],
+                "size": size["key"],
+                "path": size["path"],
+                "font_size": size.get("font_size", 8),
+                "width": size.get("width"),
+                "height": size.get("height"),
+            })
+    return options
+
+
+def get_small_text_font_option(style=None):
+    wanted = str(style or "original/4x6" or "").strip().lower()
+    options = get_small_text_font_options()
+    for option in options:
+        if option["key"].lower() == wanted:
+            return option
+    for option in options:
+        if option["key"] == "original/4x6":
             return option
     return options[0] if options else None
 

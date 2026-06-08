@@ -43,6 +43,7 @@ Primary device status payload. Includes:
   - `CLOCK_FONT_SIZE` metadata for font-family size selection
   - `CLOCK_SIZE` options/default (`0.5`=S, `0.75`=M, `1.0`=L) for built-in clock faces
   - `METRO_FONT_STYLE` options for fonts that match the main Metro row height
+  - AM/PM and date overlay font/color keys, with font options limited to small text fonts
   - `CLOCK_SHOW_DATE` and `CLOCK_SHOW_AMPM` metadata/defaults
   - Clock color override keys + expected `#RRGGBB` format
 

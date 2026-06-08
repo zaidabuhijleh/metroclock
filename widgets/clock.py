@@ -899,16 +899,34 @@ class ClockWidget(Widget):
 
     def _draw_clock_overlays(self, draw, w, h, variant, ampm, theme, date_text, metrics):
         if self._show_date() and metrics["bottom_band"] > 0:
-            dw = int(self.font_small.getlength(date_text))
-            date_y = h - metrics["bottom_band"] + max(0, (metrics["bottom_band"] - 6) // 2)
+            font = self._load_small_text_font(getattr(config, "CLOCK_DATE_FONT_STYLE", "original/4x6"))
+            color = self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")) or theme.accent
+            left, top, dw, dh = self._font_text_metrics(draw, date_text, font)
+            date_y = h - metrics["bottom_band"] + max(0, (metrics["bottom_band"] - dh) // 2) - top
             # Allow a true 1px downward nudge; previous clamp could pin to same row.
-            date_y = min(h - 5, date_y + 3)
-            draw.text((max(0, (w - dw) // 2), date_y), date_text, font=self.font_small, fill=theme.accent)
+            date_y = min(h - max(1, dh), date_y + 3)
+            draw.text((max(0, (w - dw) // 2) - left, date_y), date_text, font=font, fill=color)
 
         if self._show_ampm() and ampm and not self._use_24h() and metrics["top_band"] > 0:
-            aw = int(self.font_small.getlength(ampm))
-            ampm_y = max(0, (metrics["top_band"] - 6) // 2)
-            draw.text((max(0, (w - aw) // 2), ampm_y), ampm, font=self.font_small, fill=theme.accent_2)
+            font = self._load_small_text_font(getattr(config, "CLOCK_AMPM_FONT_STYLE", "original/4x6"))
+            color = self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")) or theme.accent_2
+            left, top, aw, ah = self._font_text_metrics(draw, ampm, font)
+            ampm_y = max(0, (metrics["top_band"] - ah) // 2) - top
+            draw.text((max(0, (w - aw) // 2) - left, ampm_y), ampm, font=font, fill=color)
+
+    def _load_small_text_font(self, style):
+        option = config.get_small_text_font_option(style)
+        path = (option or {}).get("path")
+        if not path:
+            return self.font_small
+        try:
+            size = int((option or {}).get("font_size") or 6)
+        except Exception:
+            size = 6
+        cache_key = ("small-text", path, size)
+        if cache_key not in self._clock_face_font_cache:
+            self._clock_face_font_cache[cache_key] = ImageFont.truetype(path, size)
+        return self._clock_face_font_cache[cache_key]
 
     def _clock_face_size_key(self):
         selected = str(getattr(config, "CLOCK_FONT_SIZE", "") or "").strip().lower()
