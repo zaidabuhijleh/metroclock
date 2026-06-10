@@ -29,6 +29,7 @@ CLOCK_BUILTIN_FONT_STYLES = (
     {"key": "matrix", "label": "Matrix", "type": "builtin"},
     {"key": "segment", "label": "Segment", "type": "builtin"},
 )
+CLOCK_FONT_FAMILY_ALLOWLIST = {"default", "spleen"}
 METRO_FONT_STYLE = "original/6x10"
 _FONT_FAMILIES_CACHE = None
 
@@ -381,7 +382,12 @@ def _discover_font_families():
 
 
 def get_clock_font_faces():
-    return [dict(face) for face in CLOCK_BUILTIN_FONT_STYLES] + _discover_font_families()
+    font_families = [
+        face
+        for face in _discover_font_families()
+        if str(face.get("name") or "").strip().lower() in CLOCK_FONT_FAMILY_ALLOWLIST
+    ]
+    return [dict(face) for face in CLOCK_BUILTIN_FONT_STYLES] + font_families
 
 
 def get_clock_font_style_options():
