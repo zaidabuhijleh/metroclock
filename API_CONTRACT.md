@@ -29,6 +29,7 @@ Primary device status payload. Includes:
 - `write_auth_required`: boolean
 - Existing runtime/config/status fields:
   - `hostname`, `ip`, `display_mode`
+  - `wifi_setup`: WiFi fallback/setup status, including hotspot SSID/IP when active
   - `weather_preview`, `ambient_scene`
   - runtime config fields from `/api/settings` (with secret masking)
 
@@ -60,4 +61,3 @@ If token auth is enabled and token is missing/invalid, responses return:
 - JSON:
   - `ok: false`
   - `error: "Unauthorized"`
-

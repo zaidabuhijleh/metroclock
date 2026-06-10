@@ -447,6 +447,7 @@ class RuntimeState:
 
 
 _runtime_state = RuntimeState()
+_wifi_setup_manager = None
 
 
 def _configured_api_token():
@@ -501,6 +502,23 @@ def get_display_mode() -> str:
 
 def set_display_mode(mode: str):
     _runtime_state.set_display_mode(mode)
+
+
+def set_wifi_setup_manager(manager):
+    global _wifi_setup_manager
+    _wifi_setup_manager = manager
+
+
+def get_wifi_setup_status():
+    if _wifi_setup_manager is None:
+        return {
+            "enabled": False,
+            "active": False,
+            "connected": False,
+            "checking": False,
+            "reason": "WiFi setup manager unavailable",
+        }
+    return _wifi_setup_manager.status()
 
 
 def get_brightness():
@@ -596,6 +614,7 @@ def api_status():
     masked["device_id"] = _get_device_id()
     masked["app_version"] = _get_app_version()
     masked["api_version"] = API_VERSION
+    masked["wifi_setup"] = get_wifi_setup_status()
     masked["write_auth_required"] = bool(_configured_api_token())
     return jsonify(masked)
 
@@ -766,24 +785,13 @@ def api_wifi_connect():
     if not ssid:
         return jsonify({"ok": False, "error": "SSID required"}), 400
 
-    wpa_conf = (
-        "ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\n"
-        "update_config=1\ncountry=US\n\n"
-        f'network={{\n    ssid="{ssid}"\n    psk="{password}"\n}}\n'
-    )
-
-    try:
-        with open("/etc/wpa_supplicant/wpa_supplicant.conf", "w", encoding="utf-8") as f:
-            f.write(wpa_conf)
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
-
-    config_manager.write_config({"SETUP_MODE": False})
-
-    def _reconfigure():
-        subprocess.call(["wpa_cli", "-i", "wlan0", "reconfigure"])
-
-    threading.Thread(target=_reconfigure, daemon=True).start()
+    if _wifi_setup_manager is not None:
+        try:
+            _wifi_setup_manager.connect_to_network(ssid, password)
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+    else:
+        return jsonify({"ok": False, "error": "WiFi setup manager unavailable"}), 500
     return jsonify({"ok": True})
 
 

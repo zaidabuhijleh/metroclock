@@ -450,7 +450,7 @@
 <body>
 
 <div id="setup-banner">
-  First-time setup mode — connect this device to your WiFi network using the WiFi tab below.
+  Setup mode — connect this device to your WiFi network using the WiFi tab below.
 </div>
 
 <div class="container">
@@ -1573,8 +1573,13 @@ async function init() {
     const data = await res.json();
 
     // Setup banner
-    if (data.SETUP_MODE) {
-      document.getElementById("setup-banner").classList.add("visible");
+    const wifiSetup = data.wifi_setup || {};
+    if (data.SETUP_MODE || wifiSetup.active) {
+      const banner = document.getElementById("setup-banner");
+      const hotspot = wifiSetup.hotspot_ssid || "MetroClock-Setup";
+      const ip = wifiSetup.hotspot_ip || "192.168.4.1";
+      banner.textContent = `Setup mode — join ${hotspot}, open http://${ip}, then connect this device to WiFi below.`;
+      banner.classList.add("visible");
     }
 
     // System tab
