@@ -521,6 +521,12 @@ def get_wifi_setup_status():
     return _wifi_setup_manager.status()
 
 
+def _wifi_interface():
+    status = get_wifi_setup_status()
+    interface = str(status.get("interface") or "").strip()
+    return interface or str(getattr(config, "WIFI_INTERFACE", "wlan0") or "wlan0")
+
+
 def get_brightness():
     return _runtime_state.get_brightness()
 
@@ -759,10 +765,20 @@ def api_pomodoro_action():
 
 @app.route("/api/wifi/scan")
 def api_wifi_scan():
+    status = get_wifi_setup_status()
+    if status.get("active"):
+        return jsonify({
+            "ok": False,
+            "ssids": [],
+            "error": "Scanning is unavailable while the setup hotspot is active. Enter the SSID manually.",
+            "wifi_setup": status,
+        }), 409
+
+    interface = _wifi_interface()
     try:
         output = subprocess.check_output(
-            ["iwlist", "wlan0", "scan"],
-            stderr=subprocess.DEVNULL,
+            ["iwlist", interface, "scan"],
+            stderr=subprocess.STDOUT,
             text=True,
         )
         ssids = []
@@ -772,9 +788,19 @@ def api_wifi_scan():
                 ssid = line[len("ESSID:"):].strip().strip('"')
                 if ssid and ssid not in ssids:
                     ssids.append(ssid)
-        return jsonify({"ok": True, "ssids": ssids})
+        return jsonify({"ok": True, "ssids": ssids, "wifi_setup": get_wifi_setup_status()})
+    except FileNotFoundError:
+        return jsonify({
+            "ok": False,
+            "ssids": [],
+            "error": "Missing required command: iwlist",
+            "wifi_setup": get_wifi_setup_status(),
+        }), 500
+    except subprocess.CalledProcessError as exc:
+        error = (exc.output or "").strip() or f"Scan failed on {interface}"
+        return jsonify({"ok": False, "ssids": [], "error": error, "wifi_setup": get_wifi_setup_status()}), 500
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "ssids": [], "error": str(exc), "wifi_setup": get_wifi_setup_status()}), 500
 
 
 @app.route("/api/wifi/connect", methods=["POST"])
@@ -792,7 +818,7 @@ def api_wifi_connect():
             return jsonify({"ok": False, "error": str(exc)}), 500
     else:
         return jsonify({"ok": False, "error": "WiFi setup manager unavailable"}), 500
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "wifi_setup": get_wifi_setup_status()})
 
 
 @app.route("/api/restart", methods=["POST"])

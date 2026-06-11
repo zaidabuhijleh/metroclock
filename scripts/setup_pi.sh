@@ -16,6 +16,7 @@ sudo apt-get install -y \
   python3-dev \
   hostapd \
   dnsmasq \
+  wireless-tools \
   build-essential \
   cmake \
   ninja-build \

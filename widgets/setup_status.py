@@ -28,13 +28,14 @@ class SetupStatusWidget(Widget):
         reason = str(status.get("reason") or "WiFi setup")
         last_error = str(status.get("last_error") or "")
 
-        pages = [
-            ("WIFI LOST", "SETUP MODE", reason.upper()[:16]),
-            ("JOIN WIFI", ssid[:16], ""),
-            ("OPEN", ip[:16], "WEB SETUP"),
-        ]
         if last_error:
-            pages.append(("WIFI ERROR", last_error.upper()[:16], "CHECK SETUP"))
+            pages = self._error_pages(last_error)
+        else:
+            pages = [
+                ("WIFI LOST", "SETUP MODE", reason.upper()[:16]),
+                ("JOIN WIFI", ssid[:16], ""),
+                ("OPEN", ip[:16], "WEB SETUP"),
+            ]
 
         page = pages[int(time.time() // 3) % len(pages)]
         colors = [(255, 80, 60), (255, 210, 80), (120, 220, 255)]
@@ -55,3 +56,29 @@ class SetupStatusWidget(Widget):
             left = 0
         x = max(0, (self.width - width) // 2) - left
         draw.text((x, y), text, font=self.font, fill=color)
+
+    def _error_pages(self, error):
+        normalized = error.upper()
+        if "HOSTAPD" in normalized and "MISSING" in normalized:
+            return [
+                ("HOTSPOT FAIL", "NO HOSTAPD", "RUN SETUP"),
+                ("NEED PACKAGE", "HOSTAPD", "DNSMASQ"),
+            ]
+        if "DNSMASQ" in normalized and "MISSING" in normalized:
+            return [
+                ("HOTSPOT FAIL", "NO DNSMASQ", "RUN SETUP"),
+                ("NEED PACKAGE", "HOSTAPD", "DNSMASQ"),
+            ]
+        if "RFKILL" in normalized or "BLOCKED" in normalized:
+            return [
+                ("WIFI BLOCKED", "CHECK RFKILL", "UNBLOCK WIFI"),
+            ]
+        if "HOSTAPD" in normalized:
+            return [
+                ("HOSTAPD FAIL", "CHECK LOGS", "SYSTEM TAB"),
+                ("ERROR", normalized[:16], normalized[16:32]),
+            ]
+        return [
+            ("HOTSPOT FAIL", "CHECK LOGS", "SYSTEM TAB"),
+            ("ERROR", normalized[:16], normalized[16:32]),
+        ]

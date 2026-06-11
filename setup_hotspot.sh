@@ -5,7 +5,7 @@ APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "[1/3] Installing hotspot dependencies..."
 apt-get update -qq
-apt-get install -y hostapd dnsmasq
+apt-get install -y hostapd dnsmasq wireless-tools
 
 echo "[2/3] Marking MetroClock setup mode..."
 python3 - <<EOF
