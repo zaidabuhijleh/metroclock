@@ -9,11 +9,8 @@ from . import (
     liquid_chroma,
     lofi_cat,
     oil_slick,
-    prism_weave,
-    rainy_nook,
     ripple_tiles,
     sunset_trail,
-    tea_by_candle,
     thermal_flow,
 )
 
@@ -24,15 +21,12 @@ SCENES = [
     alpine_cabin,
     coral_reef,
     lofi_cat,
-    rainy_nook,
-    tea_by_candle,
     thermal_flow,
     liquid_chroma,
     oil_slick,
     lava_lamp,
     aurora_waves,
     contour_drift,
-    prism_weave,
     ripple_tiles,
 ]
 
