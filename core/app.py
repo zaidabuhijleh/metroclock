@@ -15,6 +15,7 @@ from widgets.clock import ClockWidget
 from widgets.flight import FlightWidget
 from widgets.metro import MetroWidget
 from widgets.pomodoro import PomodoroWidget
+from widgets.setup_status import SetupStatusWidget
 from widgets.sports import SportsWidget
 from widgets.stocks import StocksWidget
 from widgets.weather import WeatherWidget
@@ -119,6 +120,7 @@ class WidgetRegistry:
 
     def __init__(self, width: int, height: int, mode_catalog: ModeCatalog = DEFAULT_MODE_CATALOG):
         self._mode_catalog = mode_catalog
+        self.setup = SetupStatusWidget(width, height, web_server.get_wifi_setup_status)
         self.metro = MetroWidget(width, height)
         self.weather = WeatherWidget(width, height)
         self.flight = FlightWidget(width, height)
@@ -137,6 +139,7 @@ class WidgetRegistry:
         )
 
         self._renderers: Dict[str, WidgetRenderer] = {
+            "setup": WidgetRenderer(self.setup),
             "metro": WidgetRenderer(self.metro),
             "weather": WidgetRenderer(self.weather),
             "flight": WidgetRenderer(self.flight),
@@ -161,12 +164,14 @@ class MetroClockApp:
         state_provider: RuntimeStateProvider,
         widgets: WidgetRegistry,
         display: DisplayManager,
+        wifi_setup_manager=None,
         loop_delay: float = 0.02,
         error_delay: float = 0.25,
     ):
         self._state_provider = state_provider
         self._widgets = widgets
         self._display = display
+        self._wifi_setup_manager = wifi_setup_manager
         self._loop_delay = loop_delay
         self._error_delay = error_delay
 
@@ -180,9 +185,19 @@ class MetroClockApp:
         )
         display = DisplayManager(hardware=hardware)
         widgets = WidgetRegistry(width=config.MATRIX_WIDTH, height=config.MATRIX_HEIGHT)
-        return cls(state_provider=web_server, widgets=widgets, display=display)
+        try:
+            from core.wifi_setup import WifiSetupManager
+
+            wifi_setup_manager = WifiSetupManager()
+        except Exception as exc:
+            print(f"WiFi setup manager disabled: {exc}")
+            wifi_setup_manager = None
+        return cls(state_provider=web_server, widgets=widgets, display=display, wifi_setup_manager=wifi_setup_manager)
 
     def run_forever(self):
+        if self._wifi_setup_manager is not None:
+            web_server.set_wifi_setup_manager(self._wifi_setup_manager)
+            self._wifi_setup_manager.start()
         web_server.start_server()
         print("Dashboard Started. Press Ctrl+C to exit.")
 
@@ -194,6 +209,8 @@ class MetroClockApp:
 
     def _tick(self):
         mode = self._state_provider.get_display_mode()
+        if self._wifi_setup_manager is not None and self._wifi_setup_manager.should_show_setup_message():
+            mode = "setup"
         try:
             self._display.ensure_mode(mode)
             frame = self._widgets.render_mode(mode)

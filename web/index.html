@@ -295,6 +295,27 @@
     .network-item:last-child { border-bottom: none; }
     .network-item:hover { background: var(--surface2); }
     .network-item.selected { background: #1a2040; color: var(--accent); }
+    .network-status {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .network-status-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 7px;
+    }
+    .network-status-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .network-status-value {
+      color: var(--text);
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
 
     .team-grid {
       display: grid;
@@ -450,7 +471,7 @@
 <body>
 
 <div id="setup-banner">
-  First-time setup mode — connect this device to your WiFi network using the WiFi tab below.
+  Setup mode — connect this device to your WiFi network using the WiFi tab below.
 </div>
 
 <div class="container">
@@ -905,8 +926,15 @@
       <strong>MetroClock-Setup</strong> hotspot and try again.
     </div>
     <div class="card">
+      <div class="card-title">Network Status</div>
+      <div class="network-status" id="wifi-status">
+        <div class="network-status-row"><span>Status</span><span class="network-status-value">Loading...</span></div>
+      </div>
+      <button class="btn btn-ghost btn-full" onclick="refreshWifiStatus()">Refresh Status</button>
+    </div>
+    <div class="card">
       <div class="card-title">Scan Networks</div>
-      <button class="btn btn-ghost btn-full" onclick="scanWifi()">Scan for Networks</button>
+      <button class="btn btn-ghost btn-full" id="wifi-scan-btn" onclick="scanWifi()">Scan for Networks</button>
       <div class="network-list" id="network-list" style="display:none; margin-top:12px;"></div>
     </div>
     <div class="card">
@@ -915,7 +943,7 @@
       <input type="text" id="wifi-ssid" placeholder="Network name" />
       <label>Password</label>
       <input type="password" id="wifi-password" placeholder="Network password" autocomplete="new-password" />
-      <button class="btn btn-primary btn-full" onclick="connectWifi()">Connect</button>
+      <button class="btn btn-primary btn-full" id="wifi-connect-btn" onclick="connectWifi()">Connect</button>
     </div>
   </div>
 
@@ -1573,8 +1601,14 @@ async function init() {
     const data = await res.json();
 
     // Setup banner
-    if (data.SETUP_MODE) {
-      document.getElementById("setup-banner").classList.add("visible");
+    const wifiSetup = data.wifi_setup || {};
+    renderWifiStatus(wifiSetup);
+    if (data.SETUP_MODE || wifiSetup.active) {
+      const banner = document.getElementById("setup-banner");
+      const hotspot = wifiSetup.hotspot_ssid || "MetroClock-Setup";
+      const ip = wifiSetup.hotspot_ip || "192.168.4.1";
+      banner.textContent = `Setup mode — join ${hotspot}, open http://${ip}, then connect this device to WiFi below.`;
+      banner.classList.add("visible");
     }
 
     // System tab
@@ -2519,31 +2553,127 @@ async function saveStocks() {
 }
 
 // ── WiFi ───────────────────────────────────────────────────────────────────
+let wifiStatusPollTimer = null;
+
+function wifiStatusLabel(status) {
+  if (!status || !status.enabled) return "Unavailable";
+  if (status.active && status.last_error) return "Hotspot failed";
+  if (status.active) return "Setup hotspot active";
+  if (status.checking) return "Checking";
+  if (status.connected) return "Connected";
+  return status.reason || "Disconnected";
+}
+
+function renderWifiStatus(status = {}) {
+  const el = document.getElementById("wifi-status");
+  if (!el) return;
+  const rows = [
+    ["Status", wifiStatusLabel(status)],
+    ["Interface", status.interface || "wlan0"],
+  ];
+  if (status.connected || status.ssid) rows.push(["Network", status.ssid || "Connected"]);
+  if (status.ip) rows.push(["IP", status.ip]);
+  if (status.active || status.hotspot_ssid) rows.push(["Setup WiFi", status.hotspot_ssid || "MetroClock-Setup"]);
+  if (status.active || status.hotspot_ip) rows.push(["Setup URL", status.url || `http://${status.hotspot_ip || "192.168.4.1"}`]);
+  if (status.reason) rows.push(["Message", status.reason]);
+  if (status.last_error) rows.push(["Error", status.last_error]);
+
+  el.innerHTML = "";
+  for (const [label, value] of rows) {
+    const row = document.createElement("div");
+    row.className = "network-status-row";
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+    const valueEl = document.createElement("span");
+    valueEl.className = "network-status-value";
+    valueEl.textContent = value || "—";
+    row.appendChild(labelEl);
+    row.appendChild(valueEl);
+    el.appendChild(row);
+  }
+
+  const scanButton = document.getElementById("wifi-scan-btn");
+  if (scanButton) {
+    scanButton.disabled = Boolean(status.active);
+    scanButton.textContent = status.active ? "Enter SSID Manually" : "Scan for Networks";
+  }
+}
+
+async function refreshWifiStatus() {
+  try {
+    const res = await fetch("/api/status");
+    const data = await res.json();
+    renderWifiStatus(data.wifi_setup || {});
+    return data.wifi_setup || {};
+  } catch (e) {
+    renderWifiStatus({enabled: false, reason: "Status unavailable", last_error: String(e?.message || e)});
+    return null;
+  }
+}
+
 async function scanWifi() {
+  const button = document.getElementById("wifi-scan-btn");
+  if (button?.disabled) {
+    renderWifiNetworkMessage("Scanning is unavailable while setup WiFi is active. Enter the SSID manually.");
+    return;
+  }
+  if (button) button.disabled = true;
   try {
     toast("Scanning...");
     const res = await fetch("/api/wifi/scan");
     const data = await res.json();
+    renderWifiStatus(data.wifi_setup || {});
     const list = document.getElementById("network-list");
     list.style.display = "block";
     if (data.ok && data.ssids.length) {
-      list.innerHTML = data.ssids.map(ssid => `
-        <div class="network-item" onclick="pickNetwork('${ssid.replace(/'/g,"\\'")}')">
-          <span>📶</span> ${ssid}
-        </div>
-      `).join("");
+      renderWifiNetworkList(data.ssids);
+      toast("Scan complete");
     } else {
-      list.innerHTML = `<div class="network-item" style="color:var(--text-dim)">No networks found</div>`;
+      renderWifiNetworkMessage(data.error || "No networks found");
+      if (!data.ok) toast(data.error || "Scan failed", "error");
     }
   } catch (e) {
+    renderWifiNetworkMessage("Scan failed");
     toast("Scan failed", "error");
+  } finally {
+    if (button && button.textContent !== "Enter SSID Manually") button.disabled = false;
   }
+}
+
+function renderWifiNetworkList(ssids) {
+  const list = document.getElementById("network-list");
+  list.innerHTML = "";
+  for (const ssid of ssids) {
+    const item = document.createElement("div");
+    item.className = "network-item";
+    item.dataset.ssid = ssid;
+    const icon = document.createElement("span");
+    icon.textContent = "WiFi";
+    const name = document.createElement("span");
+    name.textContent = ssid;
+    item.appendChild(icon);
+    item.appendChild(name);
+    item.addEventListener("click", () => pickNetwork(ssid));
+    list.appendChild(item);
+  }
+}
+
+function renderWifiNetworkMessage(message) {
+  const list = document.getElementById("network-list");
+  list.style.display = "block";
+  list.innerHTML = "";
+  const item = document.createElement("div");
+  item.className = "network-item";
+  item.style.color = "var(--text-dim)";
+  item.style.cursor = "default";
+  item.textContent = message;
+  list.appendChild(item);
 }
 
 function pickNetwork(ssid) {
   document.getElementById("wifi-ssid").value = ssid;
   document.querySelectorAll(".network-item").forEach(el => {
-    el.classList.toggle("selected", el.textContent.trim().includes(ssid));
+    el.classList.toggle("selected", el.dataset.ssid === ssid);
   });
   document.getElementById("wifi-password").focus();
 }
@@ -2552,6 +2682,8 @@ async function connectWifi() {
   const ssid = document.getElementById("wifi-ssid").value.trim();
   const password = document.getElementById("wifi-password").value;
   if (!ssid) { toast("Enter an SSID", "error"); return; }
+  const button = document.getElementById("wifi-connect-btn");
+  if (button) button.disabled = true;
   try {
     const res = await fetch("/api/wifi/connect", {
       method: "POST",
@@ -2559,14 +2691,31 @@ async function connectWifi() {
       body: JSON.stringify({ssid, password})
     });
     const data = await res.json();
+    renderWifiStatus(data.wifi_setup || {});
     if (data.ok) {
       toast("Connecting to " + ssid + "…");
+      startWifiStatusPolling();
     } else {
       toast(data.error || "Connection failed", "error");
     }
   } catch (e) {
     toast("Connection failed", "error");
+  } finally {
+    if (button) button.disabled = false;
   }
+}
+
+function startWifiStatusPolling() {
+  if (wifiStatusPollTimer) clearInterval(wifiStatusPollTimer);
+  let attempts = 0;
+  wifiStatusPollTimer = setInterval(async () => {
+    attempts += 1;
+    const status = await refreshWifiStatus();
+    if (!status || status.connected || status.active || attempts >= 30) {
+      clearInterval(wifiStatusPollTimer);
+      wifiStatusPollTimer = null;
+    }
+  }, 2000);
 }
 
 // ── System actions ─────────────────────────────────────────────────────────

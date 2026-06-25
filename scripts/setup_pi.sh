@@ -14,6 +14,9 @@ sudo apt-get install -y \
   python3-venv \
   python3-pip \
   python3-dev \
+  hostapd \
+  dnsmasq \
+  wireless-tools \
   build-essential \
   cmake \
   ninja-build \
@@ -54,8 +57,7 @@ echo "[7/8] Writing systemd service..."
 sudo tee "$SERVICE_PATH" >/dev/null <<EOF
 [Unit]
 Description=MetroClock LED Display
-Wants=network-online.target
-After=network-online.target
+After=network.target
 
 [Service]
 Type=simple
