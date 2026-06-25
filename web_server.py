@@ -737,7 +737,10 @@ def api_ambient_scene():
     data = request.get_json(force=True) or {}
     scene = _normalize_ambient_scene(data.get("scene"))
 
-    allowed = {"beach", "city_day", "sunset_trail", "alpine_cabin", "coral_reef", "lofi_cat"}
+    allowed = {
+        "beach", "city_day", "sunset_trail", "alpine_cabin", "coral_reef", "lofi_cat",
+        "thermal_flow", "liquid_chroma", "oil_slick", "lava_lamp", "aurora_waves", "contour_drift",
+    }
     if scene is not None and scene not in allowed:
         return jsonify({"ok": False, "error": "Invalid scene"}), 400
     set_ambient_scene(scene)
