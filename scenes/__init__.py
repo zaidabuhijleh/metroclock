@@ -27,3 +27,10 @@ SCENES = [
     aurora_waves,
     contour_drift,
 ]
+
+SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)
+
+COLLECTIONS = {
+    collection: tuple(scene for scene in SCENES if scene.COLLECTION == collection)
+    for collection in ("Places", "Cozy", "Flow", "Patterns")
+}

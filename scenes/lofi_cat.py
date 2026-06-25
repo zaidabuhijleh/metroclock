@@ -2,6 +2,7 @@ import math
 from PIL import Image, ImageDraw
 
 NAME = "Lofi Cat"
+COLLECTION = "Cozy"
 FPS = 6
 W, H, N = 64, 32, 8
 

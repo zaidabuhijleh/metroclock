@@ -111,6 +111,15 @@
       color: var(--text-dim);
       margin-bottom: 14px;
     }
+    .section-label {
+      margin: 18px 0 8px;
+      color: var(--text-dim);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .card-title + .section-label { margin-top: 0; }
 
     label {
       display: block;
@@ -906,20 +915,33 @@
   <!-- Ambient Tab -->
   <div class="panel" id="panel-ambient">
     <div class="card">
-      <div class="card-title">Scene</div>
+      <div class="card-title">Scenes</div>
+      <div class="section-label">Places</div>
       <div class="mode-grid">
         <button class="mode-btn" data-scene="beach"        onclick="setAmbientScene('beach')">        <span class="icon">🏖️</span>Beach</button>
         <button class="mode-btn" data-scene="city_day"     onclick="setAmbientScene('city_day')">     <span class="icon">🏙️</span>City Day</button>
         <button class="mode-btn" data-scene="sunset_trail" onclick="setAmbientScene('sunset_trail')"> <span class="icon">🌅</span>Sunset Trail</button>
         <button class="mode-btn" data-scene="alpine_cabin" onclick="setAmbientScene('alpine_cabin')"> <span class="icon">🏡</span>Alpine Cabin</button>
         <button class="mode-btn" data-scene="coral_reef"   onclick="setAmbientScene('coral_reef')">   <span class="icon">🐠</span>Coral Reef</button>
+      </div>
+      <div class="section-label">Cozy</div>
+      <div class="mode-grid">
         <button class="mode-btn" data-scene="lofi_cat"     onclick="setAmbientScene('lofi_cat')">     <span class="icon">🐈</span>Lofi Cat</button>
+      </div>
+      <div class="section-label">Flow</div>
+      <div class="mode-grid">
         <button class="mode-btn" data-scene="thermal_flow" onclick="setAmbientScene('thermal_flow')"> <span class="icon">🔥</span>Thermal Flow</button>
         <button class="mode-btn" data-scene="liquid_chroma" onclick="setAmbientScene('liquid_chroma')"><span class="icon">🎨</span>Liquid Chroma</button>
         <button class="mode-btn" data-scene="oil_slick"     onclick="setAmbientScene('oil_slick')">     <span class="icon">🫧</span>Oil Slick</button>
         <button class="mode-btn" data-scene="lava_lamp"     onclick="setAmbientScene('lava_lamp')">     <span class="icon">🟠</span>Lava Lamp</button>
+      </div>
+      <div class="section-label">Patterns</div>
+      <div class="mode-grid">
         <button class="mode-btn" data-scene="aurora_waves"  onclick="setAmbientScene('aurora_waves')">  <span class="icon">🌌</span>Aurora Waves</button>
         <button class="mode-btn" data-scene="contour_drift" onclick="setAmbientScene('contour_drift')"> <span class="icon">🌀</span>Contour Drift</button>
+      </div>
+      <div class="section-label">Playback</div>
+      <div class="mode-grid">
         <button class="mode-btn" data-scene="auto"         onclick="setAmbientScene('auto')">         <span class="icon">🔀</span>Auto</button>
       </div>
     </div>

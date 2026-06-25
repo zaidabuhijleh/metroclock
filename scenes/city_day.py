@@ -2,6 +2,7 @@ import math
 from PIL import Image, ImageDraw
 
 NAME = "City Day"
+COLLECTION = "Places"
 FPS = 6
 W, H, N = 64, 32, 8
 

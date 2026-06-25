@@ -2,6 +2,7 @@ import math
 from PIL import Image, ImageDraw
 
 NAME = "Sunset Trail"
+COLLECTION = "Places"
 FPS = 6
 W, H, N = 64, 32, 8
 
