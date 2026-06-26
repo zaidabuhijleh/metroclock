@@ -111,45 +111,21 @@ def lava_frames(count=12):
 
 def aurora_frames(count=12):
     palette = [
-        (8, 20, 56), (11, 47, 85), (16, 88, 105), (27, 142, 123),
-        (66, 205, 148), (118, 232, 187), (126, 103, 207), (214, 93, 184),
+        (5, 18, 45), (7, 39, 69), (8, 75, 91), (12, 118, 107),
+        (28, 159, 126), (75, 203, 153), (136, 231, 188), (205, 248, 217),
     ]
-    frames = []
-    for frame in range(count):
-        p = math.tau * frame / count
-        image = Image.new("RGB", (W, H), palette[0])
-        pixels = image.load()
 
-        for y in range(H):
-            for x in range(W):
-                flow = (
-                    0.78 * math.sin((x * 0.18) + (y * 0.33) + p)
-                    + 0.55 * math.sin((x * 0.10) - (y * 0.47) - 1.25 * p)
-                    + 0.32 * math.cos((x * 0.31) + 1.7 * p)
-                )
-                veil = y / (H - 1) + 0.23 * flow
-                index = max(0, min(5, int(veil * 6)))
-                pixels[x, y] = palette[index]
+    def field(x, y, p):
+        fold = y + 0.20 * math.sin(8 * x + p) + 0.12 * math.sin(14 * x - 1.7 * p)
+        curl = x + 0.16 * math.sin(9 * y - p)
+        tide = x - y + 0.10 * math.sin(5 * (x + y) + p)
+        return (
+            1.05 * math.sin(9 * fold + p)
+            + 0.62 * math.sin(7 * curl - p)
+            + 0.38 * math.cos(13 * tide + 1.6 * p)
+        )
 
-        draw = ImageDraw.Draw(image)
-        for ribbon in range(6):
-            color = palette[2 + (ribbon % 6)]
-            base = 4 + ribbon * 4
-            points = []
-            for x in range(-2, W + 2):
-                y = (
-                    base
-                    + 4.5 * math.sin(x / 9 + p + ribbon * 0.8)
-                    + 2.0 * math.sin(x / 4.5 - 1.35 * p + ribbon)
-                )
-                points.append((x, round(y)))
-            draw.line(points, fill=color, width=2 if ribbon in (1, 3, 4) else 1)
-
-        for x in range(0, W, 8):
-            offset = round(2 * math.sin(p + x / 7))
-            draw.line([(x, 0), (x + offset, H - 1)], fill=palette[1], width=1)
-        frames.append(image)
-    return frames
+    return [_field_frame(palette, f, count, field, 8) for f in range(count)]
 
 
 def kelp_current_frames(count=16):
@@ -190,11 +166,6 @@ def coral_mist_frames(count=16):
                 index = max(0, min(6, int(lift * 7)))
                 pixels[x, y] = palette[index]
 
-        draw = ImageDraw.Draw(image)
-        for i, color in enumerate((palette[7], palette[5], palette[6], palette[3])):
-            cx = 12 + i * 14 + round(4 * math.sin(p + i * 1.6))
-            cy = 7 + (i % 2) * 14 + round(3 * math.cos(p + i))
-            draw.arc([cx - 13, cy - 8, cx + 13, cy + 8], 20, 205, fill=color, width=1)
         frames.append(image)
     return frames
 
@@ -259,12 +230,6 @@ def ember_bloom_frames(count=16):
                 index = max(0, min(6, int(value * 7)))
                 pixels[x, y] = palette[index]
 
-        draw = ImageDraw.Draw(image)
-        for i, (cx, cy) in enumerate(centers[:3]):
-            r = 5 + ((frame + i * 3) % 8)
-            color = palette[7 if i == 1 else 6]
-            draw.rectangle([cx - r, cy - 1, cx + r, cy + 1], outline=color)
-            draw.rectangle([cx - 1, cy - r, cx + 1, cy + r], outline=color)
         frames.append(image)
     return frames
 
