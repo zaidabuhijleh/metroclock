@@ -29,7 +29,11 @@ def render_scene(scene, output_root: Path, scale: int) -> None:
     frames_dir = scene_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    frames = [frame.convert("RGB") for frame in scene.FRAMES]
+    if hasattr(scene, "render_frame"):
+        count = getattr(scene, "PREVIEW_FRAMES", getattr(scene, "FRAME_COUNT", 48))
+        frames = [scene.render_frame(index).convert("RGB") for index in range(count)]
+    else:
+        frames = [frame.convert("RGB") for frame in scene.FRAMES]
     for index, frame in enumerate(frames):
         frame.save(frames_dir / f"{index:02d}.png")
 
