@@ -170,7 +170,7 @@ def coral_mist_frames(count=16):
     return frames
 
 
-def sea_glass_frames(count=16):
+def sea_glass_frames(count=28):
     palette = [
         (7, 24, 42), (10, 52, 73), (12, 91, 100), (18, 132, 122),
         (54, 174, 145), (112, 213, 174), (187, 238, 204), (54, 106, 165),
@@ -178,6 +178,7 @@ def sea_glass_frames(count=16):
     frames = []
     for frame in range(count):
         p = math.tau * frame / count
+        loop_offset = (len(palette) * 2 - 2) * frame / count
         image = Image.new("RGB", (W, H))
         pixels = image.load()
         for y in range(H):
@@ -192,7 +193,7 @@ def sea_glass_frames(count=16):
                     + 2.2 * math.sin((cell_x + cell_y) * 0.9 + p)
                     + 1.1 * math.sin((x - y) / 12 - p)
                 )
-                index = int(wave + frame * 0.35) % (len(palette) * 2 - 2)
+                index = int(wave + loop_offset) % (len(palette) * 2 - 2)
                 if index >= len(palette):
                     index = len(palette) * 2 - 2 - index
                 pixels[x, y] = palette[index]
