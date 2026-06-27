@@ -2,6 +2,8 @@ from . import (
     alpine_cabin,
     aurora_waves,
     beach,
+    biolume_bloom,
+    cellular_reef,
     city_day,
     contour_drift,
     coral_mist,
@@ -12,11 +14,13 @@ from . import (
     lava_lamp,
     liquid_chroma,
     lofi_cat,
+    neon_ribbons,
     oil_slick,
     ripple_tiles,
     sea_glass,
     sunset_trail,
     thermal_flow,
+    vector_plankton,
 )
 
 SCENES = [
@@ -30,6 +34,8 @@ SCENES = [
     liquid_chroma,
     kelp_current,
     endless_current,
+    biolume_bloom,
+    vector_plankton,
     coral_mist,
     oil_slick,
     lava_lamp,
@@ -38,6 +44,8 @@ SCENES = [
     ripple_tiles,
     sea_glass,
     ember_bloom,
+    cellular_reef,
+    neon_ribbons,
 ]
 
 SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)
