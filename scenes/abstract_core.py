@@ -337,93 +337,6 @@ def render_caustic_lattice_frame(tick, fps=8):
     return image
 
 
-def render_crystal_mosaic_frame(tick, fps=8):
-    palette = [
-        (4, 7, 24), (13, 20, 55), (25, 43, 91), (34, 73, 111),
-        (38, 119, 109), (75, 158, 143), (119, 118, 186), (198, 211, 206),
-    ]
-    t = tick / fps
-    seeds = []
-    for i in range(13):
-        base_x = (i * 19 + 7) % W
-        base_y = (i * 11 + 5) % H
-        seeds.append((
-            base_x + 5 * math.sin(t * (0.09 + i * 0.006) + i * 1.3),
-            base_y + 4 * math.cos(t * (0.11 + i * 0.004) + i * 0.9),
-            i,
-        ))
-
-    image = Image.new("RGB", (W, H), palette[0])
-    pixels = image.load()
-    for y in range(H):
-        for x in range(W):
-            first = 9999.0
-            second = 9999.0
-            winner = 0
-            for sx, sy, i in seeds:
-                dx = abs(x - sx)
-                dx = min(dx, W - dx)
-                dy = abs(y - sy)
-                dy = min(dy, H - dy)
-                dist = dx * dx * 0.72 + dy * dy * 1.45 + 4 * math.sin((x + y + i * 5) / 13)
-                if dist < first:
-                    second = first
-                    first = dist
-                    winner = i
-                elif dist < second:
-                    second = dist
-            edge = second - first
-            if edge < 10:
-                color = palette[7 if edge < 3 and (x + y + winner) % 5 == 0 else 6]
-            else:
-                shade = 1 + (winner * 3 + int(t * 0.18)) % 5
-                color = palette[shade]
-            pixels[x, y] = color
-    return image
-
-
-def render_mycelium_circuit_frame(tick, fps=8):
-    bg = (14, 8, 27)
-    palette = [
-        (27, 14, 45), (42, 29, 55), (47, 67, 54), (61, 112, 75),
-        (94, 169, 102), (153, 226, 139), (235, 213, 124), (255, 170, 93),
-    ]
-    t = tick / fps
-    image = Image.new("RGB", (W, H), bg)
-    pixels = image.load()
-    for y in range(H):
-        for x in range(W):
-            shade = 0.16 * math.sin(x / 7 + t * 0.08) + 0.12 * math.cos(y / 5 - t * 0.11)
-            pixels[x, y] = palette[0 if shade < 0.12 else 1]
-
-    draw = ImageDraw.Draw(image)
-    for branch in range(7):
-        points = []
-        y0 = 3 + (branch * 7) % H
-        drift = t * (0.20 + branch * 0.012) + branch * 1.41
-        for step in range(-8, W + 9):
-            x = step
-            y = y0 + 4 * math.sin(step / 9 + drift) + 3 * math.sin(step / 4.7 - drift * 0.73)
-            points.append((x, int(round(y)) % H))
-        color = palette[3 + branch % 3]
-        for a, b in zip(points, points[1:]):
-            if abs(a[1] - b[1]) <= H // 2:
-                draw.line([a, b], fill=color)
-        if branch % 2 == 0:
-            for x, y in points[6::20]:
-                node = (x % W, y % H)
-                draw.point(node, fill=palette[6])
-                draw.point(((node[0] + 1) % W, node[1]), fill=palette[5])
-                sprout = 3 if branch % 4 == 0 else -3
-                draw.line([node, ((node[0] + 4) % W, (node[1] + sprout) % H)], fill=palette[3])
-
-    for i in range(8):
-        cx = int((i * 23 + t * (2.0 + (i % 3) * 0.45)) % W)
-        cy = int((9 + i * 13 + 4 * math.sin(t * 0.17 + i)) % H)
-        draw.point((cx, cy), fill=palette[7 if i % 4 == 0 else 5])
-    return image
-
-
 def render_interference_bloom_frame(tick, fps=8):
     palette = [
         (5, 8, 32), (20, 19, 65), (48, 37, 112), (90, 55, 161),
@@ -448,6 +361,159 @@ def render_interference_bloom_frame(tick, fps=8):
             if band == 0 and value > 1.6:
                 band = 7
             pixels[x, y] = palette[band]
+    return image
+
+
+def render_lace_diffusion_frame(tick, fps=8):
+    palette = [
+        (6, 8, 22), (18, 15, 38), (38, 28, 58), (74, 43, 78),
+        (123, 61, 92), (185, 88, 99), (222, 190, 154), (103, 205, 183),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    for y in range(H):
+        ny = (y - H / 2) / H
+        for x in range(W):
+            nx = (x - W / 2) / W
+            a = math.sin(22 * (nx + 0.10 * math.sin(5 * ny + t * 0.18)) + t * 0.32)
+            b = math.cos(19 * (ny + 0.12 * math.sin(4 * nx - t * 0.21)) - t * 0.27)
+            c = math.sin(15 * (nx - ny) + 6 * math.sin(nx + ny + t * 0.11))
+            lace = abs(a + b * 0.9 + c * 0.55)
+            if lace < 0.12:
+                color = palette[7]
+            elif lace < 0.24:
+                color = palette[6]
+            else:
+                color = palette[max(0, min(5, int((lace - 0.25) * 2.3) + 1))]
+            pixels[x, y] = color
+    return image
+
+
+def render_phyllotaxis_bloom_frame(tick, fps=8):
+    bg = (4, 8, 29)
+    palette = [
+        (11, 20, 55), (15, 47, 72), (14, 93, 92), (28, 151, 116),
+        (87, 205, 139), (177, 226, 129), (255, 215, 101), (239, 247, 209),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), bg)
+    draw = ImageDraw.Draw(image)
+    golden = math.pi * (3 - math.sqrt(5))
+    centers = (
+        (22 + 5 * math.sin(t * 0.10), 16 + 3 * math.cos(t * 0.13), 0.0),
+        (47 + 4 * math.sin(t * 0.08 + 2.0), 15 + 4 * math.cos(t * 0.11 + 1.4), 2.2),
+    )
+    for cx, cy, phase in centers:
+        for i in range(185):
+            radius = 1.02 * math.sqrt(i)
+            angle = i * golden + t * (0.18 if phase == 0 else -0.15) + phase
+            x = int(round(cx + radius * math.cos(angle) * 1.55))
+            y = int(round(cy + radius * math.sin(angle) * 0.92))
+            if 0 <= x < W and 0 <= y < H:
+                band = (i + int(t * 1.1)) % 38
+                color = palette[7 if band < 3 else 6 if band < 8 else 4 if band < 20 else 3]
+                draw.point((x, y), fill=color)
+                if i % 23 == 0:
+                    draw.point(((x + 1) % W, y), fill=palette[6])
+    return image
+
+
+def render_turing_morph_frame(tick, fps=8):
+    palette = [
+        (7, 9, 19), (18, 24, 43), (30, 47, 78), (61, 65, 107),
+        (119, 71, 103), (177, 82, 85), (224, 127, 88), (233, 198, 151),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    for y in range(H):
+        ny = (y - H / 2) / H
+        for x in range(W):
+            nx = (x - W / 2) / W
+            warp_x = nx + 0.16 * math.sin(8 * ny + t * 0.17)
+            warp_y = ny + 0.14 * math.sin(7 * nx - t * 0.19)
+            spots = (
+                math.sin(18 * warp_x + t * 0.23)
+                + math.sin(17 * warp_y - t * 0.21)
+                + math.cos(20 * (warp_x * 0.72 + warp_y * 1.1) + t * 0.13)
+            )
+            value = math.sin(spots * 1.35 + 2.2 * math.sin(6 * (nx - ny) + t * 0.12))
+            if value > 0.86:
+                color = palette[7 if (x + y) % 3 == 0 else 6]
+            elif value > 0.58:
+                color = palette[6]
+            elif value > 0.14:
+                color = palette[4]
+            else:
+                color = palette[int(abs(spots * 1.7)) % 3]
+            pixels[x, y] = color
+    return image
+
+
+def render_automata_glow_frame(tick, fps=8):
+    palette = [
+        (9, 5, 23), (28, 10, 42), (59, 17, 62), (91, 30, 82),
+        (55, 94, 95), (55, 158, 126), (154, 231, 134), (255, 188, 91),
+    ]
+    t = tick / fps
+    gw, gh = 16, 8
+    cells = [[0.0 for _ in range(gw)] for _ in range(gh)]
+    for y in range(gh):
+        for x in range(gw):
+            seed = math.sin(x * 12.9898 + y * 78.233) * 43758.5453
+            seed = seed - math.floor(seed)
+            wave = math.sin(t * (0.22 + 0.03 * ((x + y) % 5)) + seed * math.tau)
+            neighbor = math.sin((x * 0.8 + y * 1.3) + t * 0.17)
+            cells[y][x] = 1.0 if wave + neighbor * 0.55 > 0.58 else 0.0
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    for y in range(H):
+        cy = y // 4
+        for x in range(W):
+            cx = x // 4
+            neighborhood = 0.0
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    weight = 1.0 if dx == 0 and dy == 0 else 0.35
+                    neighborhood += cells[(cy + dy) % gh][(cx + dx) % gw] * weight
+            pulse = neighborhood * 0.58 + 0.20 * math.sin((x + y) / 8 + t * 0.25)
+            index = max(0, min(7, int(pulse * 2.7)))
+            pixels[x, y] = palette[index]
+    return image
+
+
+def render_superformula_bloom_frame(tick, fps=8):
+    palette = [
+        (5, 8, 32), (22, 18, 65), (55, 31, 111), (105, 45, 154),
+        (177, 61, 157), (237, 92, 130), (255, 159, 119), (132, 233, 191),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    m = 6 + 1.2 * math.sin(t * 0.10)
+    n1 = 0.35 + 0.06 * math.sin(t * 0.13)
+    n2 = 1.25 + 0.20 * math.cos(t * 0.09)
+    n3 = 1.25 + 0.20 * math.sin(t * 0.11)
+    for y in range(H):
+        yy = (y - H / 2) / 11.5
+        for x in range(W):
+            xx = (x - W / 2) / 18.0
+            angle = math.atan2(yy, xx)
+            radius = math.hypot(xx, yy)
+            part = abs(math.cos(m * angle / 4)) ** n2 + abs(math.sin(m * angle / 4)) ** n3
+            shape = part ** (-1 / n1)
+            ripple = 0.10 * math.sin(14 * radius - t * 0.28)
+            diff = shape - radius + ripple
+            if diff > 0.22:
+                color = palette[3 + int((diff * 7 + t * 0.4) % 3)]
+            elif diff > 0.04:
+                color = palette[6]
+            elif abs(diff) < 0.045:
+                color = palette[7]
+            else:
+                color = palette[max(0, min(2, int((radius + 0.4) * 2)))]
+            pixels[x, y] = color
     return image
 
 

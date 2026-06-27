@@ -1,6 +1,7 @@
 from . import (
     alpine_cabin,
     aurora_waves,
+    automata_glow,
     beach,
     biolume_bloom,
     cellular_reef,
@@ -9,20 +10,22 @@ from . import (
     coral_mist,
     coral_reef,
     caustic_lattice,
-    crystal_mosaic,
     ember_bloom,
     endless_current,
     interference_bloom,
     kelp_current,
+    lace_diffusion,
     lava_lamp,
     liquid_chroma,
     lofi_cat,
-    mycelium_circuit,
     oil_slick,
     ripple_tiles,
     sea_glass,
     sunset_trail,
+    superformula_bloom,
     thermal_flow,
+    turing_morph,
+    phyllotaxis_bloom,
 )
 
 SCENES = [
@@ -47,9 +50,12 @@ SCENES = [
     sea_glass,
     ember_bloom,
     cellular_reef,
-    crystal_mosaic,
-    mycelium_circuit,
     interference_bloom,
+    lace_diffusion,
+    phyllotaxis_bloom,
+    turing_morph,
+    automata_glow,
+    superformula_bloom,
 ]
 
 SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)
