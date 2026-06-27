@@ -401,20 +401,21 @@ def render_phyllotaxis_bloom_frame(tick, fps=8):
     draw = ImageDraw.Draw(image)
     golden = math.pi * (3 - math.sqrt(5))
     centers = (
-        (22 + 5 * math.sin(t * 0.10), 16 + 3 * math.cos(t * 0.13), 0.0),
-        (47 + 4 * math.sin(t * 0.08 + 2.0), 15 + 4 * math.cos(t * 0.11 + 1.4), 2.2),
+        (15 + 4 * math.sin(t * 0.10), 12 + 3 * math.cos(t * 0.13), 0.0),
+        (34 + 5 * math.sin(t * 0.08 + 2.0), 18 + 4 * math.cos(t * 0.11 + 1.4), 2.2),
+        (53 + 4 * math.sin(t * 0.09 + 4.1), 12 + 3 * math.cos(t * 0.12 + 2.7), 4.4),
     )
     for cx, cy, phase in centers:
-        for i in range(185):
-            radius = 1.02 * math.sqrt(i)
+        for i in range(240):
+            radius = 0.96 * math.sqrt(i)
             angle = i * golden + t * (0.18 if phase == 0 else -0.15) + phase
-            x = int(round(cx + radius * math.cos(angle) * 1.55))
-            y = int(round(cy + radius * math.sin(angle) * 0.92))
+            x = int(round(cx + radius * math.cos(angle) * 1.48))
+            y = int(round(cy + radius * math.sin(angle) * 0.88))
             if 0 <= x < W and 0 <= y < H:
                 band = (i + int(t * 1.1)) % 38
                 color = palette[7 if band < 3 else 6 if band < 8 else 4 if band < 20 else 3]
                 draw.point((x, y), fill=color)
-                if i % 23 == 0:
+                if i % 17 == 0:
                     draw.point(((x + 1) % W, y), fill=palette[6])
     return image
 
@@ -451,35 +452,97 @@ def render_turing_morph_frame(tick, fps=8):
     return image
 
 
-def render_automata_glow_frame(tick, fps=8):
+def render_life_static_frame(tick, fps=8):
     palette = [
-        (9, 5, 23), (28, 10, 42), (59, 17, 62), (91, 30, 82),
-        (55, 94, 95), (55, 158, 126), (154, 231, 134), (255, 188, 91),
+        (5, 4, 18), (17, 10, 35), (38, 16, 61), (68, 27, 85),
+        (31, 93, 99), (42, 157, 129), (151, 230, 127), (255, 184, 84),
     ]
     t = tick / fps
-    gw, gh = 16, 8
-    cells = [[0.0 for _ in range(gw)] for _ in range(gh)]
+    gw, gh = 32, 16
+    phase = int(t * 2.0) % 18
+    blend = (t * 2.0) % 1.0
+
+    def initial_grid():
+        grid = [[0 for _ in range(gw)] for _ in range(gh)]
+        for y in range(gh):
+            for x in range(gw):
+                seed = math.sin(x * 12.9898 + y * 78.233) * 43758.5453
+                seed = seed - math.floor(seed)
+                island = math.sin(x * 0.54 + y * 0.71) + math.cos(x * 0.31 - y * 0.83)
+                grid[y][x] = 1 if seed + island * 0.16 > 0.56 else 0
+        return grid
+
+    def step_grid(grid):
+        nxt = [[0 for _ in range(gw)] for _ in range(gh)]
+        for y in range(gh):
+            for x in range(gw):
+                total = 0
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        if dx or dy:
+                            total += grid[(y + dy) % gh][(x + dx) % gw]
+                alive = grid[y][x]
+                nxt[y][x] = 1 if total == 3 or (alive and total == 2) else 0
+        return nxt
+
+    current = initial_grid()
+    for _ in range(phase):
+        current = step_grid(current)
+    nxt = step_grid(current)
+
     for y in range(gh):
         for x in range(gw):
-            seed = math.sin(x * 12.9898 + y * 78.233) * 43758.5453
-            seed = seed - math.floor(seed)
-            wave = math.sin(t * (0.22 + 0.03 * ((x + y) % 5)) + seed * math.tau)
-            neighbor = math.sin((x * 0.8 + y * 1.3) + t * 0.17)
-            cells[y][x] = 1.0 if wave + neighbor * 0.55 > 0.58 else 0.0
+            current[y][x] = current[y][x] * (1 - blend) + nxt[y][x] * blend
+
     image = Image.new("RGB", (W, H), palette[0])
     pixels = image.load()
     for y in range(H):
-        cy = y // 4
+        cy = y // 2
         for x in range(W):
-            cx = x // 4
+            cx = x // 2
             neighborhood = 0.0
             for dy in (-1, 0, 1):
                 for dx in (-1, 0, 1):
                     weight = 1.0 if dx == 0 and dy == 0 else 0.35
-                    neighborhood += cells[(cy + dy) % gh][(cx + dx) % gw] * weight
-            pulse = neighborhood * 0.58 + 0.20 * math.sin((x + y) / 8 + t * 0.25)
-            index = max(0, min(7, int(pulse * 2.7)))
+                    neighborhood += current[(cy + dy) % gh][(cx + dx) % gw] * weight
+            wave = 0.15 * math.sin((x - y) / 7 + t * 0.2)
+            pulse = neighborhood * 0.58 + wave + 0.08
+            index = max(0, min(7, int(pulse * 2.75)))
             pixels[x, y] = palette[index]
+    return image
+
+
+def render_fractal_garden_frame(tick, fps=8):
+    palette = [
+        (4, 7, 28), (15, 20, 58), (32, 46, 99), (42, 91, 123),
+        (47, 151, 137), (113, 128, 202), (230, 125, 149), (255, 198, 121),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    zoom = 1.32 + 0.08 * math.sin(t * 0.08)
+    angle = 0.15 * math.sin(t * 0.07)
+    ca, sa = math.cos(angle), math.sin(angle)
+    for y in range(H):
+        yy = (y - H / 2) / 13.0
+        for x in range(W):
+            xx = (x - W / 2) / 21.0
+            rx = (xx * ca - yy * sa) * zoom
+            ry = (xx * sa + yy * ca) * zoom
+            value = 0.0
+            scale = 1.0
+            for octave in range(4):
+                ax = abs((rx * scale + 1.0) % 2.0 - 1.0)
+                ay = abs((ry * scale + 1.0) % 2.0 - 1.0)
+                tri = abs(ax - ay)
+                value += (1.0 - tri) / scale
+                scale *= 1.85
+                rx += 0.08 * math.sin(t * 0.09 + octave)
+                ry += 0.07 * math.cos(t * 0.11 + octave * 1.7)
+            band = _triangle_palette_index(value * 3.2 + t * 0.24, len(palette))
+            if (x + 2 * y + int(t)) % 17 == 0 and band > 3:
+                band = min(7, band + 1)
+            pixels[x, y] = palette[band]
     return image
 
 

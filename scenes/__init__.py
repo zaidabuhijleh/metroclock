@@ -1,7 +1,6 @@
 from . import (
     alpine_cabin,
     aurora_waves,
-    automata_glow,
     beach,
     biolume_bloom,
     cellular_reef,
@@ -26,6 +25,8 @@ from . import (
     thermal_flow,
     turing_morph,
     phyllotaxis_bloom,
+    life_static,
+    fractal_garden,
 )
 
 SCENES = [
@@ -54,8 +55,9 @@ SCENES = [
     lace_diffusion,
     phyllotaxis_bloom,
     turing_morph,
-    automata_glow,
     superformula_bloom,
+    life_static,
+    fractal_garden,
 ]
 
 SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)
