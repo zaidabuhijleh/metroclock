@@ -1,6 +1,10 @@
-from .abstract_core import coral_mist_frames
+from .abstract_core import render_coral_mist_frame
 
 NAME = "Coral Mist"
 COLLECTION = "Flow"
 FPS = 8
-FRAMES = coral_mist_frames()
+PREVIEW_FRAMES = 48
+
+
+def render_frame(tick):
+    return render_coral_mist_frame(tick, FPS)

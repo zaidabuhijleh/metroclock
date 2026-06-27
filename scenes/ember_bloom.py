@@ -1,6 +1,10 @@
-from .abstract_core import ember_bloom_frames
+from .abstract_core import render_ember_bloom_frame
 
 NAME = "Ember Bloom"
 COLLECTION = "Patterns"
 FPS = 8
-FRAMES = ember_bloom_frames()
+PREVIEW_FRAMES = 48
+
+
+def render_frame(tick):
+    return render_ember_bloom_frame(tick, FPS)

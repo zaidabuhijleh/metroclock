@@ -1,6 +1,10 @@
-from .abstract_core import liquid_frames
+from .abstract_core import render_liquid_frame
 
 NAME = "Liquid Chroma"
 COLLECTION = "Flow"
 FPS = 8
-FRAMES = liquid_frames()
+PREVIEW_FRAMES = 48
+
+
+def render_frame(tick):
+    return render_liquid_frame(tick, FPS)

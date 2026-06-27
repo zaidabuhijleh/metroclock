@@ -1,6 +1,10 @@
-from .abstract_core import thermal_frames
+from .abstract_core import render_thermal_frame
 
 NAME = "Thermal Flow"
 COLLECTION = "Flow"
 FPS = 8
-FRAMES = thermal_frames(24)
+PREVIEW_FRAMES = 48
+
+
+def render_frame(tick):
+    return render_thermal_frame(tick, FPS)

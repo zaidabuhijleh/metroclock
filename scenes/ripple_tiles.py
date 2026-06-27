@@ -5,7 +5,8 @@ from PIL import Image
 NAME = "Ripple Tiles"
 COLLECTION = "Patterns"
 FPS = 7
-W, H, N = 64, 32, 28
+PREVIEW_FRAMES = 49
+W, H = 64, 32
 
 PALETTE = (
     (8, 16, 37),
@@ -19,11 +20,12 @@ PALETTE = (
 )
 
 
-def _make(frame):
+def render_frame(tick):
     image = Image.new("RGB", (W, H))
     pixels = image.load()
-    phase = math.tau * frame / N
-    loop_offset = (len(PALETTE) * 2 - 2) * frame / N
+    t = tick / FPS
+    phase = t * 0.52
+    loop_offset = t * 1.45
     centers = ((8, 8), (24, 8), (40, 8), (56, 8), (16, 24), (32, 24), (48, 24))
 
     for y in range(H):
@@ -35,6 +37,3 @@ def _make(frame):
                 index = len(PALETTE) * 2 - 2 - index
             pixels[x, y] = PALETTE[index]
     return image
-
-
-FRAMES = [_make(frame) for frame in range(N)]
