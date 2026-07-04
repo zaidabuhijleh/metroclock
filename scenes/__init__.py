@@ -13,7 +13,6 @@ from . import (
     cyclic_colonies,
     ember_bloom,
     endless_current,
-    frost_growth,
     ink_advection,
     interference_bloom,
     kelp_current,
@@ -29,8 +28,6 @@ from . import (
     superformula_bloom,
     thermal_flow,
     turing_morph,
-    phyllotaxis_bloom,
-    life_static,
     fractal_garden,
 )
 
@@ -59,15 +56,12 @@ SCENES = [
     cellular_reef,
     interference_bloom,
     lace_diffusion,
-    phyllotaxis_bloom,
     turing_morph,
     superformula_bloom,
-    life_static,
     fractal_garden,
     cyclic_colonies,
     ridge_silk,
     attractor_dust,
-    frost_growth,
 ]
 
 SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)
