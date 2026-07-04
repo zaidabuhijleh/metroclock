@@ -1,5 +1,6 @@
 from . import (
     alpine_cabin,
+    attractor_dust,
     aurora_waves,
     beach,
     biolume_bloom,
@@ -9,8 +10,11 @@ from . import (
     coral_mist,
     coral_reef,
     caustic_lattice,
+    cyclic_colonies,
     ember_bloom,
     endless_current,
+    frost_growth,
+    ink_advection,
     interference_bloom,
     kelp_current,
     lace_diffusion,
@@ -19,6 +23,7 @@ from . import (
     lofi_cat,
     oil_slick,
     ripple_tiles,
+    ridge_silk,
     sea_glass,
     sunset_trail,
     superformula_bloom,
@@ -42,6 +47,7 @@ SCENES = [
     endless_current,
     biolume_bloom,
     caustic_lattice,
+    ink_advection,
     coral_mist,
     oil_slick,
     lava_lamp,
@@ -58,6 +64,10 @@ SCENES = [
     superformula_bloom,
     life_static,
     fractal_garden,
+    cyclic_colonies,
+    ridge_silk,
+    attractor_dust,
+    frost_growth,
 ]
 
 SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)

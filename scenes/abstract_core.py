@@ -580,6 +580,200 @@ def render_superformula_bloom_frame(tick, fps=8):
     return image
 
 
+def render_cyclic_colonies_frame(tick, fps=8):
+    palette = [
+        (4, 7, 27), (24, 18, 63), (65, 35, 116), (47, 87, 151),
+        (28, 151, 163), (87, 219, 158), (214, 232, 103), (255, 167, 79),
+    ]
+    t = tick / fps
+    gw, gh = 32, 16
+    states = 8
+    phase = int(t * 2.2) % 32
+    blend = (t * 2.2) % 1.0
+
+    grid = [[0 for _ in range(gw)] for _ in range(gh)]
+    for y in range(gh):
+        for x in range(gw):
+            seed = math.sin(x * 12.9898 + y * 78.233) * 43758.5453
+            seed = seed - math.floor(seed)
+            field = 3.5 + 3.0 * math.sin(x * 0.32 + y * 0.47) + 1.3 * math.cos(x * 0.71 - y * 0.29)
+            grid[y][x] = int(seed * 4 + field) % states
+
+    def step(src):
+        dst = [row[:] for row in src]
+        for y in range(gh):
+            for x in range(gw):
+                current = src[y][x]
+                target = (current + 1) % states
+                count = 0
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        if dx or dy:
+                            count += 1 if src[(y + dy) % gh][(x + dx) % gw] == target else 0
+                if count >= 2:
+                    dst[y][x] = target
+        return dst
+
+    for _ in range(phase):
+        grid = step(grid)
+    next_grid = step(grid)
+
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    for y in range(H):
+        gy = y // 2
+        for x in range(W):
+            gx = x // 2
+            state = grid[gy][gx]
+            next_state = next_grid[gy][gx]
+            if next_state != state:
+                state = state if blend < 0.5 else next_state
+            pixels[x, y] = palette[state]
+    return image
+
+
+def render_ink_advection_frame(tick, fps=8):
+    palette = [
+        (4, 8, 28), (10, 29, 57), (9, 69, 79), (18, 124, 105),
+        (71, 190, 145), (156, 82, 157), (230, 92, 134), (255, 172, 122),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    for y in range(H):
+        ny = (y - H / 2) / H
+        for x in range(W):
+            nx = (x - W / 2) / W
+            vx = nx + 0.20 * math.sin(6 * ny + t * 0.22) + 0.10 * math.sin(13 * ny - t * 0.17)
+            vy = ny + 0.17 * math.sin(7 * nx - t * 0.19) + 0.08 * math.cos(11 * nx + t * 0.13)
+            swirl = math.atan2(vy + 0.12 * math.sin(t * 0.09), vx - 0.10 * math.cos(t * 0.11))
+            radius = math.hypot(vx * 1.15, vy * 1.7)
+            ink = (
+                0.9 * math.sin(9 * vx + 3 * math.sin(4 * vy + t * 0.23) + t * 0.28)
+                + 0.7 * math.cos(8 * vy - 2 * math.sin(5 * vx - t * 0.21))
+                + 0.45 * math.sin(7 * radius - 1.5 * swirl + t * 0.18)
+            )
+            lift = 0.5 + 0.5 * math.tanh(ink * 0.72)
+            index = max(0, min(7, int(lift * 8)))
+            pixels[x, y] = palette[index]
+    return image
+
+
+def render_ridge_silk_frame(tick, fps=8):
+    palette = [
+        (8, 7, 28), (25, 17, 58), (51, 31, 96), (43, 68, 126),
+        (32, 121, 129), (151, 72, 132), (214, 107, 123), (237, 190, 151),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    for y in range(H):
+        ny = (y - H / 2) / H
+        for x in range(W):
+            nx = (x - W / 2) / W
+            wx = nx + 0.18 * math.sin(5 * ny + t * 0.12)
+            wy = ny + 0.14 * math.cos(6 * nx - t * 0.10)
+            value = 0.0
+            amp = 1.0
+            freq = 5.0
+            for octave in range(4):
+                n = math.sin(freq * (wx + 0.6 * wy) + t * (0.10 + octave * 0.025))
+                n += 0.65 * math.cos(freq * (wy - 0.4 * wx) - t * (0.09 + octave * 0.02))
+                ridge = 1.0 - abs(n * 0.5)
+                value += ridge * amp
+                amp *= 0.55
+                freq *= 1.75
+                wx += 0.05 * math.sin(value + octave)
+                wy += 0.04 * math.cos(value - octave)
+            band = _triangle_palette_index(value * 4.1 + t * 0.18, len(palette))
+            pixels[x, y] = palette[band]
+    return image
+
+
+def render_attractor_dust_frame(tick, fps=8):
+    palette = [
+        (3, 6, 22), (12, 22, 59), (23, 61, 122), (30, 132, 173),
+        (91, 220, 183), (156, 124, 223), (244, 82, 137), (255, 190, 118),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+
+    a = -1.72 + 0.08 * math.sin(t * 0.07)
+    b = 1.82 + 0.07 * math.cos(t * 0.06)
+    c = -1.15 + 0.06 * math.sin(t * 0.05 + 2.0)
+    d = -1.48 + 0.05 * math.cos(t * 0.08 + 1.1)
+    x, y = 0.1, 0.0
+    for i in range(900):
+        x, y = math.sin(a * y) + c * math.cos(a * x), math.sin(b * x) + d * math.cos(b * y)
+        if i < 40:
+            continue
+        px = int(round(W / 2 + x * 13.5 + 3 * math.sin(t * 0.05)))
+        py = int(round(H / 2 + y * 7.5 + 2 * math.cos(t * 0.04)))
+        if 0 <= px < W and 0 <= py < H:
+            old = pixels[px, py]
+            color = palette[3 + (i // 130) % 5]
+            pixels[px, py] = tuple(min(255, old[j] + color[j] // 2) for j in range(3))
+            if i % 37 == 0 and px + 1 < W:
+                pixels[px + 1, py] = palette[4]
+    return image
+
+
+def render_frost_growth_frame(tick, fps=8):
+    palette = [
+        (5, 9, 22), (10, 20, 44), (20, 38, 72), (34, 70, 102),
+        (58, 125, 145), (115, 200, 205), (199, 236, 232), (255, 221, 170),
+    ]
+    t = tick / fps
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+
+    seeds = [
+        (0.12, 0.18, 0.0), (0.34, 0.10, 1.7), (0.58, 0.22, 3.1), (0.84, 0.12, 4.4),
+        (0.20, 0.54, 2.2), (0.46, 0.44, 5.0), (0.72, 0.62, 0.9), (0.92, 0.48, 3.8),
+        (0.08, 0.86, 5.4), (0.38, 0.78, 0.6), (0.62, 0.90, 2.7), (0.86, 0.82, 4.9),
+    ]
+    drift = t * 0.055
+    for y in range(H):
+        ny = y / (H - 1)
+        for x in range(W):
+            nx = x / (W - 1)
+            nearest = 9.0
+            second = 9.0
+            angle_sum = 0.0
+            for sx, sy, phase in seeds:
+                px = (sx + 0.025 * math.sin(drift * math.tau + phase)) % 1.0
+                py = (sy + 0.030 * math.cos(drift * math.tau * 0.8 + phase * 1.3)) % 1.0
+                dx = abs(nx - px)
+                dx = min(dx, 1.0 - dx)
+                dy = abs(ny - py)
+                dy = min(dy, 1.0 - dy)
+                d = dx * dx * 2.6 + dy * dy * 5.0
+                if d < nearest:
+                    second = nearest
+                    nearest = d
+                    angle_sum = phase
+                elif d < second:
+                    second = d
+
+            vein = abs(second - nearest)
+            facet = math.sin((nx * 7.0 + ny * 5.0) + angle_sum + t * 0.07)
+            shard = math.sin((nx - ny) * 18.0 + 1.3 * math.sin(ny * 8.0 + t * 0.09))
+            frost = 0.34 - vein * 16.0 + 0.18 * facet + 0.10 * shard
+            base = 0.5 + 0.5 * math.sin(nx * 3.2 - ny * 2.0 + t * 0.045)
+
+            if frost > 0.46:
+                color = palette[7] if (x + y + int(t * 2)) % 17 == 0 else palette[6]
+            elif frost > 0.25:
+                color = palette[5]
+            elif frost > 0.08:
+                color = palette[4]
+            else:
+                color = palette[1 + int(base * 2.2)]
+            pixels[x, y] = color
+    return image
+
+
 def thermal_frames(count=12):
     palette = [
         (16, 18, 58), (31, 39, 112), (68, 42, 142), (132, 43, 135),
