@@ -422,47 +422,6 @@ def render_turing_morph_frame(tick, fps=8):
     return image
 
 
-def render_fractal_garden_frame(tick, fps=8):
-    palette = [
-        (3, 6, 20), (9, 18, 43), (14, 42, 61), (18, 84, 82),
-        (33, 142, 112), (86, 203, 144), (214, 199, 103), (255, 227, 159),
-    ]
-    phase = math.tau * ((tick % 96) / 96)
-    image = Image.new("RGB", (W, H), palette[0])
-    pixels = image.load()
-    c_re = -0.74 + 0.055 * math.cos(phase)
-    c_im = 0.18 + 0.055 * math.sin(phase * 2)
-    zoom = 0.74 + 0.06 * math.sin(phase)
-    angle = 0.16 * math.sin(phase)
-    ca, sa = math.cos(angle), math.sin(angle)
-
-    for y in range(H):
-        yy = (y - H / 2) / 10.5
-        for x in range(W):
-            xx = (x - W / 2) / 20.5
-            zx = (xx * ca - yy * sa) * zoom - 0.06
-            zy = (xx * sa + yy * ca) * zoom
-            escaped = 0
-            mag = 0.0
-            for i in range(28):
-                zx, zy = zx * zx - zy * zy + c_re, 2 * zx * zy + c_im
-                mag = zx * zx + zy * zy
-                if mag > 4.0:
-                    escaped = i + 1
-                    break
-
-            if escaped == 0:
-                color = palette[0 if (x + y) % 5 else 1]
-            else:
-                edge = escaped / 28
-                band = max(1, min(7, int(edge * 9.5)))
-                if escaped in (7, 8, 12, 16) or (mag < 5.2 and band > 3):
-                    band = min(7, band + 1)
-                color = palette[band]
-            pixels[x, y] = color
-    return image
-
-
 def render_superformula_bloom_frame(tick, fps=8):
     palette = [
         (5, 8, 32), (22, 18, 65), (55, 31, 111), (105, 45, 154),
@@ -494,58 +453,6 @@ def render_superformula_bloom_frame(tick, fps=8):
             else:
                 color = palette[max(0, min(2, int((radius + 0.4) * 2)))]
             pixels[x, y] = color
-    return image
-
-
-def render_cyclic_colonies_frame(tick, fps=8):
-    palette = [
-        (4, 7, 27), (24, 18, 63), (65, 35, 116), (47, 87, 151),
-        (28, 151, 163), (87, 219, 158), (214, 232, 103), (255, 167, 79),
-    ]
-    t = tick / fps
-    gw, gh = 32, 16
-    states = 8
-    phase = int(t * 2.2) % 32
-    blend = (t * 2.2) % 1.0
-
-    grid = [[0 for _ in range(gw)] for _ in range(gh)]
-    for y in range(gh):
-        for x in range(gw):
-            seed = math.sin(x * 12.9898 + y * 78.233) * 43758.5453
-            seed = seed - math.floor(seed)
-            field = 3.5 + 3.0 * math.sin(x * 0.32 + y * 0.47) + 1.3 * math.cos(x * 0.71 - y * 0.29)
-            grid[y][x] = int(seed * 4 + field) % states
-
-    def step(src):
-        dst = [row[:] for row in src]
-        for y in range(gh):
-            for x in range(gw):
-                current = src[y][x]
-                target = (current + 1) % states
-                count = 0
-                for dy in (-1, 0, 1):
-                    for dx in (-1, 0, 1):
-                        if dx or dy:
-                            count += 1 if src[(y + dy) % gh][(x + dx) % gw] == target else 0
-                if count >= 2:
-                    dst[y][x] = target
-        return dst
-
-    for _ in range(phase):
-        grid = step(grid)
-    next_grid = step(grid)
-
-    image = Image.new("RGB", (W, H), palette[0])
-    pixels = image.load()
-    for y in range(H):
-        gy = y // 2
-        for x in range(W):
-            gx = x // 2
-            state = grid[gy][gx]
-            next_state = next_grid[gy][gx]
-            if next_state != state:
-                state = state if blend < 0.5 else next_state
-            pixels[x, y] = palette[state]
     return image
 
 
@@ -633,6 +540,127 @@ def render_attractor_dust_frame(tick, fps=8):
             pixels[px, py] = tuple(min(255, old[j] + color[j] // 2) for j in range(3))
             if i % 37 == 0 and px + 1 < W:
                 pixels[px + 1, py] = palette[4]
+    return image
+
+
+def render_moire_vault_frame(tick, fps=8):
+    palette = [
+        (3, 6, 22), (8, 15, 40), (13, 31, 58), (19, 62, 82),
+        (35, 119, 126), (76, 212, 184), (119, 96, 206), (255, 184, 94),
+    ]
+    phase = math.tau * ((tick % 64) / 64)
+    centers = (
+        (12 + 5 * math.cos(phase), 16 + 3 * math.sin(phase * 1.4)),
+        (52 + 5 * math.cos(phase + 2.1), 15 + 4 * math.sin(phase * 1.2 + 1.2)),
+        (32 + 4 * math.cos(phase * 0.7 + 4.0), 16 + 6 * math.sin(phase * 0.8)),
+    )
+    image = Image.new("RGB", (W, H), palette[0])
+    pixels = image.load()
+    for y in range(H):
+        for x in range(W):
+            distances = []
+            for cx, cy in centers:
+                dx = (x - cx) * 0.78
+                dy = y - cy
+                distances.append(math.hypot(dx, dy))
+            ring_a = abs((distances[0] + phase * 2.0) % 8.8 - 4.4)
+            ring_b = abs((distances[1] - phase * 1.7) % 9.4 - 4.7)
+            ring_c = abs((distances[2] + phase * 1.1) % 12.0 - 6.0)
+            braid = abs(((distances[0] - distances[1]) + phase * 1.4) % 10.4 - 5.2)
+            line = min(ring_a, ring_b, ring_c * 0.85)
+            crossing = braid < 0.34 and (ring_a < 1.1 or ring_b < 1.1)
+            if line < 0.20:
+                color = palette[7 if crossing or (x + y + tick) % 23 == 0 else 5]
+            elif line < 0.48:
+                color = palette[6 if crossing else 4]
+            elif line < 0.78:
+                color = palette[3]
+            else:
+                shade = 1 + int(0.5 + 0.5 * math.sin((x - y) * 0.10 + phase))
+                color = palette[shade]
+            pixels[x, y] = color
+    return image
+
+
+def render_signal_traces_frame(tick, fps=8):
+    palette = [
+        (3, 7, 18), (8, 16, 35), (13, 34, 52), (24, 82, 76),
+        (47, 157, 124), (98, 229, 177), (255, 154, 98), (255, 222, 130),
+    ]
+    phase = (tick % 72) / 72
+    image = Image.new("RGB", (W, H), palette[0])
+    draw = ImageDraw.Draw(image)
+    for x in range(4, W, 8):
+        draw.line([(x, 0), (x, H - 1)], fill=palette[1])
+    for y in range(4, H, 8):
+        draw.line([(0, y), (W - 1, y)], fill=palette[1])
+
+    paths = [
+        [(0, 7), (11, 7), (11, 15), (25, 15), (25, 5), (42, 5), (42, 12), (63, 12)],
+        [(3, 27), (15, 27), (15, 20), (31, 20), (31, 28), (49, 28), (49, 21), (63, 21)],
+        [(0, 18), (9, 18), (18, 9), (31, 9), (40, 18), (52, 18), (63, 7)],
+        [(6, 2), (20, 2), (20, 11), (35, 11), (35, 25), (53, 25), (60, 31)],
+        [(0, 30), (10, 24), (22, 24), (33, 13), (45, 13), (56, 2), (63, 2)],
+    ]
+
+    def path_points(path):
+        points = []
+        for (x1, y1), (x2, y2) in zip(path, path[1:]):
+            steps = max(abs(x2 - x1), abs(y2 - y1))
+            for step in range(steps):
+                p = step / max(1, steps)
+                points.append((round(x1 + (x2 - x1) * p), round(y1 + (y2 - y1) * p)))
+        points.append(path[-1])
+        return points
+
+    for path_index, path in enumerate(paths):
+        points = path_points(path)
+        line_color = palette[3 + path_index % 2]
+        draw.line(path, fill=line_color)
+        offset = int((phase + path_index * 0.17) * len(points)) % len(points)
+        for glow in range(7):
+            px, py = points[(offset - glow * 2) % len(points)]
+            color = palette[7 if glow == 0 else 6 if glow < 3 else 5]
+            draw.point((px, py), fill=color)
+            if glow < 2 and px + 1 < W:
+                draw.point((px + 1, py), fill=palette[6])
+        for node in path[1:-1:2]:
+            draw.point(node, fill=palette[5])
+    return image
+
+
+def render_orbit_loom_frame(tick, fps=8):
+    palette = [
+        (5, 5, 22), (13, 16, 49), (28, 33, 82), (59, 51, 123),
+        (108, 61, 160), (208, 78, 150), (255, 143, 113), (124, 233, 210),
+    ]
+    phase = math.tau * ((tick % 80) / 80)
+    image = Image.new("RGB", (W, H), palette[0])
+    draw = ImageDraw.Draw(image)
+    for y in range(H):
+        if y % 5 == 0:
+            draw.line([(0, y), (W - 1, y)], fill=palette[1])
+
+    curves = [
+        (25, 10, 2, 3, 0.0, palette[7]),
+        (24, 9, 3, 4, 1.7, palette[5]),
+        (18, 7, 5, 2, 3.4, palette[6]),
+    ]
+    for radius_x, radius_y, ax, ay, shift, color in curves:
+        previous = None
+        for i in range(72):
+            u = math.tau * i / 72
+            wobble = 2.5 * math.sin(u * 3 + phase + shift)
+            x = round(W / 2 + (radius_x + wobble) * math.sin(ax * u + phase * 0.7 + shift))
+            y = round(H / 2 + radius_y * math.sin(ay * u - phase * 0.9 + shift))
+            point = (x, y)
+            if 0 <= x < W and 0 <= y < H:
+                if previous and abs(previous[0] - x) <= 5 and abs(previous[1] - y) <= 5:
+                    draw.line([previous, point], fill=color)
+                if i % 9 == int(tick / 2 + shift) % 9:
+                    draw.point(point, fill=palette[7])
+            previous = point
+    draw.rectangle((30, 14, 33, 17), outline=palette[6])
     return image
 
 

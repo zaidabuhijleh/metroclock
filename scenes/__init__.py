@@ -10,7 +10,6 @@ from . import (
     coral_mist,
     coral_reef,
     caustic_lattice,
-    cyclic_colonies,
     ember_bloom,
     endless_current,
     ink_advection,
@@ -21,14 +20,16 @@ from . import (
     liquid_chroma,
     lofi_cat,
     oil_slick,
+    orbit_loom,
     ripple_tiles,
     ridge_silk,
     sea_glass,
+    signal_traces,
     sunset_trail,
     superformula_bloom,
     thermal_flow,
     turing_morph,
-    fractal_garden,
+    moire_vault,
 )
 
 SCENES = [
@@ -58,10 +59,11 @@ SCENES = [
     lace_diffusion,
     turing_morph,
     superformula_bloom,
-    fractal_garden,
-    cyclic_colonies,
     ridge_silk,
     attractor_dust,
+    moire_vault,
+    signal_traces,
+    orbit_loom,
 ]
 
 SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)
