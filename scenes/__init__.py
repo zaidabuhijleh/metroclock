@@ -20,16 +20,13 @@ from . import (
     liquid_chroma,
     lofi_cat,
     oil_slick,
-    orbit_loom,
     ripple_tiles,
     ridge_silk,
     sea_glass,
-    signal_traces,
     sunset_trail,
     superformula_bloom,
     thermal_flow,
     turing_morph,
-    moire_vault,
 )
 
 SCENES = [
@@ -61,9 +58,6 @@ SCENES = [
     superformula_bloom,
     ridge_silk,
     attractor_dust,
-    moire_vault,
-    signal_traces,
-    orbit_loom,
 ]
 
 SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)
