@@ -50,12 +50,18 @@ class AmbientWidget(Widget):
         scene = self._scene()
         frame_interval = 1.0 / scene.FPS
         if now - self._last_frame_time >= frame_interval:
-            self._frame_index = (self._frame_index + 1) % len(scene.FRAMES)
+            if hasattr(scene, "render_frame"):
+                self._frame_index += 1
+            else:
+                self._frame_index = (self._frame_index + 1) % len(scene.FRAMES)
             self._last_frame_time = now
 
     def draw(self):
         scene = self._scene()
-        frame = scene.FRAMES[self._frame_index % len(scene.FRAMES)]
+        if hasattr(scene, "render_frame"):
+            frame = scene.render_frame(self._frame_index)
+        else:
+            frame = scene.FRAMES[self._frame_index % len(scene.FRAMES)]
         if frame.size == (self.width, self.height):
             self.canvas = frame.copy()
         else:

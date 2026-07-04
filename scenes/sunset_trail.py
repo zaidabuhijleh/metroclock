@@ -1,103 +1,46 @@
+import math
 from PIL import Image, ImageDraw
 
 NAME = "Sunset Trail"
+COLLECTION = "Places"
 FPS = 6
-
-W, H = 64, 32
-N = 6
-
-SKY_TOP = (80, 140, 255)
-SKY_MID = (255, 160, 90)
-SKY_BOT = (255, 210, 130)
-SUN = (255, 210, 90)
-SUN_CORE = (255, 245, 150)
-HILL_BACK = (110, 190, 105)
-HILL_FRONT = (75, 150, 70)
-TRUNK = (205, 120, 50)
-LEAF = (35, 165, 65)
-LEAF_DARK = (20, 120, 45)
-PATH = (214, 176, 110)
-PATH_EDGE = (170, 128, 74)
-SHRUB_A = (50, 145, 62)
-SHRUB_B = (32, 116, 50)
-FLOWER_A = (255, 120, 180)
-FLOWER_B = (255, 255, 130)
+W, H, N = 64, 32, 8
 
 
 def _lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-def _draw_sky(draw):
-    for y in range(0, 12):
-        draw.line([(0, y), (W - 1, y)], fill=_lerp(SKY_TOP, SKY_MID, y / 11))
-    for y in range(12, 22):
-        draw.line([(0, y), (W - 1, y)], fill=_lerp(SKY_MID, SKY_BOT, (y - 12) / 9))
+def _tree(draw, x, base, scale, sway):
+    draw.polygon([(x - 2, base), (x, base - 13 * scale), (x + 3, base)], fill=(70, 45, 39))
+    crown = (x + sway, base - 12 * scale)
+    draw.ellipse([crown[0] - 7 * scale, crown[1] - 7 * scale, crown[0] + 7 * scale, crown[1] + 3 * scale], fill=(25, 67, 54))
+    draw.ellipse([crown[0] - 5 * scale, crown[1] - 9 * scale, crown[0] + 3 * scale, crown[1]], fill=(37, 92, 60))
 
 
-def _draw_tree(draw, tx, base_y, canopy_w):
-    draw.line([(tx, base_y - 8), (tx, base_y + 1)], fill=TRUNK)
-    if tx + 1 < W:
-        draw.line([(tx + 1, base_y - 7), (tx + 1, base_y + 1)], fill=TRUNK)
-
-    # Flatter, wider canopy so it reads less like a lollipop.
-    profile = [canopy_w - 2, canopy_w, canopy_w + 1, canopy_w + 1, canopy_w - 1, canopy_w - 3]
-    top = base_y - 11
-    for row, spread in enumerate(profile):
-        y = top + row
-        spread = max(2, spread)
-        for x in range(tx - spread, tx + spread + 1):
-            if 0 <= x < W:
-                if abs(x - tx) == spread and row in (0, len(profile) - 1):
-                    continue
-                color = LEAF if (x + y + row) % 2 == 0 else LEAF_DARK
-                draw.point((x, y), fill=color)
-
-
-def _draw_ground(draw, frame):
-    back = [(0, 20), (8, 18), (16, 19), (25, 17), (35, 19), (46, 18), (55, 19), (63, 18), (63, 32), (0, 32)]
-    front = [(0, 24), (10, 22), (20, 24), (30, 21), (40, 24), (50, 22), (63, 24), (63, 32), (0, 32)]
-    draw.polygon(back, fill=HILL_BACK)
-    draw.polygon(front, fill=HILL_FRONT)
-
-    # Clearer trail perspective and edge definition.
-    path = [(22, 32), (27, 27), (29, 24), (32, 23), (35, 24), (37, 27), (42, 32)]
-    draw.polygon(path, fill=PATH)
-    draw.line([(22, 32), (27, 27), (29, 24), (32, 23)], fill=PATH_EDGE)
-    draw.line([(42, 32), (37, 27), (35, 24), (32, 23)], fill=PATH_EDGE)
-    draw.line([(28, 30), (32, 26)], fill=(225, 195, 130))
-    draw.line([(36, 30), (33, 26)], fill=(225, 195, 130))
-
-    # Shrubs for foreground detail.
-    shrubs = [(5, 24), (13, 25), (18, 23), (46, 24), (52, 23), (59, 25)]
-    for i, (sx, sy) in enumerate(shrubs):
-        c = SHRUB_A if (i + frame) % 2 == 0 else SHRUB_B
-        draw.line([(sx - 1, sy), (sx + 1, sy)], fill=c)
-        draw.point((sx, sy - 1), fill=c)
-
-    # Flower twinkle.
-    flowers = [(6, 25), (12, 27), (20, 26), (45, 26), (54, 25), (58, 27)]
-    for i, (fx, fy) in enumerate(flowers):
-        color = FLOWER_A if (frame + i) % 2 == 0 else FLOWER_B
-        draw.point((fx, fy), fill=color)
+def _make(frame):
+    image = Image.new("RGB", (W, H))
+    draw = ImageDraw.Draw(image)
+    colors = ((42, 44, 111), (197, 72, 102), (250, 145, 83), (255, 205, 112))
+    for y in range(21):
+        section = min(2, y // 7)
+        draw.line([(0, y), (63, y)], fill=_lerp(colors[section], colors[section + 1], (y % 7) / 6))
+    draw.ellipse([28, 9, 38, 19], fill=(255, 207, 112))
+    draw.ellipse([31, 12, 36, 17], fill=(255, 238, 157))
+    draw.polygon([(0, 21), (10, 17), (20, 20), (31, 16), (42, 20), (53, 17), (63, 20), (63, 31), (0, 31)], fill=(52, 91, 68))
+    draw.polygon([(0, 25), (13, 21), (25, 23), (39, 21), (52, 24), (63, 21), (63, 31), (0, 31)], fill=(31, 65, 52))
+    # The trail is now the focal axis and remains unobstructed.
+    draw.polygon([(23, 31), (28, 27), (30, 23), (33, 20), (36, 23), (39, 27), (45, 31)], fill=(205, 139, 82))
+    draw.line([(24, 31), (29, 27), (31, 23), (33, 20)], fill=(239, 183, 105))
+    draw.line([(44, 31), (38, 27), (35, 23), (33, 20)], fill=(139, 87, 65))
+    sway = round(math.sin(math.tau * frame / N))
+    _tree(draw, 7, 29, 1, sway)
+    _tree(draw, 56, 29, 1, -sway)
+    _tree(draw, 17, 26, .65, 0)
+    _tree(draw, 48, 26, .65, 0)
+    for x, color in ((13, (224, 101, 103)), (19, (242, 183, 94)), (50, (222, 93, 137)), (55, (244, 190, 103))):
+        draw.rectangle([x, 28, x + 1, 29], fill=color)
+    return image
 
 
-def _make_frame(frame):
-    img = Image.new("RGB", (W, H))
-    draw = ImageDraw.Draw(img)
-
-    _draw_sky(draw)
-    sun_shift = 1 if frame in (1, 2, 4, 5) else 0
-    draw.ellipse([47, 5, 58, 16], fill=SUN)
-    draw.ellipse([50 - sun_shift, 8, 55 + sun_shift, 13], fill=SUN_CORE)
-
-    _draw_ground(draw, frame)
-    _draw_tree(draw, 8, 24, 4)
-    _draw_tree(draw, 17, 25, 3)
-    _draw_tree(draw, 48, 24, 5)
-    _draw_tree(draw, 57, 25, 3)
-    _draw_tree(draw, 32, 23, 6)
-    return img
-
-
-FRAMES = [_make_frame(f) for f in range(N)]
+FRAMES = [_make(i) for i in range(N)]

@@ -89,7 +89,9 @@ class WifiSetupManager:
 
     def should_show_setup_message(self) -> bool:
         status = self.status()
-        return bool(status.get("active") or getattr(config, "SETUP_MODE", False))
+        if status.get("active") or status.get("last_error"):
+            return True
+        return bool(getattr(config, "SETUP_MODE", False) and not status.get("checking"))
 
     def connect_to_network(self, ssid: str, password: str = ""):
         ssid = str(ssid or "").strip()
@@ -171,6 +173,7 @@ class WifiSetupManager:
             self._run_command(["ip", "addr", "add", f"{self.hotspot_ip}/24", "dev", self.interface], timeout=8, check=True)
             self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8, check=True)
             self._run_command(["systemctl", "restart", "dnsmasq"], timeout=12, check=True)
+            self._run_command(["systemctl", "unmask", "hostapd"], timeout=12)
             self._run_command(["systemctl", "restart", "hostapd"], timeout=12, check=True)
             config_manager.write_config({"SETUP_MODE": True})
             self._set_status(
@@ -183,13 +186,14 @@ class WifiSetupManager:
                 last_error="",
             )
         except Exception as exc:
-            config_manager.write_config({"SETUP_MODE": True})
+            config_manager.write_config({"SETUP_MODE": False})
+            self._restart_wifi_client()
             self._set_status(
-                active=True,
+                active=False,
                 connected=False,
                 checking=False,
                 reason=reason,
-                ip=self.hotspot_ip,
+                ip="",
                 last_error=str(exc),
             )
 

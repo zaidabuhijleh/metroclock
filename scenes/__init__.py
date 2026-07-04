@@ -1,3 +1,68 @@
-from . import beach, city_day, sunset_trail, alpine_cabin, coral_reef, lofi_cat
+from . import (
+    alpine_cabin,
+    attractor_dust,
+    aurora_waves,
+    beach,
+    biolume_bloom,
+    cellular_reef,
+    city_day,
+    contour_drift,
+    coral_mist,
+    coral_reef,
+    caustic_lattice,
+    ember_bloom,
+    endless_current,
+    ink_advection,
+    interference_bloom,
+    kelp_current,
+    lace_diffusion,
+    lava_lamp,
+    liquid_chroma,
+    lofi_cat,
+    oil_slick,
+    ripple_tiles,
+    ridge_silk,
+    sea_glass,
+    sunset_trail,
+    superformula_bloom,
+    thermal_flow,
+    turing_morph,
+)
 
-SCENES = [beach, city_day, sunset_trail, alpine_cabin, coral_reef, lofi_cat]
+SCENES = [
+    beach,
+    city_day,
+    sunset_trail,
+    alpine_cabin,
+    coral_reef,
+    lofi_cat,
+    thermal_flow,
+    liquid_chroma,
+    kelp_current,
+    endless_current,
+    biolume_bloom,
+    caustic_lattice,
+    ink_advection,
+    coral_mist,
+    oil_slick,
+    lava_lamp,
+    aurora_waves,
+    contour_drift,
+    ripple_tiles,
+    sea_glass,
+    ember_bloom,
+    cellular_reef,
+    interference_bloom,
+    lace_diffusion,
+    turing_morph,
+    superformula_bloom,
+    ridge_silk,
+    attractor_dust,
+]
+
+SCENE_KEYS = tuple(scene.__name__.split(".")[-1] for scene in SCENES)
+
+COLLECTIONS = {
+    collection: tuple(scene for scene in SCENES if scene.COLLECTION == collection)
+    for collection in ("Places", "Cozy", "Flow", "Patterns")
+}

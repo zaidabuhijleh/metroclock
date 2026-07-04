@@ -1,128 +1,55 @@
+import math
 from PIL import Image, ImageDraw
 
 NAME = "Beach"
+COLLECTION = "Places"
 FPS = 6
-
-W, H = 64, 32
-N = 6
-
-SKY_TOP = (30, 100, 200)
-SKY_BOT = (80, 170, 230)
-SUN_CORE = (255, 245, 80)
-SUN_HALO = (255, 210, 50)
-SAND_TOP = (235, 195, 110)
-SAND_BOT = (210, 165, 80)
-PALM_TRUNK = (150, 100, 45)
-PALM_LEAF = (40, 175, 55)
-PALM_DARK = (20, 110, 30)
-COCONUT = (120, 70, 25)
-OCEAN_TOP = (40, 120, 210)
-OCEAN_BOT = (10, 70, 160)
-FOAM = (235, 248, 255)
-FOAM_DIM = (160, 200, 240)
-BIRD = (235, 240, 255)
-STARFISH = (238, 138, 96)
+W, H, N = 64, 32, 8
 
 
 def _lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-def _draw_sky(draw):
-    for y in range(14):
-        c = _lerp(SKY_TOP, SKY_BOT, y / 13)
-        draw.line([(0, y), (W - 1, y)], fill=c)
+def _palm(draw, frame):
+    trunk = [(5, 31), (7, 24), (9, 18), (12, 13), (14, 9)]
+    draw.line(trunk, fill=(91, 48, 35), width=3)
+    draw.line([(7, 29), (9, 22), (12, 15)], fill=(154, 83, 46))
+    sway = round(math.sin(math.tau * frame / N))
+    crown = (14 + sway, 9)
+    leaves = [(-13, -3), (-10, -7), (-4, -8), (4, -7), (11, -4), (14, 0), (9, 4), (-8, 3)]
+    for i, (dx, dy) in enumerate(leaves):
+        end = (crown[0] + dx, crown[1] + dy)
+        draw.line([crown, end], fill=(12, 82, 61) if i % 2 else (19, 118, 66), width=2)
+    draw.rectangle([12 + sway, 9, 15 + sway, 11], fill=(83, 48, 31))
 
 
-def _draw_sun(draw, frame):
-    cx, cy = 55, 7
-    pulse = 1 if frame in (1, 2, 4, 5) else 0
-    draw.ellipse([cx - 6 - pulse, cy - 6, cx + 6 + pulse, cy + 6], fill=SUN_HALO)
-    draw.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=SUN_CORE)
+def _make(frame):
+    image = Image.new("RGB", (W, H))
+    draw = ImageDraw.Draw(image)
+    sky_a, sky_b = (19, 72, 143), (89, 179, 211)
+    for y in range(18):
+        draw.line([(0, y), (63, y)], fill=_lerp(sky_a, sky_b, y / 17))
+    draw.ellipse([49, 3, 59, 13], fill=(255, 218, 96))
+    draw.ellipse([52, 6, 57, 11], fill=(255, 245, 174))
+    draw.polygon([(35, 17), (42, 13), (49, 16), (55, 14), (63, 17)], fill=(43, 92, 99))
+    for y in range(17, 26):
+        draw.line([(0, y), (63, y)], fill=_lerp((27, 132, 176), (10, 61, 124), (y - 17) / 8))
+    # A diagonal shore creates depth and keeps the center open.
+    draw.polygon([(0, 27), (18, 25), (35, 24), (52, 25), (63, 27), (63, 31), (0, 31)], fill=(225, 174, 91))
+    draw.line([(0, 26), (18, 24), (35, 23), (52, 24), (63, 26)], fill=(238, 249, 230), width=2)
+    shift = frame % 4
+    for x in range(-8 + shift * 3, 64, 18):
+        draw.line([(x, 20), (x + 8, 20)], fill=(93, 203, 213))
+        draw.line([(x + 4, 23), (x + 11, 23)], fill=(177, 232, 225))
+    _palm(draw, frame)
+    # Foreground shells are clustered, not flickering.
+    draw.rectangle([47, 28, 50, 29], fill=(205, 91, 75))
+    draw.point((49, 27), fill=(245, 141, 104))
+    for bx, by in ((25, 6), (31, 8)):
+        wing = -1 if frame in (1, 2, 5, 6) else 0
+        draw.line([(bx - 2, by + wing), (bx, by), (bx + 2, by + wing)], fill=(226, 239, 237))
+    return image
 
 
-def _draw_ocean(draw, frame):
-    for y in range(14, 21):
-        c = _lerp(OCEAN_TOP, OCEAN_BOT, (y - 14) / 6)
-        draw.line([(0, y), (W - 1, y)], fill=c)
-
-    for wi, wy in enumerate([15, 18]):
-        shift = (frame * 4 + wi * 12) % 24
-        for x in range(W):
-            wx = (x + shift) % 24
-            if wx < 10:
-                c = FOAM if wx < 5 else FOAM_DIM
-                draw.point((x, wy), fill=c)
-                if wy + 1 < H:
-                    draw.point((x, wy + 1), fill=FOAM_DIM if wx < 4 else OCEAN_TOP)
-
-
-def _draw_beach(draw, frame):
-    for y in range(21, H):
-        c = _lerp(SAND_TOP, SAND_BOT, (y - 21) / (H - 22))
-        draw.line([(0, y), (W - 1, y)], fill=c)
-
-    # Sand texture
-    for x in range(0, W, 3):
-        y = 24 + ((x + frame) % 3)
-        if y < H:
-            draw.point((x, y), fill=(220, 180, 96))
-
-    # Small starfish detail.
-    sx, sy = 49, 27
-    twinkle = 1 if frame in (0, 3) else 0
-    draw.point((sx, sy), fill=STARFISH)
-    draw.point((sx - 1, sy), fill=STARFISH)
-    draw.point((sx + 1, sy), fill=STARFISH)
-    draw.point((sx, sy - 1), fill=STARFISH if twinkle else (210, 130, 90))
-    draw.point((sx, sy + 1), fill=STARFISH if twinkle else (210, 130, 90))
-
-
-def _draw_palm(draw, bx, by, lean, height):
-    for i in range(height):
-        tx = bx + int(lean * i / height)
-        ty = by - i
-        if 0 <= tx < W and 0 <= ty < H:
-            draw.point((tx, ty), fill=PALM_TRUNK)
-            if tx + 1 < W:
-                draw.point((tx + 1, ty), fill=PALM_TRUNK)
-
-    tip_x = bx + lean
-    tip_y = by - height
-    leaf_dirs = [(-8, -3), (-5, -6), (-1, -7), (3, -6), (6, -4), (8, -1), (7, 2), (-7, 2)]
-    for i, (dx, dy) in enumerate(leaf_dirs):
-        c = PALM_LEAF if i % 2 == 0 else PALM_DARK
-        draw.line([(tip_x, tip_y), (tip_x + dx, tip_y + dy)], fill=c)
-
-    for dx, dy in [(-2, 1), (1, 2), (3, 1)]:
-        cx2, cy2 = tip_x + dx, tip_y + dy
-        if 0 <= cx2 < W and 0 <= cy2 < H:
-            draw.point((cx2, cy2), fill=COCONUT)
-
-
-def _draw_birds(draw, frame):
-    wing = [0, -1, 0, 1, 0, -1][frame % N]
-    birds = [(9, 6), (16, 8), (22, 6)]
-    for bx, by in birds:
-        draw.point((bx, by), fill=BIRD)
-        if by + wing >= 0:
-            draw.point((bx - 1, by + wing), fill=BIRD)
-            draw.point((bx + 1, by + wing), fill=BIRD)
-
-
-def _make_frame(frame):
-    img = Image.new("RGB", (W, H))
-    draw = ImageDraw.Draw(img)
-
-    _draw_sky(draw)
-    _draw_sun(draw, frame)
-    _draw_ocean(draw, frame)
-    _draw_beach(draw, frame)
-    _draw_palm(draw, bx=9, by=20, lean=3, height=12)
-    _draw_palm(draw, bx=22, by=20, lean=-2, height=9)
-    _draw_palm(draw, bx=44, by=21, lean=1, height=7)
-    _draw_birds(draw, frame)
-    return img
-
-
-FRAMES = [_make_frame(f) for f in range(N)]
+FRAMES = [_make(i) for i in range(N)]

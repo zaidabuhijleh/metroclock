@@ -6,6 +6,9 @@ APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "[1/3] Installing hotspot dependencies..."
 apt-get update -qq
 apt-get install -y hostapd dnsmasq wireless-tools
+systemctl unmask hostapd || true
+systemctl disable --now hostapd || true
+systemctl disable --now dnsmasq || true
 
 echo "[2/3] Marking MetroClock setup mode..."
 python3 - <<EOF

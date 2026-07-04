@@ -31,7 +31,7 @@ if [ ! -d "$VENV_DIR" ]; then
   python3 -m venv "$VENV_DIR"
 fi
 source "$VENV_DIR/bin/activate"
-python -m pip install --upgrade pip setuptools wheel
+python -m pip install --upgrade pip setuptools wheel scikit-build-core pybind11 cython
 
 echo "[3/8] Installing MetroClock Python requirements..."
 python -m pip install -r "$REPO_DIR/requirements.txt"
@@ -80,6 +80,9 @@ if [ ! -f /etc/metroclock/config.json ]; then
   echo '{}' | sudo tee /etc/metroclock/config.json >/dev/null
   sudo chmod 600 /etc/metroclock/config.json
 fi
+sudo systemctl unmask hostapd || true
+sudo systemctl disable --now hostapd || true
+sudo systemctl disable --now dnsmasq || true
 sudo systemctl daemon-reload
 sudo systemctl enable metroclock
 sudo systemctl restart metroclock
