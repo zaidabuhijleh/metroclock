@@ -202,6 +202,10 @@ class SportsWidget(Widget):
             return self.canvas
 
         game = self.games[self.current_game_index]
+        if self._is_soccer(game) and game.get("state") == "pre":
+            self._draw_soccer_pregame(draw, game)
+            return self.canvas
+
         if self._is_halftime(game) and self._draw_halftime_stats(draw, game):
             return self.canvas
 
@@ -229,6 +233,8 @@ class SportsWidget(Widget):
     def _draw_live_status_row(self, draw, game):
         # Custom render for live clock so ':' uses 1px dots instead of the font glyph.
         if game.get("state") != "in":
+            return False
+        if self._is_soccer(game):
             return False
 
         detail = str(game.get("detail", "")).upper()
@@ -265,6 +271,23 @@ class SportsWidget(Widget):
 
         draw.text((x, y), secs, font=self.font_tall, fill=self.color_dim)
         return True
+
+    def _draw_soccer_pregame(self, draw, game):
+        kickoff = self._fit_text(self._kickoff_text(game), self.width - 2, self.font_tall)
+        kickoff_w = int(self.font_tall.getlength(kickoff))
+        draw.text(((self.width - kickoff_w) // 2, 0), kickoff, font=self.font_tall, fill=self.color_dim)
+
+        self._draw_pregame_team_row(draw, game["away"], 12)
+        self._draw_pregame_team_row(draw, game["home"], 22)
+
+    def _draw_pregame_team_row(self, draw, team, y):
+        draw.rectangle((0, y + 1, self.BAR_WIDTH - 1, min(self.height - 1, y + 7)), fill=team["color"])
+        abbr = self._fit_text(team["abbr"], 24, self.font_tall)
+        draw.text((self.BAR_WIDTH + 2, y), abbr, font=self.font_tall, fill=self.color_text)
+
+        label = "AWAY" if y < 18 else "HOME"
+        label_w = int(self.font_small.getlength(label))
+        draw.text((self.width - label_w - 1, y + 2), label, font=self.font_small, fill=self.color_dim)
 
     def _draw_team_row(self, draw, game, side, y):
         team = game[side]
@@ -572,23 +595,66 @@ class SportsWidget(Widget):
         sport = game.get("sport") or self._get_league()["sport"]
 
         if state == "in":
+            if sport == "soccer":
+                return self._soccer_live_status(game, detail)
             if "HALFTIME" in detail:
                 return "HALFTIME"
             if "END OF" in detail:
                 return detail
             clock = game.get("clock") or "--:--"
-            if sport == "soccer":
-                return clock or detail or "LIVE"
             return f"{self._period_label(game.get('period', 0))} {clock}"
 
         if state == "post":
+            if sport == "soccer":
+                return self._soccer_final_status(detail)
             return detail if "FINAL" in detail else "FINAL"
 
-        return detail or ("KICKOFF SOON" if sport == "soccer" else "TIPOFF SOON")
+        return self._kickoff_text(game) if sport == "soccer" else detail or "TIPOFF SOON"
 
     def _is_halftime(self, game):
         detail = str(game.get("detail", "")).upper()
         return "HALFTIME" in detail or detail.startswith("HALF ")
+
+    def _is_soccer(self, game):
+        return (game.get("sport") or self._get_league()["sport"]) == "soccer"
+
+    def _soccer_live_status(self, game, detail):
+        if "HALFTIME" in detail or detail == "HT":
+            return "HT"
+        if "PEN" in detail:
+            return "PEN"
+        if "EXTRA" in detail or "ET" in detail:
+            clock = str(game.get("clock") or "").strip()
+            return clock if clock else "ET"
+
+        clock = str(game.get("clock") or "").strip()
+        if clock:
+            return clock
+
+        match = re.search(r"(\d{1,3})(?:\s*\+\s*(\d{1,2}))?", detail)
+        if match:
+            minute = match.group(1)
+            stoppage = match.group(2)
+            return f"{minute}+{stoppage}'" if stoppage else f"{minute}'"
+
+        return "LIVE"
+
+    def _soccer_final_status(self, detail):
+        if "PEN" in detail:
+            return "PEN"
+        if "EXTRA" in detail or "AET" in detail:
+            return "AET"
+        return "FT"
+
+    def _kickoff_text(self, game):
+        ts = game.get("date_ts", 0.0)
+        if not ts:
+            return "KICKOFF"
+        try:
+            text = datetime.fromtimestamp(ts).strftime("%I:%M%p")
+        except Exception:
+            return "KICKOFF"
+        return text.lstrip("0").replace("AM", "A").replace("PM", "P")
 
     def _period_label(self, period):
         if self._get_league()["sport"] == "soccer":
