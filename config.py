@@ -70,6 +70,7 @@ FLIGHT_NUMBER = "AC57"  # Default flight to track
 FLIGHT_UPDATE_INTERVAL = 1800
 
 # --- SPORTS ---
+SPORTS_LEAGUE = "nba"  # "nba", "eng.1", "esp.1", or "fifa.world"
 SPORTS_VIEW_MODE = "all_live"  # "all_live" (all teams) or "favorites"
 SPORTS_FAVORITE_TEAMS = ""  # CSV of NBA abbreviations, e.g. "LAL,BOS"
 SPORTS_TEST_DATE = ""  # YYYYMMDD to pin a date for testing; empty = today
@@ -196,6 +197,7 @@ RUNTIME_EDITABLE_FIELDS = {
     "WIFI_SETUP_HOTSPOT_SSID",
     "WIFI_SETUP_HOTSPOT_IP",
     "SPORTS_VIEW_MODE",
+    "SPORTS_LEAGUE",
     "SPORTS_FAVORITE_TEAMS",
     "SPORTS_TEST_DATE",
     "SPORTS_LIVE_FOCUS",

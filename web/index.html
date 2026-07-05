@@ -766,6 +766,16 @@
   <!-- Sports Tab -->
   <div class="panel" id="panel-sports">
     <div class="card">
+      <div class="card-title">League</div>
+      <div class="toggle-row">
+        <button class="unit-btn" data-sports-league="nba" onclick="setSportsLeague('nba')">NBA</button>
+        <button class="unit-btn" data-sports-league="eng.1" onclick="setSportsLeague('eng.1')">Premier League</button>
+        <button class="unit-btn" data-sports-league="esp.1" onclick="setSportsLeague('esp.1')">La Liga</button>
+        <button class="unit-btn" data-sports-league="fifa.world" onclick="setSportsLeague('fifa.world')">World Cup</button>
+      </div>
+      <p class="hint">World Cup shows the day's games as a daily slate, no favorite team required.</p>
+    </div>
+    <div class="card">
       <div class="card-title">View Mode</div>
       <div class="toggle-row">
         <button class="unit-btn" data-sports-view="all_live" onclick="setSportsView('all_live')">All Teams</button>
@@ -782,7 +792,7 @@
       <p class="hint">When On: if any selected game is live, Sports mode rotates only live games. Pregame games return automatically when nothing is live.</p>
     </div>
     <div class="card">
-      <div class="card-title">Favorite Teams (NBA)</div>
+      <div class="card-title" id="sports-favorites-title">Favorite Teams</div>
       <div class="team-grid" id="team-grid"></div>
       <button class="btn btn-primary" onclick="saveSports()">Save</button>
     </div>
@@ -1141,6 +1151,72 @@ const NBA_TEAMS = [
   {abbr:"WAS", name:"Wizards",       color:"#E31837"},
 ];
 
+const SPORTS_LEAGUES = {
+  "nba": {
+    label: "NBA",
+    favoritesLabel: "Favorite Teams (NBA)",
+    teams: NBA_TEAMS,
+  },
+  "eng.1": {
+    label: "Premier League",
+    favoritesLabel: "Favorite Teams (Premier League)",
+    teams: [
+      {abbr:"ARS", name:"Arsenal", color:"#EF0107"},
+      {abbr:"AVL", name:"Aston Villa", color:"#95BFE5"},
+      {abbr:"BOU", name:"Bournemouth", color:"#DA291C"},
+      {abbr:"BRE", name:"Brentford", color:"#E30613"},
+      {abbr:"BHA", name:"Brighton", color:"#0057B8"},
+      {abbr:"BUR", name:"Burnley", color:"#6C1D45"},
+      {abbr:"CHE", name:"Chelsea", color:"#034694"},
+      {abbr:"COV", name:"Coventry City", color:"#77BBEE"},
+      {abbr:"CRY", name:"Crystal Palace", color:"#1B458F"},
+      {abbr:"EVE", name:"Everton", color:"#003399"},
+      {abbr:"FUL", name:"Fulham", color:"#FFFFFF"},
+      {abbr:"LEE", name:"Leeds United", color:"#FFCD00"},
+      {abbr:"LIV", name:"Liverpool", color:"#C8102E"},
+      {abbr:"MCI", name:"Manchester City", color:"#6CABDD"},
+      {abbr:"MUN", name:"Manchester United", color:"#DA291C"},
+      {abbr:"NEW", name:"Newcastle United", color:"#FFFFFF"},
+      {abbr:"NFO", name:"Nottingham Forest", color:"#DD0000"},
+      {abbr:"SUN", name:"Sunderland", color:"#EB172B"},
+      {abbr:"TOT", name:"Tottenham Hotspur", color:"#FFFFFF"},
+      {abbr:"WHU", name:"West Ham United", color:"#7A263A"},
+      {abbr:"WOL", name:"Wolverhampton", color:"#FDB913"},
+    ],
+  },
+  "esp.1": {
+    label: "La Liga",
+    favoritesLabel: "Favorite Teams (La Liga)",
+    teams: [
+      {abbr:"ALA", name:"Alaves", color:"#0055A4"},
+      {abbr:"ATH", name:"Athletic Club", color:"#EE2523"},
+      {abbr:"ATM", name:"Atletico Madrid", color:"#CB3524"},
+      {abbr:"BAR", name:"Barcelona", color:"#A50044"},
+      {abbr:"BET", name:"Real Betis", color:"#00954C"},
+      {abbr:"CEL", name:"Celta Vigo", color:"#8AC3EE"},
+      {abbr:"ELC", name:"Elche", color:"#007A3D"},
+      {abbr:"ESP", name:"Espanyol", color:"#0070B8"},
+      {abbr:"GET", name:"Getafe", color:"#005999"},
+      {abbr:"GIR", name:"Girona", color:"#D71920"},
+      {abbr:"LEV", name:"Levante", color:"#C8102E"},
+      {abbr:"MLL", name:"Mallorca", color:"#E20613"},
+      {abbr:"OSA", name:"Osasuna", color:"#C8102E"},
+      {abbr:"RAY", name:"Rayo Vallecano", color:"#E53027"},
+      {abbr:"RMA", name:"Real Madrid", color:"#FFFFFF"},
+      {abbr:"RSO", name:"Real Sociedad", color:"#0067B1"},
+      {abbr:"SEV", name:"Sevilla", color:"#D71920"},
+      {abbr:"VAL", name:"Valencia", color:"#F18E00"},
+      {abbr:"VIL", name:"Villarreal", color:"#FFE667"},
+    ],
+  },
+  "fifa.world": {
+    label: "World Cup",
+    favoritesLabel: "World Cup Daily Slate",
+    teams: [],
+    dailySlate: true,
+  },
+};
+
 let selectedStation = null;
 let selectedWmataGroupKey = null;
 let selectedNYCStation = null;
@@ -1149,6 +1225,7 @@ let nycStations = [];
 let ttcStations = [];
 let selectedUnit = "metric";
 let selectedTeams = new Set();
+let selectedSportsLeague = "nba";
 let selectedSportsView = "all_live";
 let selectedSportsLiveFocus = true;
 let selectedStocksView = "ticker";
@@ -1774,6 +1851,8 @@ async function init() {
     setActiveAmbientScene(data.ambient_scene || "auto");
 
     // Sports
+    selectedSportsLeague = SPORTS_LEAGUES[data.SPORTS_LEAGUE] ? data.SPORTS_LEAGUE : "nba";
+    setActiveSportsLeague(selectedSportsLeague);
     selectedSportsView = data.SPORTS_VIEW_MODE === "favorites" ? "favorites" : "all_live";
     setActiveSportsView(selectedSportsView);
     selectedSportsLiveFocus = data.SPORTS_LIVE_FOCUS !== false;
@@ -2448,7 +2527,15 @@ async function setAmbientScene(scene) {
 // ── Sports ─────────────────────────────────────────────────────────────────
 function renderTeams() {
   const el = document.getElementById("team-grid");
-  el.innerHTML = NBA_TEAMS.map(t => {
+  const league = SPORTS_LEAGUES[selectedSportsLeague] || SPORTS_LEAGUES.nba;
+  document.getElementById("sports-favorites-title").textContent = league.favoritesLabel;
+
+  if (league.dailySlate) {
+    el.innerHTML = `<p class="hint" style="margin:0;">World Cup is treated as a favorite daily slate. Sports mode rotates the day's World Cup games automatically.</p>`;
+    return;
+  }
+
+  el.innerHTML = league.teams.map(t => {
     const sel = selectedTeams.has(t.abbr);
     const style = sel
       ? `color:${t.color};border-color:${t.color};`
@@ -2463,6 +2550,20 @@ function renderTeams() {
 function toggleTeam(abbr) {
   if (selectedTeams.has(abbr)) selectedTeams.delete(abbr);
   else selectedTeams.add(abbr);
+  renderTeams();
+}
+
+function setActiveSportsLeague(league) {
+  document.querySelectorAll("[data-sports-league]").forEach(b => {
+    b.classList.toggle("active", b.dataset.sportsLeague === league);
+  });
+}
+
+function setSportsLeague(league) {
+  if (!SPORTS_LEAGUES[league]) league = "nba";
+  selectedSportsLeague = league;
+  selectedTeams = new Set();
+  setActiveSportsLeague(league);
   renderTeams();
 }
 
@@ -2496,6 +2597,7 @@ async function saveSports() {
     return;
   }
   const payload = {
+    SPORTS_LEAGUE: selectedSportsLeague,
     SPORTS_VIEW_MODE: selectedSportsView,
     SPORTS_LIVE_FOCUS: selectedSportsLiveFocus,
     SPORTS_FAVORITE_TEAMS: Array.from(selectedTeams).join(","),

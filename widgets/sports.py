@@ -11,7 +11,7 @@ from core.widget import Widget
 
 
 class SportsWidget(Widget):
-    """NBA scoreboard with a team-first, high-legibility layout.
+    """Sports scoreboard with a team-first, high-legibility layout.
 
     64x32 layout:
       y 0-9   : game status (Q/clock/final) in larger text
@@ -19,7 +19,36 @@ class SportsWidget(Widget):
       y 22-31 : home row (small color bar + team + score)
     """
 
-    SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+    LEAGUES = {
+        "nba": {
+            "label": "NBA",
+            "short": "NBA",
+            "sport": "basketball",
+            "url": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+            "favorites": True,
+        },
+        "eng.1": {
+            "label": "Premier League",
+            "short": "EPL",
+            "sport": "soccer",
+            "url": "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard",
+            "favorites": True,
+        },
+        "esp.1": {
+            "label": "La Liga",
+            "short": "LIGA",
+            "sport": "soccer",
+            "url": "https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard",
+            "favorites": True,
+        },
+        "fifa.world": {
+            "label": "World Cup",
+            "short": "WC",
+            "sport": "soccer",
+            "url": "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard",
+            "favorites": False,
+        },
+    }
     BAR_WIDTH = 2
 
     def __init__(self, width, height):
@@ -29,6 +58,7 @@ class SportsWidget(Widget):
         self.current_game_index = 0
         self.last_fetch = 0.0
         self.last_fetch_key = None
+        self.last_league_key = None
         self.last_rotate = time.time()
         self.live_fetch_interval = 2
         self.idle_fetch_interval = 20
@@ -69,7 +99,16 @@ class SportsWidget(Widget):
         config_manager.reload_config()
 
         test_date = self._get_test_date()
-        fetch_key = test_date or "today"
+        league_key = self._get_league_key()
+        fetch_key = f"{league_key}:{test_date or self._today_key()}"
+        if league_key != self.last_league_key:
+            self.all_games = []
+            self.games = []
+            self.current_game_index = 0
+            self.placeholder_reason = "loading"
+            self.possession_cache = {}
+            self.last_league_key = league_key
+
         poll_interval = self._current_fetch_interval()
         if fetch_key != self.last_fetch_key or now - self.last_fetch >= poll_interval:
             self._fetch_games(test_date)
@@ -93,6 +132,16 @@ class SportsWidget(Widget):
         raw = str(getattr(config, "SPORTS_TEST_DATE", "") or "").strip()
         return raw if re.fullmatch(r"\d{8}", raw) else ""
 
+    def _today_key(self):
+        return datetime.now().strftime("%Y%m%d")
+
+    def _get_league_key(self):
+        value = str(getattr(config, "SPORTS_LEAGUE", "nba") or "nba").lower().strip()
+        return value if value in self.LEAGUES else "nba"
+
+    def _get_league(self):
+        return self.LEAGUES[self._get_league_key()]
+
     def _get_view_mode(self):
         value = str(getattr(config, "SPORTS_VIEW_MODE", "all_live") or "all_live").lower()
         if value in {"favorites", "all_live", "all_teams"}:
@@ -109,8 +158,9 @@ class SportsWidget(Widget):
     def _apply_view_filter(self):
         previous_id = self.games[self.current_game_index].get("id") if self.games else None
         view_mode = self._get_view_mode()
+        league = self._get_league()
 
-        if view_mode == "favorites":
+        if view_mode == "favorites" and league.get("favorites", True):
             favorites = self._get_favorites()
             if favorites:
                 base_games = [
@@ -152,6 +202,10 @@ class SportsWidget(Widget):
             return self.canvas
 
         game = self.games[self.current_game_index]
+        if self._is_soccer(game) and game.get("state") == "pre":
+            self._draw_soccer_pregame(draw, game)
+            return self.canvas
+
         if self._is_halftime(game) and self._draw_halftime_stats(draw, game):
             return self.canvas
 
@@ -161,7 +215,7 @@ class SportsWidget(Widget):
         return self.canvas
 
     def _draw_placeholder(self, draw):
-        label = "NBA"
+        label = self._get_league()["short"]
         lw = int(self.font_tall.getlength(label))
         draw.text(((self.width - lw) // 2, 5), label, font=self.font_tall, fill=self.color_text)
         sub = self._fit_text(self.placeholder_reason or "no games", self.width - 4, self.font_small)
@@ -179,6 +233,8 @@ class SportsWidget(Widget):
     def _draw_live_status_row(self, draw, game):
         # Custom render for live clock so ':' uses 1px dots instead of the font glyph.
         if game.get("state") != "in":
+            return False
+        if self._is_soccer(game):
             return False
 
         detail = str(game.get("detail", "")).upper()
@@ -215,6 +271,23 @@ class SportsWidget(Widget):
 
         draw.text((x, y), secs, font=self.font_tall, fill=self.color_dim)
         return True
+
+    def _draw_soccer_pregame(self, draw, game):
+        kickoff = self._fit_text(self._kickoff_text(game), self.width - 2, self.font_tall)
+        kickoff_w = int(self.font_tall.getlength(kickoff))
+        draw.text(((self.width - kickoff_w) // 2, 0), kickoff, font=self.font_tall, fill=self.color_dim)
+
+        self._draw_pregame_team_row(draw, game["away"], 12)
+        self._draw_pregame_team_row(draw, game["home"], 22)
+
+    def _draw_pregame_team_row(self, draw, team, y):
+        draw.rectangle((0, y + 1, self.BAR_WIDTH - 1, min(self.height - 1, y + 7)), fill=team["color"])
+        abbr = self._fit_text(team["abbr"], 24, self.font_tall)
+        draw.text((self.BAR_WIDTH + 2, y), abbr, font=self.font_tall, fill=self.color_text)
+
+        label = "AWAY" if y < 18 else "HOME"
+        label_w = int(self.font_small.getlength(label))
+        draw.text((self.width - label_w - 1, y + 2), label, font=self.font_small, fill=self.color_dim)
 
     def _draw_team_row(self, draw, game, side, y):
         team = game[side]
@@ -333,7 +406,9 @@ class SportsWidget(Widget):
     # ----------------------------------------------------------------- fetching
 
     def _fetch_games(self, test_date=""):
-        url = f"{self.SCOREBOARD_URL}?dates={test_date}" if test_date else self.SCOREBOARD_URL
+        league = self._get_league()
+        date_key = test_date or self._today_key()
+        url = f"{league['url']}?dates={date_key}"
         try:
             response = requests.get(url, timeout=8)
             if response.status_code != 200:
@@ -383,6 +458,7 @@ class SportsWidget(Widget):
             or status_type.get("description")
             or "",
             "date_ts": self._parse_timestamp(event.get("date")),
+            "sport": self._get_league()["sport"],
             "possession": self._detect_possession(competition, home, away),
             "away": self._parse_team(away, default_color=(120, 168, 240)),
             "home": self._parse_team(home, default_color=(240, 120, 120)),
@@ -516,8 +592,11 @@ class SportsWidget(Widget):
     def _status_text(self, game):
         state = game.get("state")
         detail = str(game.get("detail", "")).upper()
+        sport = game.get("sport") or self._get_league()["sport"]
 
         if state == "in":
+            if sport == "soccer":
+                return self._soccer_live_status(game, detail)
             if "HALFTIME" in detail:
                 return "HALFTIME"
             if "END OF" in detail:
@@ -526,15 +605,66 @@ class SportsWidget(Widget):
             return f"{self._period_label(game.get('period', 0))} {clock}"
 
         if state == "post":
+            if sport == "soccer":
+                return self._soccer_final_status(detail)
             return detail if "FINAL" in detail else "FINAL"
 
-        return detail or "TIPOFF SOON"
+        return self._kickoff_text(game) if sport == "soccer" else detail or "TIPOFF SOON"
 
     def _is_halftime(self, game):
         detail = str(game.get("detail", "")).upper()
         return "HALFTIME" in detail or detail.startswith("HALF ")
 
+    def _is_soccer(self, game):
+        return (game.get("sport") or self._get_league()["sport"]) == "soccer"
+
+    def _soccer_live_status(self, game, detail):
+        if "HALFTIME" in detail or detail == "HT":
+            return "HT"
+        if "PEN" in detail:
+            return "PEN"
+        if "EXTRA" in detail or "ET" in detail:
+            clock = str(game.get("clock") or "").strip()
+            return clock if clock else "ET"
+
+        clock = str(game.get("clock") or "").strip()
+        if clock:
+            return clock
+
+        match = re.search(r"(\d{1,3})(?:\s*\+\s*(\d{1,2}))?", detail)
+        if match:
+            minute = match.group(1)
+            stoppage = match.group(2)
+            return f"{minute}+{stoppage}'" if stoppage else f"{minute}'"
+
+        return "LIVE"
+
+    def _soccer_final_status(self, detail):
+        if "PEN" in detail:
+            return "PEN"
+        if "EXTRA" in detail or "AET" in detail:
+            return "AET"
+        return "FT"
+
+    def _kickoff_text(self, game):
+        ts = game.get("date_ts", 0.0)
+        if not ts:
+            return "KICKOFF"
+        try:
+            text = datetime.fromtimestamp(ts).strftime("%I:%M%p")
+        except Exception:
+            return "KICKOFF"
+        return text.lstrip("0").replace("AM", "A").replace("PM", "P")
+
     def _period_label(self, period):
+        if self._get_league()["sport"] == "soccer":
+            p = self._as_int(period, 0)
+            if p <= 1:
+                return "1H"
+            if p == 2:
+                return "2H"
+            return "ET"
+
         p = self._as_int(period, 0)
         if p <= 0:
             return "Q1"
