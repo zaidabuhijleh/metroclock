@@ -182,67 +182,10 @@ class WeatherWidget(Widget):
         ):
             draw.point((x, y), fill=corner)
 
-        for x in range(26, self.width - 2):
-            if (x + self.anim_frame) % 5 != 0:
-                draw.point((x, 18), fill=self._mix(accent, self.color_bg_bottom, 0.42))
-
-        # Gentle icon-side glow keeps the icon separated without boxing it in.
+        # Gentle static icon-side glow keeps the icon separated without boxing it in.
         glow = self._mix(accent, self.color_bg_bottom, 0.62)
         for x, y in ((2, 3), (3, 4), (17, 4), (19, 8), (2, 28), (18, 27)):
-            if (x + y + self.anim_frame) % 3:
-                draw.point((x, y), fill=glow)
-
-        self._draw_condition_ambience(draw, key, accent)
-
-    def _draw_condition_ambience(self, draw, key, accent):
-        frame = self.anim_frame
-        dim_accent = self._mix(accent, self.color_bg_bottom, 0.45)
-        pale = self._mix(accent, self.color_temp, 0.38)
-
-        if key in {"clear_day", "few_clouds_day", "haze", "dust"}:
-            specks = [(29, 6), (38, 24), (49, 9), (58, 22), (33, 27)]
-            for i, (x, y) in enumerate(specks):
-                color = accent if (frame + i) % 4 == 0 else dim_accent
-                draw.point((x, y), fill=color)
-                if (frame + i) % 6 == 0:
-                    draw.point((x + 1, y), fill=dim_accent)
-            return
-
-        if key in {"clear_night", "few_clouds_night"}:
-            stars = [(31, 5), (43, 8), (56, 6), (35, 25), (52, 23), (60, 15)]
-            for i, (x, y) in enumerate(stars):
-                color = pale if (frame + i) % 3 == 0 else dim_accent
-                draw.point((x, y), fill=color)
-            return
-
-        if key in {"rain", "drizzle", "squall", "thunderstorm"}:
-            drops = [(31, 5), (43, 7), (55, 5), (36, 24), (48, 25), (59, 23)]
-            for i, (x, y) in enumerate(drops):
-                yy = y + ((frame + i * 2) % 5)
-                if yy < self.height - 3:
-                    draw.point((x, yy), fill=dim_accent)
-                    draw.point((x + 1, yy + 1), fill=pale)
-            if key == "thunderstorm" and frame % 6 in {0, 1}:
-                for x, y in ((58, 6), (57, 7), (59, 7), (56, 8)):
-                    draw.point((x, y), fill=(255, 245, 140))
-            return
-
-        if key == "snow":
-            flakes = [(30, 6), (41, 8), (55, 7), (34, 25), (48, 24), (60, 22)]
-            for i, (x, y) in enumerate(flakes):
-                yy = y + ((frame + i) % 3)
-                draw.point((x, yy), fill=pale)
-                if (frame + i) % 4 == 0:
-                    draw.point((x + 1, yy), fill=dim_accent)
-            return
-
-        if key in {"mist", "smoke", "cloudy", "scattered_clouds"}:
-            rows = [7, 24, 27]
-            for row, y in enumerate(rows):
-                start = 28 + ((frame + row) % 3)
-                end = self.width - 4 - ((frame + row) % 2)
-                for x in range(start, end, 2):
-                    draw.point((x, y), fill=dim_accent if (x + row) % 4 else pale)
+            draw.point((x, y), fill=glow)
 
     def _draw_icon(self, draw, key):
         pixels, palette = icons.get_frame(key, self.anim_frame)
@@ -288,7 +231,7 @@ class WeatherWidget(Widget):
 
         # Short, broken underline keeps the temp/label hierarchy without slicing the widget.
         for x in range(right_start + 2, self.width - 5):
-            if (x + self.anim_frame) % 4 != 0:
+            if x % 4 != 0:
                 draw.point((x, 17), fill=self._mix(accent, self.color_bg_bottom, 0.18))
         for x in range(right_start + 6, self.width - 10, 7):
             draw.point((x, 18), fill=self._mix(accent, self.color_temp, 0.32))
