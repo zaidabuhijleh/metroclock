@@ -47,31 +47,40 @@ class WeatherWidget(Widget):
         if now - self.last_fetch < self.update_interval:
             return
 
-        weather_url = (
-            "https://api.openweathermap.org/data/2.5/weather"
-            f"?id={config.OPENWEATHER_CITY_ID}"
-            f"&appid={config.OPENWEATHER_API_KEY}"
-            f"&units={config.WEATHER_UNITS}"
-        )
-        forecast_url = (
-            "https://api.openweathermap.org/data/2.5/forecast"
-            f"?id={config.OPENWEATHER_CITY_ID}"
-            f"&appid={config.OPENWEATHER_API_KEY}"
-            f"&units={config.WEATHER_UNITS}"
-        )
+        location_params = self._location_params()
+        common_params = {
+            **location_params,
+            "appid": config.OPENWEATHER_API_KEY,
+            "units": config.WEATHER_UNITS,
+        }
         try:
-            resp = requests.get(weather_url, timeout=5)
+            resp = requests.get(
+                "https://api.openweathermap.org/data/2.5/weather",
+                params=common_params,
+                timeout=5,
+            )
             if resp.status_code == 200:
                 self.data = resp.json()
                 self.last_fetch = now
         except Exception:
             pass
         try:
-            resp = requests.get(forecast_url, timeout=5)
+            resp = requests.get(
+                "https://api.openweathermap.org/data/2.5/forecast",
+                params=common_params,
+                timeout=5,
+            )
             if resp.status_code == 200:
                 self.forecast_data = resp.json()
         except Exception:
             pass
+
+    def _location_params(self):
+        zip_code = str(getattr(config, "WEATHER_ZIP", "") or "").strip()
+        country = str(getattr(config, "WEATHER_COUNTRY", "US") or "US").strip().upper()
+        if zip_code:
+            return {"zip": f"{zip_code},{country}" if country else zip_code}
+        return {"id": config.OPENWEATHER_CITY_ID}
 
     def _font_metrics(self, text, font):
         """Returns (width, left_offset) for the given text and font."""
