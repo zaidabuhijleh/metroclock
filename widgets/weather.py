@@ -22,7 +22,6 @@ class WeatherWidget(Widget):
 
         self.color_bg_top = (2, 6, 16)
         self.color_bg_bottom = (5, 13, 29)
-        self.color_panel_edge = (14, 36, 62)
         self.color_temp = (245, 247, 255)
         self.color_degree = (255, 196, 72)
         self.color_label = (164, 188, 219)
@@ -172,27 +171,13 @@ class WeatherWidget(Widget):
             color = self._mix(self.color_bg_top, self.color_bg_bottom, y / max(1, self.height - 1))
             draw.line((0, y, self.width - 1, y), fill=color)
 
-        # Right panel gets only corner hints, not a full box/divider.
-        corner = self._mix(self.color_panel_edge, accent, 0.22)
-        for x, y in (
-            (25, 1), (26, 1), (25, 2),
-            (self.width - 3, 1), (self.width - 2, 1), (self.width - 2, 2),
-            (25, self.height - 3), (25, self.height - 2), (26, self.height - 2),
-            (self.width - 3, self.height - 2), (self.width - 2, self.height - 2), (self.width - 2, self.height - 3),
-        ):
-            draw.point((x, y), fill=corner)
-
-        # Gentle static icon-side glow keeps the icon separated without boxing it in.
-        glow = self._mix(accent, self.color_bg_bottom, 0.62)
-        for x, y in ((2, 3), (3, 4), (17, 4), (19, 8), (2, 28), (18, 27)):
-            draw.point((x, y), fill=glow)
-
     def _draw_icon(self, draw, key):
+        icon_x = 2
         pixels, palette = icons.get_frame(key, self.anim_frame)
         for index, color_code in enumerate(pixels):
             if color_code == 0:
                 continue
-            x = index % 21
+            x = icon_x + (index % 21)
             y = index // 21
             draw.point((x, y), fill=palette[color_code])
 
@@ -211,7 +196,7 @@ class WeatherWidget(Widget):
         return self.label_left_padding - left_off - int(offset)
 
     def _draw_temp_block(self, draw, temp, label, accent):
-        right_start = 25
+        right_start = 27
         right_width = self.width - right_start - 2
         degree_sign = "\N{DEGREE SIGN}"
 
@@ -229,16 +214,9 @@ class WeatherWidget(Widget):
             fill=self.color_degree,
         )
 
-        # Short, broken underline keeps the temp/label hierarchy without slicing the widget.
-        for x in range(right_start + 2, self.width - 5):
-            if x % 4 != 0:
-                draw.point((x, 17), fill=self._mix(accent, self.color_bg_bottom, 0.18))
-        for x in range(right_start + 6, self.width - 10, 7):
-            draw.point((x, 18), fill=self._mix(accent, self.color_temp, 0.32))
-
         # Label rendered into a clipped sub-image so it can't bleed into the icon area.
-        label_y = 22
-        label_img = Image.new("RGB", (right_width, self.height - label_y), self.color_bg_bottom)
+        label_y = 21
+        label_img = self.canvas.crop((right_start, label_y, right_start + right_width, self.height))
         ImageDraw.Draw(label_img).text(
             (self._label_scroll_x(label, right_width, self.label_font), 0),
             label,
