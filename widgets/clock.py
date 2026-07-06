@@ -1,3 +1,4 @@
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -150,7 +151,7 @@ class ClockWidget(Widget):
     COLOR_POMODORO_BG_FOCUS = (184, 56, 56)
     COLOR_POMODORO_BG_BREAK = (48, 136, 72)
 
-    FONT_STYLE_OPTIONS = {"matrix"}
+    FONT_STYLE_OPTIONS = {"matrix", "segment"}
     CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
     FONT_LINE_SHAPES = {
         "matrix": {
@@ -235,6 +236,7 @@ class ClockWidget(Widget):
             self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
         except Exception:
             self.font_small = ImageFont.load_default()
+        self._clock_face_font_cache = {}
 
         self._widget_presenters = self._build_widget_presenters()
         self._layout_presets = self._build_layout_presets()
@@ -243,7 +245,12 @@ class ClockWidget(Widget):
 
     def _font_style(self):
         style = str(getattr(config, "CLOCK_FONT_STYLE", "matrix") or "matrix").strip().lower()
-        return style if style in self.FONT_STYLE_OPTIONS else "matrix"
+        if style in self.FONT_STYLE_OPTIONS:
+            return style
+        face = config.get_clock_font_face(style)
+        if face:
+            return face["key"]
+        return "matrix"
 
     def _clock_size(self):
         raw = getattr(config, "CLOCK_SIZE", getattr(config, "CLOCK_SIZE_SCALE", 1.0))
@@ -763,8 +770,11 @@ class ClockWidget(Widget):
             renderer = {
                 "matrix": self._draw_face_digital_matrix,
                 "segment": self._draw_face_digital_segment,
-            }.get(style, self._draw_face_digital_matrix)
-            renderer(d, w, h, variant, theme)
+            }.get(style)
+            if renderer:
+                renderer(d, w, h, variant, theme)
+            else:
+                self._draw_face_font(d, w, h, variant, theme, style)
         except Exception:
             # Keep clock mode alive even if one face errors in an edge case.
             try:
@@ -870,17 +880,152 @@ class ClockWidget(Widget):
         }
 
     def _draw_clock_overlays(self, draw, w, h, variant, ampm, theme, date_text, metrics):
-        if self._show_date() and metrics["bottom_band"] > 0:
-            dw = int(self.font_small.getlength(date_text))
-            date_y = h - metrics["bottom_band"] + max(0, (metrics["bottom_band"] - 6) // 2)
-            # Allow a true 1px downward nudge; previous clamp could pin to same row.
-            date_y = min(h - 5, date_y + 3)
-            draw.text((max(0, (w - dw) // 2), date_y), date_text, font=self.font_small, fill=theme.accent)
+        def draw_overlay(slot, content):
+            if content == "date":
+                if not self._show_date():
+                    return
+                text = date_text
+                font = self._load_small_text_font(getattr(config, "CLOCK_DATE_FONT_STYLE", "original/4x6"))
+                color = self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")) or theme.accent
+                y_offset = -1 if slot == "top" else 1
+            elif content == "ampm":
+                if not (self._show_ampm() and ampm and not self._use_24h()):
+                    return
+                text = ampm
+                font = self._load_small_text_font(getattr(config, "CLOCK_AMPM_FONT_STYLE", "original/4x6"))
+                color = self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")) or theme.accent_2
+                y_offset = -1 if slot == "top" else 1
+            else:
+                return
 
-        if self._show_ampm() and ampm and not self._use_24h() and metrics["top_band"] > 0:
-            aw = int(self.font_small.getlength(ampm))
-            ampm_y = max(0, (metrics["top_band"] - 6) // 2)
-            draw.text((max(0, (w - aw) // 2), ampm_y), ampm, font=self.font_small, fill=theme.accent_2)
+            left, top, text_w, text_h = self._font_text_metrics(draw, text, font)
+            band_key = "top_band" if slot == "top" else "bottom_band"
+            band_h = metrics.get(band_key, 0)
+            if band_h <= 0:
+                return
+            if slot == "top":
+                y = max(0, (band_h - text_h) // 2) - top + y_offset
+            else:
+                y = h - band_h + max(0, (band_h - text_h) // 2) - top + y_offset
+            x = max(0, (w - text_w) // 2) - left
+            draw.text((x, y), text, font=font, fill=color)
+
+        order = str(getattr(config, "CLOCK_OVERLAY_ORDER", "ampm_date") or "ampm_date").strip().lower()
+        slots = {
+            "top": "date" if order == "date_ampm" else "ampm",
+            "bottom": "ampm" if order == "date_ampm" else "date",
+        }
+        draw_overlay("top", slots["top"])
+        draw_overlay("bottom", slots["bottom"])
+
+    def _load_small_text_font(self, style):
+        option = config.get_small_text_font_option(style)
+        path = (option or {}).get("path")
+        if not path:
+            return self.font_small
+        try:
+            size = int((option or {}).get("font_size") or (option or {}).get("height") or 6)
+        except Exception:
+            size = 6
+        cache_key = ("small-text", path, size)
+        if cache_key not in self._clock_face_font_cache:
+            self._clock_face_font_cache[cache_key] = ImageFont.truetype(path, size)
+        return self._clock_face_font_cache[cache_key]
+
+    def _clock_face_size_key(self):
+        selected = str(getattr(config, "CLOCK_FONT_SIZE", "") or "").strip().lower()
+        if selected:
+            return selected
+        size = self._effective_clock_size()
+        if size >= 1.0:
+            return "large"
+        if size >= 0.75:
+            return "medium"
+        return "small"
+
+    def _clock_face_font_spec(self, face):
+        sizes = (face or {}).get("sizes") or []
+        size_key = self._clock_face_size_key()
+        spec = config.get_clock_font_size((face or {}).get("key"), size_key)
+        return {
+            "path": (spec or {}).get("path"),
+            "scale": max(1, int((spec or {}).get("scale") or 1)),
+            "font_size": (spec or {}).get("font_size"),
+        }
+
+    def _clock_face_font_size(self, path):
+        label = str(path or "")
+        match = re.search(r"(\d+)x(\d+)", label, re.IGNORECASE)
+        if match:
+            return max(1, int(match.group(2)))
+        return 10
+
+    def _load_clock_face_font(self, face):
+        spec = self._clock_face_font_spec(face)
+        path = spec["path"]
+        if not path:
+            return None
+        try:
+            size = int(spec.get("font_size") or self._clock_face_font_size(path))
+        except Exception:
+            size = self._clock_face_font_size(path)
+        cache_key = (path, size)
+        if cache_key not in self._clock_face_font_cache:
+            self._clock_face_font_cache[cache_key] = ImageFont.truetype(path, size)
+        return self._clock_face_font_cache[cache_key]
+
+    def _font_text_metrics(self, draw, text, font):
+        if hasattr(draw, "textbbox"):
+            left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+            return left, top, right - left, bottom - top
+        left, top, right, bottom = font.getbbox(text)
+        return left, top, right - left, bottom - top
+
+    def _draw_face_font(self, draw, w, h, variant, theme, style):
+        face = config.get_clock_font_face(style)
+        if not face or face.get("type") != "font_family":
+            self._draw_face_digital_matrix(draw, w, h, variant, theme)
+            return
+
+        font = self._load_clock_face_font(face)
+        if font is None:
+            self._draw_face_digital_matrix(draw, w, h, variant, theme)
+            return
+
+        now, hour, ampm = self._time_parts()
+        time_text = f"{hour:02d}:{now.minute:02d}"
+        date_text = now.strftime("%a %b %d").upper()
+        metrics = {
+            "top_band": self._overlay_band_height(h, variant, self._show_ampm() and ampm and not self._use_24h()),
+            "bottom_band": self._overlay_band_height(h, variant, self._show_date()),
+        }
+        clock_top = metrics["top_band"]
+        clock_bottom = max(clock_top + 1, h - metrics["bottom_band"])
+        text_left, text_top, text_w, text_h = self._font_text_metrics(draw, time_text, font)
+        scale = self._clock_face_font_spec(face)["scale"]
+        if scale > 1:
+            text_img = Image.new("RGB", (max(1, text_w), max(1, text_h)), theme.bg)
+            text_draw = ImageDraw.Draw(text_img)
+            text_draw.text((-text_left, -text_top), time_text, font=font, fill=theme.primary)
+            text_img = text_img.resize((text_img.width * scale, text_img.height * scale), Image.Resampling.NEAREST)
+            x = max(0, (w - text_img.width) // 2)
+            y = clock_top + max(0, (clock_bottom - clock_top - text_img.height) // 2)
+            draw.bitmap((x, y), text_img.convert("1"), fill=theme.primary)
+        else:
+            x = max(0, (w - text_w) // 2) - text_left
+            y = clock_top + max(0, (clock_bottom - clock_top - text_h) // 2) - text_top
+            draw.text((x, y), time_text, font=font, fill=theme.primary)
+
+        self._draw_clock_overlays(
+            draw,
+            w,
+            h,
+            variant,
+            ampm,
+            theme,
+            date_text,
+            metrics,
+        )
 
     def _segment_rects_for_digit(self, x, y, dw, dh, thickness, digit):
         thickness = max(1, min(thickness, max(1, min(dw // 3, dh // 4))))
