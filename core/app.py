@@ -94,7 +94,7 @@ class DisplayManager:
             pwm_bits=target_pwm_bits,
         )
         self._active_pwm_bits = target_pwm_bits
-        print(f"Display mode={mode}, pwm_bits={target_pwm_bits}")
+        print(f"Display mode={mode}, pwm_bits={target_pwm_bits}", flush=True)
 
     def present(self, image, brightness: int):
         if self._display is None:
@@ -184,6 +184,8 @@ class MetroClockApp:
         self._wifi_setup_manager = wifi_setup_manager
         self._loop_delay = loop_delay
         self._error_delay = error_delay
+        self._last_mode = None
+        self._last_perf_log = 0.0
 
     @classmethod
     def build_default(cls) -> "MetroClockApp":
@@ -209,7 +211,7 @@ class MetroClockApp:
             web_server.set_wifi_setup_manager(self._wifi_setup_manager)
             self._wifi_setup_manager.start()
         web_server.start_server()
-        print("Dashboard Started. Press Ctrl+C to exit.")
+        print("Dashboard Started. Press Ctrl+C to exit.", flush=True)
 
         try:
             while True:
@@ -222,12 +224,38 @@ class MetroClockApp:
         if self._wifi_setup_manager is not None and self._wifi_setup_manager.should_show_setup_message():
             mode = "setup"
         try:
+            tick_start = time.perf_counter()
             self._display.ensure_mode(mode)
+            ensured_at = time.perf_counter()
             frame = self._widgets.render_mode(mode)
+            rendered_at = time.perf_counter()
             brightness = self._state_provider.get_brightness()
             self._display.present(frame, brightness)
+            presented_at = time.perf_counter()
+            self._log_perf_if_needed(mode, tick_start, ensured_at, rendered_at, presented_at)
             time.sleep(self._loop_delay)
         except Exception as exc:
-            print(f"Render loop error ({mode}): {exc}")
+            print(f"Render loop error ({mode}): {exc}", flush=True)
             traceback.print_exc()
             time.sleep(self._error_delay)
+
+    def _log_perf_if_needed(self, mode, tick_start, ensured_at, rendered_at, presented_at):
+        total_ms = (presented_at - tick_start) * 1000.0
+        now = time.time()
+        mode_changed = mode != self._last_mode
+        slow_frame = total_ms >= 80.0
+        periodic_custom = mode == "clock_widget" and now - self._last_perf_log >= 2.0
+        if not (mode_changed or slow_frame or periodic_custom):
+            return
+
+        print(
+            "PERF "
+            f"mode={mode} "
+            f"total={total_ms:.1f}ms "
+            f"ensure={(ensured_at - tick_start) * 1000.0:.1f}ms "
+            f"render={(rendered_at - ensured_at) * 1000.0:.1f}ms "
+            f"present={(presented_at - rendered_at) * 1000.0:.1f}ms",
+            flush=True,
+        )
+        self._last_mode = mode
+        self._last_perf_log = now

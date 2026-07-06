@@ -17,8 +17,9 @@ MATRIX_PWM_BITS_AMBIENT = 5
 MATRIX_PWM_BITS_SPORTS = 5
 MATRIX_PWM_BITS_STOCKS = 3
 MATRIX_PWM_BITS_CLOCK = 5
-# Clock+widget mode can run a lower bit depth for higher refresh and reduced shimmer.
-MATRIX_PWM_BITS_CLOCK_WIDGET = 4
+# Clock+widget mode should prioritize refresh speed; match Metro to avoid a
+# matrix reinit when switching directly between those modes.
+MATRIX_PWM_BITS_CLOCK_WIDGET = 3
 MATRIX_PWM_BITS_POMODORO = 5
 
 # --- FONTS ---

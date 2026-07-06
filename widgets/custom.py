@@ -62,13 +62,17 @@ class CustomWidget(ClockWidget):
     def _run_update_worker(self):
         while True:
             source = self._update_queue.get()
+            started = time.perf_counter()
             try:
                 presenter = self._widget_presenters.get(source)
                 if presenter is not None:
                     presenter.update()
             except Exception as exc:
-                print(f"Custom widget source update failed ({source}): {exc}")
+                print(f"Custom widget source update failed ({source}): {exc}", flush=True)
             finally:
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                if elapsed_ms >= 100.0:
+                    print(f"CUSTOM_UPDATE source={source} duration={elapsed_ms:.1f}ms", flush=True)
                 with self._queued_sources_lock:
                     self._queued_sources.discard(source)
                 self._update_queue.task_done()
