@@ -12,6 +12,7 @@ from core.modes import DEFAULT_MODE_CATALOG, ModeCatalog
 from core.widget import Widget
 from widgets.ambient import AmbientWidget
 from widgets.clock import ClockWidget
+from widgets.custom import CustomWidget
 from widgets.flight import FlightWidget
 from widgets.metro import MetroWidget
 from widgets.pomodoro import PomodoroWidget
@@ -137,6 +138,15 @@ class WidgetRegistry:
             self.sports,
             self.stocks,
         )
+        self.custom = CustomWidget(
+            width,
+            height,
+            self.metro,
+            self.weather,
+            self.flight,
+            self.sports,
+            self.stocks,
+        )
 
         self._renderers: Dict[str, WidgetRenderer] = {
             "setup": WidgetRenderer(self.setup),
@@ -148,6 +158,7 @@ class WidgetRegistry:
             "stocks": WidgetRenderer(self.stocks),
             "pomodoro": WidgetRenderer(self.pomodoro),
             "clock": WidgetRenderer(self.clock),
+            "custom": WidgetRenderer(self.custom),
         }
 
     def render_mode(self, mode: str):

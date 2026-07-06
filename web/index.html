@@ -431,6 +431,99 @@
       margin-bottom: 14px;
     }
 
+    .custom-widget-builder {
+      display: grid;
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .layout-option-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .layout-option {
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      cursor: pointer;
+      padding: 10px;
+      text-align: left;
+      transition: border-color var(--transition), background var(--transition);
+    }
+    .layout-option:hover { border-color: var(--accent-hover); }
+    .layout-option.active { background: #1a2040; border-color: var(--accent); }
+    .layout-preview {
+      display: grid;
+      aspect-ratio: 2 / 1;
+      background: #070910;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      gap: 3px;
+      margin-bottom: 8px;
+      padding: 4px;
+    }
+    .layout-preview span {
+      min-height: 0;
+      min-width: 0;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 3px;
+    }
+    .layout-preview .slot-a { background: #26345f; }
+    .layout-preview .slot-b { background: #294339; }
+    .layout-preview .slot-c { background: #4a3440; }
+    .layout-name { display: block; font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+    .layout-meta { color: var(--text-dim); display: block; font-size: 11px; line-height: 1.35; }
+    .slot-select-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .slot-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .slot-card[hidden], .slot-scroll-wrap[hidden] { display: none; }
+    .slot-card label {
+      align-items: center;
+      color: var(--text);
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .slot-pill {
+      border-radius: 999px;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      padding: 3px 7px;
+    }
+    .slot-pill.a { background: #5b7bff; }
+    .slot-pill.b { background: #43a66d; }
+    .slot-pill.c { background: #c85b83; }
+    .slot-card select { margin-bottom: 10px; }
+    .slot-scroll-wrap { margin-top: 2px; }
+
+    .preview-single { grid-template: 1fr / 1fr; }
+    .preview-h2 { grid-template: 2fr 1fr / 1fr; }
+    .preview-h2f { grid-template: 1fr 2fr / 1fr; }
+    .preview-v2 { grid-template: 1fr / 1fr 1fr; }
+    .preview-h3 { grid-template: 2fr 1fr / 1fr 1fr; }
+    .preview-h3 .slot-a { grid-column: 1 / 3; }
+    .preview-v3 { grid-template: 1fr 1fr / 1fr 1fr; }
+    .preview-v3 .slot-a { grid-row: 1 / 3; }
+
+    @media (max-width: 640px) {
+      .layout-option-grid,
+      .slot-select-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .warning-box {
       background: #2a200a;
       border: 1px solid #5a3a00;
@@ -509,7 +602,7 @@
           <span class="icon">🕒</span>Clock
         </button>
         <button class="mode-btn" data-mode="clock_widget" onclick="switchMode('clock_widget')">
-          <span class="icon">🧩</span>Clock+Widget
+          <span class="icon">🧩</span>Custom
         </button>
         <button class="mode-btn" data-mode="metro" onclick="switchMode('metro')">
           <span class="icon">🚇</span>Metro
@@ -578,67 +671,91 @@
         <option value="off">Off</option>
       </select>
 
-      <label>Clock+Widget Preset</label>
-      <select id="clock-widget-preset">
-        <option value="auto">Auto (Use Layout + Widget Count)</option>
-        <option value="horizontal_single">Top Clock + Bottom Widget</option>
-        <option value="horizontal_single_top">Top Widget + Bottom Clock</option>
-        <option value="horizontal_split">Top Clock + Split Bottom Widgets</option>
-        <option value="vertical_focus">Left Clock + Right Focus Widget</option>
-        <option value="vertical_split_focus">Left Clock Stack + Right Focus Widget</option>
-        <option value="vertical_split_focus_top">Left Mini + Left Clock + Right Focus Widget</option>
-      </select>
-      <p class="hint">Auto follows layout + widget count controls below. Explicit presets lock them.</p>
+      <div class="custom-widget-builder">
+        <div>
+          <div class="section-label">Custom Widget Layout</div>
+          <select id="clock-widget-preset" style="display:none;">
+            <option value="single_full">One Full Slot</option>
+            <option value="horizontal_two">Top Focus + Bottom Strip</option>
+            <option value="horizontal_two_flipped">Top Strip + Bottom Focus</option>
+            <option value="vertical_two">Left + Right Split</option>
+            <option value="horizontal_three">Top Focus + Two Bottom Slots</option>
+            <option value="vertical_three">Left Focus + Two Right Slots</option>
+          </select>
+          <div class="layout-option-grid" id="clock-widget-layout-options">
+            <button type="button" class="layout-option" data-widget-preset="single_full" onclick="selectClockWidgetPreset('single_full')">
+              <span class="layout-preview preview-single"><span class="slot-a"></span></span>
+              <span class="layout-name">One Full Slot</span>
+              <span class="layout-meta">A fills the display</span>
+            </button>
+            <button type="button" class="layout-option" data-widget-preset="horizontal_two" onclick="selectClockWidgetPreset('horizontal_two')">
+              <span class="layout-preview preview-h2"><span class="slot-a"></span><span class="slot-b"></span></span>
+              <span class="layout-name">Top Focus</span>
+              <span class="layout-meta">A large, B strip</span>
+            </button>
+            <button type="button" class="layout-option" data-widget-preset="horizontal_two_flipped" onclick="selectClockWidgetPreset('horizontal_two_flipped')">
+              <span class="layout-preview preview-h2f"><span class="slot-a"></span><span class="slot-b"></span></span>
+              <span class="layout-name">Bottom Focus</span>
+              <span class="layout-meta">A strip, B large</span>
+            </button>
+            <button type="button" class="layout-option" data-widget-preset="vertical_two" onclick="selectClockWidgetPreset('vertical_two')">
+              <span class="layout-preview preview-v2"><span class="slot-a"></span><span class="slot-b"></span></span>
+              <span class="layout-name">Side Split</span>
+              <span class="layout-meta">A left, B right</span>
+            </button>
+            <button type="button" class="layout-option" data-widget-preset="horizontal_three" onclick="selectClockWidgetPreset('horizontal_three')">
+              <span class="layout-preview preview-h3"><span class="slot-a"></span><span class="slot-b"></span><span class="slot-c"></span></span>
+              <span class="layout-name">Top + Two</span>
+              <span class="layout-meta">A large, B/C below</span>
+            </button>
+            <button type="button" class="layout-option" data-widget-preset="vertical_three" onclick="selectClockWidgetPreset('vertical_three')">
+              <span class="layout-preview preview-v3"><span class="slot-a"></span><span class="slot-b"></span><span class="slot-c"></span></span>
+              <span class="layout-name">Left + Stack</span>
+              <span class="layout-meta">A large, B/C right</span>
+            </button>
+          </div>
+        </div>
 
-      <label>Clock+Widget Layout</label>
-      <select id="clock-widget-layout">
-        <option value="horizontal">Top 2/3 Clock + Bottom 1/3 Widget</option>
-        <option value="vertical">Left Clock Stack + Right Focus Widget</option>
-      </select>
-
-      <label>Widget Count (clock mode)</label>
-      <select id="clock-widget-count">
-        <option value="1">Clock + 1 Widget</option>
-        <option value="2">Clock + 2 Widgets</option>
-      </select>
-
-      <label>Primary Widget Source</label>
-      <select id="clock-widget-source">
-        <option value="metro">Metro</option>
-        <option value="weather">Weather</option>
-        <option value="pomodoro">Pomodoro</option>
-        <option value="stocks">Stocks</option>
-        <option value="sports">Sports</option>
-        <option value="flight">Flight</option>
-      </select>
-
-      <label>Secondary Widget Source (2-widget mode)</label>
-      <select id="clock-widget-source-secondary">
-        <option value="metro">Metro</option>
-        <option value="weather">Weather</option>
-        <option value="pomodoro">Pomodoro</option>
-        <option value="stocks">Stocks</option>
-        <option value="sports">Sports</option>
-        <option value="flight">Flight</option>
-      </select>
-
-      <div id="clock-widget-scroll-primary-wrap" style="display:none;">
-        <label>Primary Widget Scroll Mode</label>
-        <select id="clock-widget-scroll-mode-primary">
-          <option value="metro">Metro Scroll</option>
-          <option value="ticker">Ticker Scroll</option>
-        </select>
+        <div>
+          <div class="section-label">Slots</div>
+          <div class="slot-select-grid">
+            <div class="slot-card" id="clock-widget-slot-a-card">
+              <label><span id="clock-widget-slot-a-label">Slot A</span><span class="slot-pill a">A</span></label>
+              <select id="clock-widget-slot-a-source"></select>
+              <div id="clock-widget-scroll-a-wrap" class="slot-scroll-wrap" hidden>
+                <label>Scroll Mode</label>
+                <select id="clock-widget-scroll-mode-a">
+                  <option value="metro">Metro Scroll</option>
+                  <option value="ticker">Ticker Scroll</option>
+                </select>
+              </div>
+            </div>
+            <div class="slot-card" id="clock-widget-slot-b-card">
+              <label><span id="clock-widget-slot-b-label">Slot B</span><span class="slot-pill b">B</span></label>
+              <select id="clock-widget-slot-b-source"></select>
+              <div id="clock-widget-scroll-b-wrap" class="slot-scroll-wrap" hidden>
+                <label>Scroll Mode</label>
+                <select id="clock-widget-scroll-mode-b">
+                  <option value="metro">Metro Scroll</option>
+                  <option value="ticker">Ticker Scroll</option>
+                </select>
+              </div>
+            </div>
+            <div class="slot-card" id="clock-widget-slot-c-card">
+              <label><span id="clock-widget-slot-c-label">Slot C</span><span class="slot-pill c">C</span></label>
+              <select id="clock-widget-slot-c-source"></select>
+              <div id="clock-widget-scroll-c-wrap" class="slot-scroll-wrap" hidden>
+                <label>Scroll Mode</label>
+                <select id="clock-widget-scroll-mode-c">
+                  <option value="metro">Metro Scroll</option>
+                  <option value="ticker">Ticker Scroll</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <p class="hint">Clock is optional. Embedded widgets inherit their normal settings from the tabs above.</p>
+        </div>
       </div>
-
-      <div id="clock-widget-scroll-secondary-wrap" style="display:none;">
-        <label>Secondary Widget Scroll Mode (2-widget mode)</label>
-        <select id="clock-widget-scroll-mode-secondary">
-          <option value="metro">Metro Scroll</option>
-          <option value="ticker">Ticker Scroll</option>
-        </select>
-      </div>
-
-      <p class="hint">Vertical focus pane supports Weather + Stocks + Sports. Horizontal mini panes support all except Ambient.</p>
       <button class="btn btn-primary" onclick="saveClock()">Save Clock Settings</button>
     </div>
   </div>
@@ -1239,13 +1356,17 @@ let selectedMetroTransition = "slide";
 let selectedClockFontStyle = "matrix";
 let selectedClockSize = 1.0;
 let selectedClockSizeBeforeWidget = 1.0;
-let selectedClockWidgetPreset = "auto";
+let selectedClockWidgetPreset = "horizontal_two";
 let selectedClockLayout = "horizontal";
 let selectedClockWidgetSource = "weather";
 let selectedClockWidgetSourceSecondary = "stocks";
 let selectedClockWidgetCount = 1;
+let selectedClockWidgetSlotA = "clock";
+let selectedClockWidgetSlotB = "weather";
+let selectedClockWidgetSlotC = "stocks";
 let selectedClockWidgetScrollModePrimary = "metro";
 let selectedClockWidgetScrollModeSecondary = "metro";
+let selectedClockWidgetScrollModeTertiary = "metro";
 let selectedClockUse24h = false;
 let selectedClockShowDate = true;
 let selectedClockShowAmpm = true;
@@ -1263,6 +1384,12 @@ let currentDisplayMode = "clock";
 const CLOCK_SIZE_OPTIONS = [0.5, 0.75, 1.0];
 const CLOCK_WIDGET_PRESET_OPTIONS = [
   "auto",
+  "single_full",
+  "horizontal_two",
+  "horizontal_two_flipped",
+  "vertical_two",
+  "horizontal_three",
+  "vertical_three",
   "horizontal_single",
   "horizontal_single_top",
   "horizontal_split",
@@ -1272,6 +1399,40 @@ const CLOCK_WIDGET_PRESET_OPTIONS = [
 ];
 const CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ["metro", "ticker"];
 const CLOCK_SCROLLABLE_WIDGET_SOURCES = new Set(["metro", "stocks", "sports", "flight"]);
+const CLOCK_WIDGET_SOURCE_OPTIONS = [
+  ["clock", "Clock"],
+  ["weather", "Weather"],
+  ["metro", "Metro"],
+  ["stocks", "Stocks"],
+  ["sports", "Sports"],
+  ["flight", "Flight"],
+  ["pomodoro", "Pomodoro"],
+];
+const CLOCK_WIDGET_SLOT_COUNTS = {
+  single_full: 1,
+  horizontal_two: 2,
+  horizontal_two_flipped: 2,
+  vertical_two: 2,
+  horizontal_three: 3,
+  vertical_three: 3,
+};
+const CLOCK_WIDGET_PRESET_ALIASES = {
+  auto: "horizontal_two",
+  horizontal_single: "horizontal_two",
+  horizontal_single_top: "horizontal_two_flipped",
+  horizontal_split: "horizontal_three",
+  vertical_focus: "vertical_two",
+  vertical_split_focus: "vertical_three",
+  vertical_split_focus_top: "vertical_three",
+};
+const CLOCK_WIDGET_SLOT_LABELS = {
+  single_full: ["Full Display"],
+  horizontal_two: ["Top Focus", "Bottom Strip"],
+  horizontal_two_flipped: ["Top Strip", "Bottom Focus"],
+  vertical_two: ["Left Slot", "Right Slot"],
+  horizontal_three: ["Top Focus", "Bottom Left", "Bottom Right"],
+  vertical_three: ["Left Focus", "Right Top", "Right Bottom"],
+};
 
 function normalizeClockSize(value) {
   const numeric = Number(value);
@@ -1295,38 +1456,35 @@ function normalizeClockWidgetScrollMode(value, fallback = "metro") {
 
 function normalizeClockWidgetPreset(value, fallback = "auto") {
   const raw = String(value || fallback).trim().toLowerCase();
-  return CLOCK_WIDGET_PRESET_OPTIONS.includes(raw) ? raw : fallback;
+  const normalized = CLOCK_WIDGET_PRESET_OPTIONS.includes(raw) ? raw : fallback;
+  return CLOCK_WIDGET_PRESET_ALIASES[normalized] || normalized;
 }
 
-function applyClockPresetToLayoutControls(preset) {
-  const layoutEl = document.getElementById("clock-widget-layout");
-  const countEl = document.getElementById("clock-widget-count");
-  if (!layoutEl || !countEl) return;
+function normalizeClockWidgetSource(value, fallback = "weather") {
+  const raw = String(value || fallback).trim().toLowerCase();
+  return CLOCK_WIDGET_SOURCE_OPTIONS.some(([key]) => key === raw) ? raw : fallback;
+}
 
-  const key = normalizeClockWidgetPreset(preset, "auto");
-  if (key === "horizontal_single") {
-    layoutEl.value = "horizontal";
-    countEl.value = "1";
-  } else if (key === "horizontal_single_top") {
-    layoutEl.value = "horizontal";
-    countEl.value = "1";
-  } else if (key === "horizontal_split") {
-    layoutEl.value = "horizontal";
-    countEl.value = "2";
-  } else if (key === "vertical_focus") {
-    layoutEl.value = "vertical";
-    countEl.value = "1";
-  } else if (key === "vertical_split_focus") {
-    layoutEl.value = "vertical";
-    countEl.value = "2";
-  } else if (key === "vertical_split_focus_top") {
-    layoutEl.value = "vertical";
-    countEl.value = "2";
-  }
+function populateClockWidgetSourceSelects() {
+  ["a", "b", "c"].forEach(slot => {
+    const el = document.getElementById(`clock-widget-slot-${slot}-source`);
+    if (!el || el.options.length) return;
+    el.innerHTML = CLOCK_WIDGET_SOURCE_OPTIONS
+      .map(([value, label]) => `<option value="${value}">${label}</option>`)
+      .join("");
+  });
 }
 
 function widgetSourceSupportsScroll(source) {
   return CLOCK_SCROLLABLE_WIDGET_SOURCES.has(String(source || "").trim().toLowerCase());
+}
+
+function selectClockWidgetPreset(preset) {
+  const normalized = normalizeClockWidgetPreset(preset, "horizontal_two");
+  const presetEl = document.getElementById("clock-widget-preset");
+  if (presetEl) presetEl.value = normalized;
+  selectedClockWidgetPreset = normalized;
+  refreshClockWidgetControls();
 }
 
 function updateClockSizeControl(mode) {
@@ -1350,37 +1508,44 @@ function updateClockSizeControl(mode) {
 
 function refreshClockWidgetControls() {
   const presetEl = document.getElementById("clock-widget-preset");
-  const layoutEl = document.getElementById("clock-widget-layout");
-  const countEl = document.getElementById("clock-widget-count");
-  const sourceEl = document.getElementById("clock-widget-source");
-  const sourceSecondaryEl = document.getElementById("clock-widget-source-secondary");
-  const primaryWrap = document.getElementById("clock-widget-scroll-primary-wrap");
-  const secondaryWrap = document.getElementById("clock-widget-scroll-secondary-wrap");
-
-  if (!presetEl || !layoutEl || !countEl || !sourceEl || !sourceSecondaryEl || !primaryWrap || !secondaryWrap) {
+  if (!presetEl) {
     return;
   }
 
-  selectedClockWidgetPreset = normalizeClockWidgetPreset(presetEl.value, "auto");
-  if (selectedClockWidgetPreset !== "auto") {
-    applyClockPresetToLayoutControls(selectedClockWidgetPreset);
-    layoutEl.disabled = true;
-    countEl.disabled = true;
-  } else {
-    layoutEl.disabled = false;
-    countEl.disabled = false;
-  }
+  populateClockWidgetSourceSelects();
+  selectedClockWidgetPreset = normalizeClockWidgetPreset(presetEl.value, "horizontal_two");
+  presetEl.value = selectedClockWidgetPreset;
+  const slotCount = CLOCK_WIDGET_SLOT_COUNTS[selectedClockWidgetPreset] || 2;
+  const labels = CLOCK_WIDGET_SLOT_LABELS[selectedClockWidgetPreset] || CLOCK_WIDGET_SLOT_LABELS.horizontal_two;
 
-  selectedClockLayout = layoutEl.value === "vertical" ? "vertical" : "horizontal";
-  selectedClockWidgetCount = Number(countEl.value) >= 2 ? 2 : 1;
-  selectedClockWidgetSource = sourceEl.value;
-  selectedClockWidgetSourceSecondary = sourceSecondaryEl.value;
+  document.querySelectorAll(".layout-option[data-widget-preset]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.widgetPreset === selectedClockWidgetPreset);
+  });
 
-  const showPrimaryScroll = widgetSourceSupportsScroll(selectedClockWidgetSource);
-  const showSecondaryScroll = selectedClockWidgetCount >= 2 && widgetSourceSupportsScroll(selectedClockWidgetSourceSecondary);
+  const slotState = [
+    ["a", "A", selectedClockWidgetSlotA, "primary"],
+    ["b", "B", selectedClockWidgetSlotB, "secondary"],
+    ["c", "C", selectedClockWidgetSlotC, "tertiary"],
+  ];
 
-  primaryWrap.style.display = showPrimaryScroll ? "" : "none";
-  secondaryWrap.style.display = showSecondaryScroll ? "" : "none";
+  slotState.forEach(([slot, letter, currentSource, scrollKey], index) => {
+    const visible = index < slotCount;
+    const card = document.getElementById(`clock-widget-slot-${slot}-card`);
+    const label = document.getElementById(`clock-widget-slot-${slot}-label`);
+    const sourceEl = document.getElementById(`clock-widget-slot-${slot}-source`);
+    const scrollWrap = document.getElementById(`clock-widget-scroll-${slot}-wrap`);
+    if (card) card.hidden = !visible;
+    if (label) label.textContent = labels[index] || `Slot ${letter}`;
+    if (!sourceEl) return;
+    const normalizedSource = normalizeClockWidgetSource(sourceEl.value || currentSource, currentSource);
+    sourceEl.value = normalizedSource;
+    if (slot === "a") selectedClockWidgetSlotA = normalizedSource;
+    if (slot === "b") selectedClockWidgetSlotB = normalizedSource;
+    if (slot === "c") selectedClockWidgetSlotC = normalizedSource;
+    if (scrollWrap) {
+      scrollWrap.hidden = !(visible && widgetSourceSupportsScroll(normalizedSource));
+    }
+  });
 }
 
 function pomodoroPhaseLabel(phase) {
@@ -1705,11 +1870,20 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
-["clock-widget-preset", "clock-widget-layout", "clock-widget-count", "clock-widget-source", "clock-widget-source-secondary"].forEach((id) => {
+[
+  "clock-widget-preset",
+  "clock-widget-slot-a-source",
+  "clock-widget-slot-b-source",
+  "clock-widget-slot-c-source",
+  "clock-widget-scroll-mode-a",
+  "clock-widget-scroll-mode-b",
+  "clock-widget-scroll-mode-c",
+].forEach((id) => {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener("change", refreshClockWidgetControls);
 });
+populateClockWidgetSourceSelects();
 refreshClockWidgetControls();
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -1747,7 +1921,7 @@ async function init() {
       ? data.CLOCK_FONT_STYLE
       : "matrix";
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
-    selectedClockWidgetPreset = normalizeClockWidgetPreset(data.CLOCK_WIDGET_PRESET, "auto");
+    selectedClockWidgetPreset = normalizeClockWidgetPreset(data.CLOCK_WIDGET_PRESET, "horizontal_two");
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";
     selectedClockWidgetSource = ["metro", "weather", "pomodoro", "stocks", "sports", "flight"].includes(data.CLOCK_WIDGET_SOURCE)
       ? data.CLOCK_WIDGET_SOURCE
@@ -1764,6 +1938,13 @@ async function init() {
       data.CLOCK_WIDGET_SCROLL_MODE_SECONDARY ?? selectedClockWidgetScrollModePrimary,
       selectedClockWidgetScrollModePrimary
     );
+    selectedClockWidgetScrollModeTertiary = normalizeClockWidgetScrollMode(
+      data.CLOCK_WIDGET_SCROLL_MODE_TERTIARY ?? selectedClockWidgetScrollModeSecondary,
+      selectedClockWidgetScrollModeSecondary
+    );
+    selectedClockWidgetSlotA = normalizeClockWidgetSource(data.CLOCK_WIDGET_SLOT_A_SOURCE, "clock");
+    selectedClockWidgetSlotB = normalizeClockWidgetSource(data.CLOCK_WIDGET_SLOT_B_SOURCE, selectedClockWidgetSource);
+    selectedClockWidgetSlotC = normalizeClockWidgetSource(data.CLOCK_WIDGET_SLOT_C_SOURCE, selectedClockWidgetSourceSecondary);
     selectedClockUse24h = data.CLOCK_USE_24H === true;
     selectedClockShowDate = data.CLOCK_SHOW_DATE !== false;
     selectedClockShowAmpm = data.CLOCK_SHOW_AMPM !== false;
@@ -1775,13 +1956,14 @@ async function init() {
     document.getElementById("clock-color-accent-2").value = data.CLOCK_COLOR_ACCENT_2 || "";
     document.getElementById("clock-color-dim").value = data.CLOCK_COLOR_DIM || "";
     document.getElementById("clock-color-bg").value = data.CLOCK_COLOR_BG || "";
+    populateClockWidgetSourceSelects();
     document.getElementById("clock-widget-preset").value = selectedClockWidgetPreset;
-    document.getElementById("clock-widget-layout").value = selectedClockLayout;
-    document.getElementById("clock-widget-count").value = String(selectedClockWidgetCount);
-    document.getElementById("clock-widget-source").value = selectedClockWidgetSource;
-    document.getElementById("clock-widget-source-secondary").value = selectedClockWidgetSourceSecondary;
-    document.getElementById("clock-widget-scroll-mode-primary").value = selectedClockWidgetScrollModePrimary;
-    document.getElementById("clock-widget-scroll-mode-secondary").value = selectedClockWidgetScrollModeSecondary;
+    document.getElementById("clock-widget-slot-a-source").value = selectedClockWidgetSlotA;
+    document.getElementById("clock-widget-slot-b-source").value = selectedClockWidgetSlotB;
+    document.getElementById("clock-widget-slot-c-source").value = selectedClockWidgetSlotC;
+    document.getElementById("clock-widget-scroll-mode-a").value = selectedClockWidgetScrollModePrimary;
+    document.getElementById("clock-widget-scroll-mode-b").value = selectedClockWidgetScrollModeSecondary;
+    document.getElementById("clock-widget-scroll-mode-c").value = selectedClockWidgetScrollModeTertiary;
     document.getElementById("clock-format").value = selectedClockUse24h ? "24h" : "12h";
     document.getElementById("clock-show-date").value = selectedClockShowDate ? "on" : "off";
     document.getElementById("clock-show-ampm").value = selectedClockShowAmpm ? "on" : "off";
@@ -2283,11 +2465,8 @@ async function saveClock() {
   selectedClockFontStyle = document.getElementById("clock-font-style").value;
   selectedClockWidgetPreset = normalizeClockWidgetPreset(
     document.getElementById("clock-widget-preset").value,
-    "auto"
+    "horizontal_two"
   );
-  if (selectedClockWidgetPreset !== "auto") {
-    applyClockPresetToLayoutControls(selectedClockWidgetPreset);
-  }
   const lockClockSize = currentDisplayMode === "clock_widget";
   selectedClockSize = lockClockSize
     ? 0.5
@@ -2296,17 +2475,26 @@ async function saveClock() {
     selectedClockSizeBeforeWidget = selectedClockSize;
   }
   document.getElementById("clock-size").value = String(selectedClockSize);
-  selectedClockLayout = document.getElementById("clock-widget-layout").value;
-  selectedClockWidgetCount = Number(document.getElementById("clock-widget-count").value) >= 2 ? 2 : 1;
-  selectedClockWidgetSource = document.getElementById("clock-widget-source").value;
-  selectedClockWidgetSourceSecondary = document.getElementById("clock-widget-source-secondary").value;
+  selectedClockWidgetSlotA = normalizeClockWidgetSource(document.getElementById("clock-widget-slot-a-source").value, "clock");
+  selectedClockWidgetSlotB = normalizeClockWidgetSource(document.getElementById("clock-widget-slot-b-source").value, "weather");
+  selectedClockWidgetSlotC = normalizeClockWidgetSource(document.getElementById("clock-widget-slot-c-source").value, "stocks");
+  selectedClockWidgetCount = CLOCK_WIDGET_SLOT_COUNTS[selectedClockWidgetPreset] || 2;
+  selectedClockLayout = selectedClockWidgetPreset === "vertical_two" || selectedClockWidgetPreset === "vertical_three"
+    ? "vertical"
+    : "horizontal";
+  selectedClockWidgetSource = selectedClockWidgetSlotB;
+  selectedClockWidgetSourceSecondary = selectedClockWidgetSlotC;
   selectedClockWidgetScrollModePrimary = normalizeClockWidgetScrollMode(
-    document.getElementById("clock-widget-scroll-mode-primary").value,
+    document.getElementById("clock-widget-scroll-mode-a").value,
     "metro"
   );
   selectedClockWidgetScrollModeSecondary = normalizeClockWidgetScrollMode(
-    document.getElementById("clock-widget-scroll-mode-secondary").value,
+    document.getElementById("clock-widget-scroll-mode-b").value,
     selectedClockWidgetScrollModePrimary
+  );
+  selectedClockWidgetScrollModeTertiary = normalizeClockWidgetScrollMode(
+    document.getElementById("clock-widget-scroll-mode-c").value,
+    selectedClockWidgetScrollModeSecondary
   );
   selectedClockUse24h = document.getElementById("clock-format").value === "24h";
   selectedClockShowDate = document.getElementById("clock-show-date").value === "on";
@@ -2331,8 +2519,12 @@ async function saveClock() {
     CLOCK_WIDGET_COUNT: selectedClockWidgetCount,
     CLOCK_WIDGET_SOURCE: selectedClockWidgetSource,
     CLOCK_WIDGET_SOURCE_SECONDARY: selectedClockWidgetSourceSecondary,
+    CLOCK_WIDGET_SLOT_A_SOURCE: selectedClockWidgetSlotA,
+    CLOCK_WIDGET_SLOT_B_SOURCE: selectedClockWidgetSlotB,
+    CLOCK_WIDGET_SLOT_C_SOURCE: selectedClockWidgetSlotC,
     CLOCK_WIDGET_SCROLL_MODE_PRIMARY: selectedClockWidgetScrollModePrimary,
     CLOCK_WIDGET_SCROLL_MODE_SECONDARY: selectedClockWidgetScrollModeSecondary,
+    CLOCK_WIDGET_SCROLL_MODE_TERTIARY: selectedClockWidgetScrollModeTertiary,
     CLOCK_USE_24H: selectedClockUse24h,
     CLOCK_SHOW_DATE: selectedClockShowDate,
     CLOCK_SHOW_AMPM: selectedClockShowAmpm
