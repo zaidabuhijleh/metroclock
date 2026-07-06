@@ -228,6 +228,9 @@ class ClockWidget(Widget):
         self._pomodoro_state_cache = None
 
         self._clock_face_font_cache = {}
+        self._spleen_font_candidates_cache = None
+        self._text_font_fit_cache = {}
+        self._scroll_text_render_cache = {}
         self.font_small = self._load_spleen_size("5x8") or ImageFont.load_default()
         self.font_tall = self._load_spleen_size("6x12") or self.font_small
 
@@ -300,6 +303,9 @@ class ClockWidget(Widget):
         return self._clock_face_font_cache[cache_key]
 
     def _spleen_font_candidates(self):
+        if self._spleen_font_candidates_cache is not None:
+            return self._spleen_font_candidates_cache
+
         fonts = []
         for size in config.get_spleen_font_sizes():
             font = self._load_spleen_size(size.get("key"))
@@ -309,6 +315,7 @@ class ClockWidget(Widget):
         fonts.sort(key=lambda item: item[0])
         if not fonts:
             fonts.append((6, self.font_small, {"key": "fallback", "height": 6}))
+        self._spleen_font_candidates_cache = tuple(fonts)
         return fonts
 
     def _font_text_height(self, draw, text, font):
@@ -319,11 +326,18 @@ class ClockWidget(Widget):
         text = str(text or "")
         max_width = max(1, int(max_width))
         max_height = max(1, int(max_height))
-        selected = self._spleen_font_candidates()[0][1]
-        for _height, font, _size in self._spleen_font_candidates():
+        cache_key = (text, max_width, max_height, bool(prefer_width_fit))
+        cached = self._text_font_fit_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        candidates = self._spleen_font_candidates()
+        selected = candidates[0][1]
+        for _height, font, _size in candidates:
             left, top, width, height = self._font_text_metrics(draw, text or "0", font)
             if height <= max_height and (not prefer_width_fit or width <= max_width):
                 selected = font
+        self._text_font_fit_cache[cache_key] = selected
         return selected
 
     def _draw_text_box(self, draw, box, text, fill, *, align="center", valign="center", ellipsis="..."):
@@ -1376,14 +1390,23 @@ class ClockWidget(Widget):
 
         # 1 px every N frames → uniform motion; N comes from SCROLL_SPEED.
         gap = 10
-        cycle = text_w + gap
+        color_key = tuple(color) if isinstance(color, (list, tuple)) else color
+        render_key = (txt, color_key, h, id(font))
+        strip = self._scroll_text_render_cache.get(render_key)
+        if strip is None:
+            strip = Image.new("RGB", (max(1, text_w), h), self.COLOR_BG)
+            strip_draw = ImageDraw.Draw(strip)
+            strip_draw.text((-left, y_text), txt, font=font, fill=color)
+            self._scroll_text_render_cache[render_key] = strip
+
+        cycle = strip.width + gap
         offset = self._scroll_offsets.get(key, 0.0)
         widget_name = str(key).split(":", 1)[0].split("-", 1)[0]
         step = 1.0 / scroll.frame_stride(widget_name)
         if wrap:
             offset = (offset + step) % cycle
         else:
-            max_offset = max(0.0, float(text_w - visible_w))
+            max_offset = max(0.0, float(strip.width - visible_w))
             if forced > 0.0:
                 max_offset = max(max_offset, forced)
             offset = offset + step
@@ -1399,11 +1422,11 @@ class ClockWidget(Widget):
 
         if wrap:
             start_x = w - int(offset)
-            rd.text((start_x - left, y_text), txt, font=font, fill=color)
-            rd.text((start_x - cycle - left, y_text), txt, font=font, fill=color)
+            region.paste(strip, (start_x, 0))
+            region.paste(strip, (start_x - cycle, 0))
         else:
             start_x = 1 - int(offset)
-            rd.text((start_x - left, y_text), txt, font=font, fill=color)
+            region.paste(strip, (start_x, 0))
         self.canvas.paste(region, (x, y))
         return state
 
