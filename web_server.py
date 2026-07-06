@@ -18,13 +18,13 @@ CLOCK_FONT_STYLE_OPTIONS = ("matrix",)
 CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
 CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 CLOCK_WIDGET_PRESET_OPTIONS = (
-    {"key": "auto", "label": "Auto (Layout + Count)", "layout": "mixed", "widget_count": None},
-    {"key": "horizontal_single", "label": "Top Clock + Bottom Widget", "layout": "horizontal", "widget_count": 1},
-    {"key": "horizontal_single_top", "label": "Top Widget + Bottom Clock", "layout": "horizontal", "widget_count": 1},
-    {"key": "horizontal_split", "label": "Top Clock + Split Bottom Widgets", "layout": "horizontal", "widget_count": 2},
-    {"key": "vertical_focus", "label": "Left Clock + Right Focus Widget", "layout": "vertical", "widget_count": 1},
-    {"key": "vertical_split_focus", "label": "Left Clock Stack + Right Focus Widget", "layout": "vertical", "widget_count": 2},
-    {"key": "vertical_split_focus_top", "label": "Left Mini + Left Clock + Right Focus Widget", "layout": "vertical", "widget_count": 2},
+    {"key": "auto", "label": "Auto (Legacy Settings)", "slot_count": None},
+    {"key": "single_full", "label": "One Full Slot", "slot_count": 1},
+    {"key": "horizontal_two", "label": "Top Focus + Bottom Strip", "slot_count": 2},
+    {"key": "horizontal_two_flipped", "label": "Top Strip + Bottom Focus", "slot_count": 2},
+    {"key": "vertical_two", "label": "Left + Right Split", "slot_count": 2},
+    {"key": "horizontal_three", "label": "Top Focus + Two Bottom Slots", "slot_count": 3},
+    {"key": "vertical_three", "label": "Left Focus + Two Right Slots", "slot_count": 3},
 )
 
 WRITE_ENDPOINTS = {
@@ -655,13 +655,29 @@ def api_clock_styles():
         },
         "clock_widget_preset": {
             "key": "CLOCK_WIDGET_PRESET",
-            "default": "auto",
+            "default": "horizontal_two",
             "options": list(CLOCK_WIDGET_PRESET_OPTIONS),
+        },
+        "clock_widget_slots": {
+            "keys": {
+                "a": "CLOCK_WIDGET_SLOT_A_SOURCE",
+                "b": "CLOCK_WIDGET_SLOT_B_SOURCE",
+                "c": "CLOCK_WIDGET_SLOT_C_SOURCE",
+            },
+            "defaults": {
+                "a": "clock",
+                "b": "weather",
+                "c": "stocks",
+            },
+            "sources": ["clock", "weather", "metro", "stocks", "sports", "flight", "pomodoro"],
+            "vertical_sources": ["clock", "weather", "stocks", "sports", "pomodoro"],
+            "horizontal_sources": ["clock", "weather", "metro", "stocks", "sports", "flight", "pomodoro"],
         },
         "clock_widget_scroll_mode": {
             "keys": {
                 "primary": "CLOCK_WIDGET_SCROLL_MODE_PRIMARY",
                 "secondary": "CLOCK_WIDGET_SCROLL_MODE_SECONDARY",
+                "tertiary": "CLOCK_WIDGET_SCROLL_MODE_TERTIARY",
                 "legacy": "CLOCK_WIDGET_SCROLL_MODE",
             },
             "default": "metro",
