@@ -633,45 +633,7 @@ def api_settings_get():
 
 @app.route("/api/clock/styles")
 def api_clock_styles():
-    clock_faces = config.get_clock_font_faces()
     return jsonify({
-        "clock_font_style": {
-            "key": "CLOCK_FONT_STYLE",
-            "default": "matrix",
-            "options": [face["key"] for face in clock_faces],
-            "faces": [
-                {
-                    "key": face["key"],
-                    "label": face["label"],
-                    "type": face["type"],
-                    "sizes": [
-                        {
-                            "key": size["key"],
-                            "label": size["label"],
-                            "width": size.get("width"),
-                            "height": size.get("height"),
-                        }
-                        for size in face.get("sizes", [])
-                    ],
-                }
-                for face in clock_faces
-            ],
-        },
-        "clock_font_size": {
-            "key": "CLOCK_FONT_SIZE",
-            "default": "",
-        },
-        "metro_font_style": {
-            "key": "METRO_FONT_STYLE",
-            "default": "original/6x10",
-            "options": [
-                {
-                    "key": option["key"],
-                    "label": option["label"],
-                }
-                for option in config.get_metro_font_options()
-            ],
-        },
         "clock_size": {
             "key": "CLOCK_SIZE",
             "default": 1.0,
@@ -680,25 +642,12 @@ def api_clock_styles():
         "clock_overlays": {
             "show_date_key": "CLOCK_SHOW_DATE",
             "show_ampm_key": "CLOCK_SHOW_AMPM",
-            "date_font_key": "CLOCK_DATE_FONT_STYLE",
-            "ampm_font_key": "CLOCK_AMPM_FONT_STYLE",
             "date_color_key": "CLOCK_DATE_COLOR",
             "ampm_color_key": "CLOCK_AMPM_COLOR",
             "order_key": "CLOCK_OVERLAY_ORDER",
-            "font_options": [
-                {
-                    "key": option["key"],
-                    "label": option["label"],
-                    "width": option.get("width"),
-                    "height": option.get("height"),
-                }
-                for option in config.get_small_text_font_options()
-            ],
             "defaults": {
                 "show_date": True,
                 "show_ampm": True,
-                "date_font": "original/4x6",
-                "ampm_font": "original/4x6",
                 "date_color": "",
                 "ampm_color": "",
                 "order": "ampm_date",

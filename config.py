@@ -23,14 +23,16 @@ MATRIX_PWM_BITS_POMODORO = 5
 
 # --- FONTS ---
 FONT_ROOT = "assets/fonts"
-FONT_PATH_TALL = "assets/fonts/6x10.bdf"
-FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
-CLOCK_BUILTIN_FONT_STYLES = (
-    {"key": "matrix", "label": "Matrix", "type": "builtin"},
-    {"key": "segment", "label": "Segment", "type": "builtin"},
-)
-CLOCK_FONT_FAMILY_ALLOWLIST = {"default", "spleen"}
-METRO_FONT_STYLE = "original/6x10"
+FONT_PATH_TALL = "assets/fonts/spleen/6x12.bdf"
+FONT_PATH_SMALL = "assets/fonts/spleen/5x8.bdf"
+SPLEEN_FONT_FAMILY = "spleen"
+SPLEEN_FONT_SIZE_BY_CLOCK_SIZE = {
+    0.5: "5x8",
+    0.75: "6x12",
+    1.0: "8x16",
+}
+SPLEEN_FONT_SIZE_ORDER = ("5x8", "6x12", "8x16", "12x24")
+CLOCK_FONT_STYLE = "font_spleen"
 _FONT_FAMILIES_CACHE = None
 
 # --- WMATA (DC Metro) ---
@@ -120,13 +122,8 @@ POMODORO_LAYOUT = "mode_time_task"
 POMODORO_TODO_ITEMS = ""
 
 # --- CLOCK ---
-# Font style options:
-#   matrix, segment, or a discovered font_* family key from FONT_ROOT
-CLOCK_FONT_STYLE = "matrix"
-# Numeric sizing for built-in styles.
+# Numeric sizing for the fixed Spleen clock face.
 CLOCK_SIZE = 1.0  # 0.5, 0.75, 1.0
-# Selected size key for font-family styles.
-CLOCK_FONT_SIZE = ""
 CLOCK_COLOR_PRIMARY = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT_2 = ""  # Optional #RRGGBB override
@@ -134,8 +131,6 @@ CLOCK_COLOR_DIM = ""  # Optional #RRGGBB override
 CLOCK_COLOR_BG = ""  # Optional #RRGGBB override
 CLOCK_SHOW_DATE = True
 CLOCK_SHOW_AMPM = True
-CLOCK_AMPM_FONT_STYLE = "original/4x6"
-CLOCK_DATE_FONT_STYLE = "original/4x6"
 CLOCK_AMPM_COLOR = ""  # Optional #RRGGBB override
 CLOCK_DATE_COLOR = ""  # Optional #RRGGBB override
 CLOCK_OVERLAY_ORDER = "ampm_date"  # ampm_date or date_ampm
@@ -242,10 +237,7 @@ RUNTIME_EDITABLE_FIELDS = {
     "POMODORO_AUTO_START_FOCUS",
     "POMODORO_LAYOUT",
     "POMODORO_TODO_ITEMS",
-    "METRO_FONT_STYLE",
-    "CLOCK_FONT_STYLE",
     "CLOCK_SIZE",
-    "CLOCK_FONT_SIZE",
     "CLOCK_COLOR_PRIMARY",
     "CLOCK_COLOR_ACCENT",
     "CLOCK_COLOR_ACCENT_2",
@@ -253,8 +245,6 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_COLOR_BG",
     "CLOCK_SHOW_DATE",
     "CLOCK_SHOW_AMPM",
-    "CLOCK_AMPM_FONT_STYLE",
-    "CLOCK_DATE_FONT_STYLE",
     "CLOCK_AMPM_COLOR",
     "CLOCK_DATE_COLOR",
     "CLOCK_OVERLAY_ORDER",
@@ -403,124 +393,58 @@ def _discover_font_families():
     return _FONT_FAMILIES_CACHE
 
 
-def get_clock_font_faces():
-    font_families = [
-        face
-        for face in _discover_font_families()
-        if str(face.get("name") or "").strip().lower() in CLOCK_FONT_FAMILY_ALLOWLIST
-    ]
-    return [dict(face) for face in CLOCK_BUILTIN_FONT_STYLES] + font_families
-
-
-def get_clock_font_style_options():
-    return tuple(face["key"] for face in get_clock_font_faces())
-
-
-def get_clock_font_face(style):
-    style = str(style or "").strip().lower()
-    legacy_family_map = {
-        "font_original": "font_original",
-        "font_default": "font_default",
-        "font_spleen": "font_spleen",
-        "font_4x6": "font_default",
-        "font_8x13": "font_default",
-        "font_10x20": "font_default",
-        "font_spleen_5x8": "font_spleen",
-        "font_spleen_8x16": "font_spleen",
-        "font_spleen_12x24": "font_spleen",
+def get_spleen_font_face():
+    for face in _discover_font_families():
+        if str(face.get("name") or "").strip().lower() == SPLEEN_FONT_FAMILY:
+            ordered = []
+            by_key = {size["key"]: size for size in face.get("sizes") or []}
+            for key in SPLEEN_FONT_SIZE_ORDER:
+                if key in by_key:
+                    ordered.append(by_key[key])
+            if not ordered:
+                ordered = list(face.get("sizes") or [])
+            return {
+                "key": "font_spleen",
+                "name": SPLEEN_FONT_FAMILY,
+                "label": "Spleen",
+                "type": "font_family",
+                "sizes": ordered,
+            }
+    return {
+        "key": "font_spleen",
+        "name": SPLEEN_FONT_FAMILY,
+        "label": "Spleen",
+        "type": "font_family",
+        "sizes": [],
     }
-    style = legacy_family_map.get(style, style)
-    for face in get_clock_font_faces():
-        if face["key"] == style:
-            return face
-    return None
 
 
-def get_clock_font_sizes(style):
-    face = get_clock_font_face(style)
-    if not face or face.get("type") != "font_family":
-        return []
-    return list(face.get("sizes") or [])
+def get_spleen_font_sizes():
+    return list(get_spleen_font_face().get("sizes") or [])
 
 
-def get_clock_font_size(style, size_key=None):
-    sizes = get_clock_font_sizes(style)
+def get_spleen_font_size(size_key=None):
+    sizes = get_spleen_font_sizes()
     if not sizes:
         return None
     wanted = str(size_key or "").strip().lower()
     for size in sizes:
         if size["key"] == wanted:
             return size
-    for preferred in ("6x10", "8x13", "10x20", "12x24"):
+    for preferred in ("6x12", "5x8", "8x16", "12x24"):
         for size in sizes:
             if size["key"] == preferred:
                 return size
     return sizes[0]
 
 
-def get_metro_font_options():
-    options = []
-    for family in _discover_font_families():
-        for size in family.get("sizes") or []:
-            if size.get("width") == 6 and size.get("height") == 10:
-                key = f"{family['name']}/{size['key']}"
-                options.append({
-                    "key": key,
-                    "label": f"{family['label']} {size['label']}",
-                    "family": family["key"],
-                    "size": size["key"],
-                    "path": size["path"],
-                    "font_size": size.get("font_size", 10),
-                })
-    return options
-
-
-def get_metro_font_option(style=None):
-    wanted = str(style or METRO_FONT_STYLE or "").strip().lower()
-    options = get_metro_font_options()
-    for option in options:
-        if option["key"].lower() == wanted:
-            return option
-    for option in options:
-        if option["key"] == "original/6x10":
-            return option
-    return options[0] if options else None
-
-
-def get_small_text_font_options(max_height=8):
-    options = []
-    for family in _discover_font_families():
-        for size in family.get("sizes") or []:
-            try:
-                height = int(size.get("height") or 999)
-            except Exception:
-                height = 999
-            if height > max_height:
-                continue
-            key = f"{family['name']}/{size['key']}"
-            options.append({
-                "key": key,
-                "label": f"{family['label']} {size['label']}",
-                "family": family["key"],
-                "size": size["key"],
-                "path": size["path"],
-                "font_size": size.get("font_size", 8),
-                "width": size.get("width"),
-                "height": size.get("height"),
-            })
-    return options
-
-
-def get_small_text_font_option(style=None):
-    wanted = str(style or "original/4x6" or "").strip().lower()
-    options = get_small_text_font_options()
-    for option in options:
-        if option["key"].lower() == wanted:
-            return option
-    for option in options:
-        if option["key"] == "original/4x6":
-            return option
-    return options[0] if options else None
+def get_clock_font_size_for_scale(clock_size=None):
+    try:
+        value = float(CLOCK_SIZE if clock_size is None else clock_size)
+    except Exception:
+        value = 1.0
+    best = min(SPLEEN_FONT_SIZE_BY_CLOCK_SIZE, key=lambda option: abs(float(option) - value))
+    return get_spleen_font_size(SPLEEN_FONT_SIZE_BY_CLOCK_SIZE[best])
 
 
 def _parse_bool(value):
