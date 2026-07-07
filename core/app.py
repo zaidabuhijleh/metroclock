@@ -232,6 +232,7 @@ class MetroClockApp:
             brightness = self._state_provider.get_brightness()
             self._display.present(frame, brightness)
             presented_at = time.perf_counter()
+            web_server.set_latest_frame(frame)
             self._log_perf_if_needed(mode, tick_start, ensured_at, rendered_at, presented_at)
             time.sleep(self._loop_delay)
         except Exception as exc:
