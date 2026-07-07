@@ -20,6 +20,8 @@ TIMEFRAMES = {
     "1M":  {"range": "1mo", "interval": "1d"},
 }
 TIMEFRAME_ORDER = ["1D", "1W", "1M"]
+STOCKS_FONT_PATH_TALL = "assets/fonts/original/6x10.bdf"
+STOCKS_FONT_PATH_SMALL = "assets/fonts/original/4x6.bdf"
 
 
 class StocksWidget(Widget):
@@ -69,11 +71,11 @@ class StocksWidget(Widget):
         self.placeholder = None
 
         try:
-            self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
+            self.font_tall = ImageFont.truetype(STOCKS_FONT_PATH_TALL, 10)
         except Exception:
             self.font_tall = ImageFont.load_default()
         try:
-            self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
+            self.font_small = ImageFont.truetype(STOCKS_FONT_PATH_SMALL, 6)
         except Exception:
             self.font_small = ImageFont.load_default()
 
