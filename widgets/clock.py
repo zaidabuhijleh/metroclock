@@ -231,6 +231,8 @@ class ClockWidget(Widget):
         self._last_config_reload = 0.0
 
         self._clock_face_font_cache = {}
+        self._widget_font_cache = {}
+        self._widget_font_candidates_cache = None
         self._spleen_font_candidates_cache = None
         self._text_font_fit_cache = {}
         self._scroll_text_render_cache = {}
@@ -326,6 +328,34 @@ class ClockWidget(Widget):
         _left, _top, _width, height = self._font_text_metrics(draw, text or "0", font)
         return max(1, height)
 
+    def _load_widget_font(self, key, path, size):
+        cache_key = (key, path, int(size))
+        if cache_key not in self._widget_font_cache:
+            self._widget_font_cache[cache_key] = ImageFont.truetype(path, int(size))
+        return self._widget_font_cache[cache_key]
+
+    def _widget_font_candidates(self):
+        if self._widget_font_candidates_cache is not None:
+            return self._widget_font_candidates_cache
+
+        specs = (
+            ("4x6", config.FONT_PATH_SMALL, config.FONT_SIZE_SMALL),
+            ("spleen-5x8", "assets/fonts/spleen/5x8.bdf", 8),
+            ("spleen-6x12", "assets/fonts/spleen/6x12.bdf", 12),
+            ("spleen-8x16", "assets/fonts/spleen/8x16.bdf", 16),
+            ("spleen-12x24", "assets/fonts/spleen/12x24.bdf", 24),
+        )
+        fonts = []
+        for key, path, size in specs:
+            try:
+                fonts.append((int(size), self._load_widget_font(key, path, size), {"key": key, "height": int(size)}))
+            except Exception:
+                continue
+        if not fonts:
+            fonts.append((6, ImageFont.load_default(), {"key": "fallback", "height": 6}))
+        self._widget_font_candidates_cache = tuple(fonts)
+        return self._widget_font_candidates_cache
+
     def _font_for_box(self, draw, text, max_width, max_height, *, prefer_width_fit=True):
         text = str(text or "")
         max_width = max(1, int(max_width))
@@ -335,7 +365,7 @@ class ClockWidget(Widget):
         if cached is not None:
             return cached
 
-        candidates = self._spleen_font_candidates()
+        candidates = self._widget_font_candidates()
         selected = candidates[0][1]
         for _height, font, _size in candidates:
             left, top, width, height = self._font_text_metrics(draw, text or "0", font)

@@ -23,7 +23,7 @@ class FlightWidget(Widget):
         self.COLOR_GREY = (150, 150, 150)
 
         try:
-            self.font = ImageFont.truetype(config.FONT_PATH_TALL, 10)
+            self.font = ImageFont.truetype(config.FONT_PATH_TALL, config.FONT_SIZE_TALL)
         except:
             self.font = ImageFont.load_default()
 

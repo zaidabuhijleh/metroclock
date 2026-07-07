@@ -24,8 +24,12 @@ MATRIX_PWM_BITS_POMODORO = 5
 
 # --- FONTS ---
 FONT_ROOT = "assets/fonts"
-FONT_PATH_TALL = "assets/fonts/spleen/6x12.bdf"
-FONT_PATH_SMALL = "assets/fonts/spleen/5x8.bdf"
+# Shared widget fonts. Most non-clock layouts only have room for an 8px-ish
+# face; larger Spleen sizes are reserved for clock faces and roomy custom panes.
+FONT_PATH_TALL = "assets/fonts/spleen/5x8.bdf"
+FONT_PATH_SMALL = "assets/fonts/original/4x6.bdf"
+FONT_SIZE_TALL = 8
+FONT_SIZE_SMALL = 6
 SPLEEN_FONT_FAMILY = "spleen"
 SPLEEN_FONT_SIZE_BY_CLOCK_SIZE = {
     0.5: "5x8",
