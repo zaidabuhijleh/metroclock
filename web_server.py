@@ -14,7 +14,6 @@ from scenes import SCENE_KEYS
 
 API_VERSION = "1.0"
 
-CLOCK_FONT_STYLE_OPTIONS = ("matrix",)
 CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
 CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 CLOCK_WIDGET_PRESET_OPTIONS = (
@@ -635,11 +634,6 @@ def api_settings_get():
 @app.route("/api/clock/styles")
 def api_clock_styles():
     return jsonify({
-        "clock_font_style": {
-            "key": "CLOCK_FONT_STYLE",
-            "default": "matrix",
-            "options": list(CLOCK_FONT_STYLE_OPTIONS),
-        },
         "clock_size": {
             "key": "CLOCK_SIZE",
             "default": 1.0,
@@ -648,9 +642,15 @@ def api_clock_styles():
         "clock_overlays": {
             "show_date_key": "CLOCK_SHOW_DATE",
             "show_ampm_key": "CLOCK_SHOW_AMPM",
+            "date_color_key": "CLOCK_DATE_COLOR",
+            "ampm_color_key": "CLOCK_AMPM_COLOR",
+            "order_key": "CLOCK_OVERLAY_ORDER",
             "defaults": {
                 "show_date": True,
                 "show_ampm": True,
+                "date_color": "",
+                "ampm_color": "",
+                "order": "ampm_date",
             },
         },
         "clock_widget_preset": {

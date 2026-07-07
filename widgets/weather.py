@@ -29,12 +29,12 @@ class WeatherWidget(Widget):
         self.color_separator = (29, 58, 86)
 
         try:
-            self.temp_font = ImageFont.truetype(config.FONT_PATH_TALL, 10)
+            self.temp_font = ImageFont.truetype(config.FONT_PATH_TALL, config.FONT_SIZE_TALL)
         except Exception:
             self.temp_font = ImageFont.load_default()
 
         try:
-            self.label_font = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
+            self.label_font = ImageFont.truetype(config.FONT_PATH_SMALL, config.FONT_SIZE_SMALL)
         except Exception:
             self.label_font = ImageFont.load_default()
 

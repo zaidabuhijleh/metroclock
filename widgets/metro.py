@@ -116,12 +116,12 @@ class MetroWidget(Widget):
         self._scroll_hold_frames = 50  # ~1s at 50fps
 
         try:
-            self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
+            self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, config.FONT_SIZE_TALL)
         except Exception:
             self.font_tall = ImageFont.load_default()
 
         try:
-            self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
+            self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, config.FONT_SIZE_SMALL)
         except Exception:
             self.font_small = ImageFont.load_default()
 
@@ -947,7 +947,7 @@ class MetroWidget(Widget):
             if prev_key != key or time_on_page < 0.05:
                 frames = 0
             scroll_frames = max(0, frames - self._scroll_hold_frames)
-            offset = min(scroll_frames // scroll.frame_stride("metro"), int(max_offset))
+            offset = min(int(scroll_frames / scroll.frame_stride("metro")), int(max_offset))
             self._row_scroll_state[row_y] = (key, frames + 1)
 
             x_pos = text_start_x - offset

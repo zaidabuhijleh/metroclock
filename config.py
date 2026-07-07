@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 
 # --- HARDWARE ---
@@ -16,13 +17,28 @@ MATRIX_PWM_BITS_AMBIENT = 5
 MATRIX_PWM_BITS_SPORTS = 5
 MATRIX_PWM_BITS_STOCKS = 3
 MATRIX_PWM_BITS_CLOCK = 5
-# Clock+widget mode can run a lower bit depth for higher refresh and reduced shimmer.
-MATRIX_PWM_BITS_CLOCK_WIDGET = 4
+# Clock+widget mode should prioritize refresh speed; match Metro to avoid a
+# matrix reinit when switching directly between those modes.
+MATRIX_PWM_BITS_CLOCK_WIDGET = 3
 MATRIX_PWM_BITS_POMODORO = 5
 
 # --- FONTS ---
-FONT_PATH_TALL = "assets/fonts/6x10.bdf"
-FONT_PATH_SMALL = "assets/fonts/4x6.bdf"
+FONT_ROOT = "assets/fonts"
+# Shared widget fonts. Most non-clock layouts only have room for an 8px-ish
+# face; larger Spleen sizes are reserved for clock faces and roomy custom panes.
+FONT_PATH_TALL = "assets/fonts/spleen/5x8.bdf"
+FONT_PATH_SMALL = "assets/fonts/original/4x6.bdf"
+FONT_SIZE_TALL = 8
+FONT_SIZE_SMALL = 6
+SPLEEN_FONT_FAMILY = "spleen"
+SPLEEN_FONT_SIZE_BY_CLOCK_SIZE = {
+    0.5: "5x8",
+    0.75: "8x16",
+    1.0: "12x24",
+}
+SPLEEN_FONT_SIZE_ORDER = ("5x8", "6x12", "8x16", "12x24")
+CLOCK_FONT_STYLE = "font_spleen"
+_FONT_FAMILIES_CACHE = None
 
 # --- WMATA (DC Metro) ---
 METRO_SYSTEM = "wmata"  # "wmata", "nyc", or "ttc"
@@ -90,11 +106,12 @@ STOCKS_TICKER_SPEED = 25  # legacy/unused — see SCROLL_SPEED
 # produce uniform motion on the LED matrix (whole pixels per fixed frame stride).
 #   "slow"   -> 1 px every 3 frames
 #   "medium" -> 1 px every 2 frames
+#   "relaxed"-> about 3/4 fast
 #   "fast"   -> 1 px every frame  (default)
 SCROLL_SPEED = "fast"
 # Per-widget overrides (leave as None or "" to inherit SCROLL_SPEED).
 SCROLL_SPEED_STOCKS = None
-SCROLL_SPEED_METRO = None
+SCROLL_SPEED_METRO = "relaxed"
 SCROLL_SPEED_SPORTS = None
 SCROLL_SPEED_FLIGHT = None
 
@@ -111,10 +128,7 @@ POMODORO_LAYOUT = "mode_time_task"
 POMODORO_TODO_ITEMS = ""
 
 # --- CLOCK ---
-# Font style options:
-#   matrix
-CLOCK_FONT_STYLE = "matrix"
-# One sizing control for all styles.
+# Numeric sizing for the fixed Spleen clock face.
 CLOCK_SIZE = 1.0  # 0.5, 0.75, 1.0
 CLOCK_COLOR_PRIMARY = ""  # Optional #RRGGBB override
 CLOCK_COLOR_ACCENT = ""  # Optional #RRGGBB override
@@ -123,6 +137,9 @@ CLOCK_COLOR_DIM = ""  # Optional #RRGGBB override
 CLOCK_COLOR_BG = ""  # Optional #RRGGBB override
 CLOCK_SHOW_DATE = True
 CLOCK_SHOW_AMPM = True
+CLOCK_AMPM_COLOR = ""  # Optional #RRGGBB override
+CLOCK_DATE_COLOR = ""  # Optional #RRGGBB override
+CLOCK_OVERLAY_ORDER = "ampm_date"  # ampm_date or date_ampm
 # Legacy layout/count/source fields are kept for older app versions.
 CLOCK_WIDGET_LAYOUT = "horizontal"
 CLOCK_WIDGET_SOURCE = "weather"
@@ -226,7 +243,6 @@ RUNTIME_EDITABLE_FIELDS = {
     "POMODORO_AUTO_START_FOCUS",
     "POMODORO_LAYOUT",
     "POMODORO_TODO_ITEMS",
-    "CLOCK_FONT_STYLE",
     "CLOCK_SIZE",
     "CLOCK_COLOR_PRIMARY",
     "CLOCK_COLOR_ACCENT",
@@ -235,6 +251,9 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_COLOR_BG",
     "CLOCK_SHOW_DATE",
     "CLOCK_SHOW_AMPM",
+    "CLOCK_AMPM_COLOR",
+    "CLOCK_DATE_COLOR",
+    "CLOCK_OVERLAY_ORDER",
     "CLOCK_WIDGET_LAYOUT",
     "CLOCK_WIDGET_PRESET",
     "CLOCK_WIDGET_SOURCE",
@@ -270,6 +289,168 @@ RUNTIME_CONFIG_PATH = _default_runtime_config_path()
 
 def get_runtime_config_path() -> str:
     return RUNTIME_CONFIG_PATH
+
+
+def _font_root():
+    if os.path.isabs(FONT_ROOT):
+        return FONT_ROOT
+    return os.path.join(os.path.dirname(__file__), FONT_ROOT)
+
+
+def _font_family_key(name):
+    cleaned = re.sub(r"[^a-z0-9]+", "_", str(name or "").strip().lower()).strip("_")
+    return f"font_{cleaned or 'family'}"
+
+
+def _font_size_key(label):
+    cleaned = re.sub(r"[^a-z0-9]+", "_", str(label or "").strip().lower()).strip("_")
+    return cleaned or "size"
+
+
+def _font_label_from_filename(filename):
+    label = os.path.basename(filename)
+    for suffix in (".bdf.txt", ".pcf.txt", ".ttf.txt", ".otf.txt", ".bdf", ".pcf", ".ttf", ".otf"):
+        if label.lower().endswith(suffix):
+            return label[: -len(suffix)]
+    return os.path.splitext(label)[0]
+
+
+def _font_display_label(name):
+    raw = str(name or "").replace("_", " ").replace("-", " ").strip()
+    if not raw:
+        return "Font"
+    return " ".join(part[:1].upper() + part[1:] for part in raw.split())
+
+
+def _bdf_metadata(path):
+    metadata = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                parts = line.split()
+                if line.startswith("SIZE ") and len(parts) >= 2:
+                    metadata.setdefault("font_size", int(parts[1]))
+                elif line.startswith("FONTBOUNDINGBOX ") and len(parts) >= 3:
+                    metadata["width"] = int(parts[1])
+                    metadata["height"] = int(parts[2])
+                elif line.startswith("PIXEL_SIZE ") and len(parts) >= 2:
+                    metadata["font_size"] = int(parts[1])
+    except Exception:
+        return {}
+    return metadata
+
+
+def _discover_font_families():
+    global _FONT_FAMILIES_CACHE
+    if _FONT_FAMILIES_CACHE is not None:
+        return _FONT_FAMILIES_CACHE
+
+    root = _font_root()
+    try:
+        family_names = sorted(os.listdir(root), key=str.lower)
+    except Exception:
+        _FONT_FAMILIES_CACHE = []
+        return _FONT_FAMILIES_CACHE
+
+    families = []
+    for family_name in family_names:
+        family_dir = os.path.join(root, family_name)
+        if not os.path.isdir(family_dir) or family_name.startswith(".") or family_name == "disabled":
+            continue
+
+        sizes = []
+        try:
+            filenames = sorted(os.listdir(family_dir), key=str.lower)
+        except Exception:
+            continue
+        for filename in filenames:
+            lowered = filename.lower()
+            if not lowered.endswith((".bdf", ".pcf", ".ttf", ".otf")):
+                continue
+            path = os.path.join(family_dir, filename)
+            if not os.path.isfile(path):
+                continue
+            label = _font_label_from_filename(filename)
+            if label.lower().startswith(f"{family_name.lower()}-"):
+                label = label[len(family_name) + 1:]
+            metadata = _bdf_metadata(path) if lowered.endswith(".bdf") else {}
+            size = {
+                "key": _font_size_key(label),
+                "label": label,
+                "path": path,
+                "scale": 1,
+            }
+            size.update(metadata)
+            sizes.append(size)
+        sizes.sort(key=lambda size: (
+            int(size.get("height") or 9999),
+            int(size.get("width") or 9999),
+            str(size.get("label") or ""),
+        ))
+        if sizes:
+            families.append({
+                "key": _font_family_key(family_name),
+                "name": family_name,
+                "label": _font_display_label(family_name),
+                "type": "font_family",
+                "sizes": sizes,
+            })
+    _FONT_FAMILIES_CACHE = families
+    return _FONT_FAMILIES_CACHE
+
+
+def get_spleen_font_face():
+    for face in _discover_font_families():
+        if str(face.get("name") or "").strip().lower() == SPLEEN_FONT_FAMILY:
+            ordered = []
+            by_key = {size["key"]: size for size in face.get("sizes") or []}
+            for key in SPLEEN_FONT_SIZE_ORDER:
+                if key in by_key:
+                    ordered.append(by_key[key])
+            if not ordered:
+                ordered = list(face.get("sizes") or [])
+            return {
+                "key": "font_spleen",
+                "name": SPLEEN_FONT_FAMILY,
+                "label": "Spleen",
+                "type": "font_family",
+                "sizes": ordered,
+            }
+    return {
+        "key": "font_spleen",
+        "name": SPLEEN_FONT_FAMILY,
+        "label": "Spleen",
+        "type": "font_family",
+        "sizes": [],
+    }
+
+
+def get_spleen_font_sizes():
+    return list(get_spleen_font_face().get("sizes") or [])
+
+
+def get_spleen_font_size(size_key=None):
+    sizes = get_spleen_font_sizes()
+    if not sizes:
+        return None
+    wanted = str(size_key or "").strip().lower()
+    for size in sizes:
+        if size["key"] == wanted:
+            return size
+    for preferred in ("6x12", "5x8", "8x16", "12x24"):
+        for size in sizes:
+            if size["key"] == preferred:
+                return size
+    return sizes[0]
+
+
+def get_clock_font_size_for_scale(clock_size=None):
+    try:
+        value = float(CLOCK_SIZE if clock_size is None else clock_size)
+    except Exception:
+        value = 1.0
+    best = min(SPLEEN_FONT_SIZE_BY_CLOCK_SIZE, key=lambda option: abs(float(option) - value))
+    return get_spleen_font_size(SPLEEN_FONT_SIZE_BY_CLOCK_SIZE[best])
 
 
 def _parse_bool(value):

@@ -69,11 +69,11 @@ class StocksWidget(Widget):
         self.placeholder = None
 
         try:
-            self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
+            self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, config.FONT_SIZE_TALL)
         except Exception:
             self.font_tall = ImageFont.load_default()
         try:
-            self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
+            self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, config.FONT_SIZE_SMALL)
         except Exception:
             self.font_small = ImageFont.load_default()
 
@@ -290,7 +290,7 @@ class StocksWidget(Widget):
         # Advance 1 px every `stride` frames so motion is uniform regardless
         # of frame-to-frame timing jitter (and globally tunable via SCROLL_SPEED).
         self.ticker_frame += 1
-        src_x = (self.ticker_frame // scroll.frame_stride("stocks")) % strip.width
+        src_x = int(self.ticker_frame / scroll.frame_stride("stocks")) % strip.width
         first_w = min(self.width, strip.width - src_x)
         if first_w > 0:
             self.canvas.paste(

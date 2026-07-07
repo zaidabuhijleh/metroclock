@@ -1,3 +1,4 @@
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -137,6 +138,8 @@ class ClockLayoutPreset:
 class ClockWidget(Widget):
     """Standalone clock renderer with shared compact drawing helpers."""
 
+    _SHARED_RENDERED_CLOCK_FACE_CACHE = {}
+
     COLOR_BG = (0, 0, 0)
     COLOR_MAIN = (232, 238, 255)
     COLOR_ACCENT = (128, 186, 255)
@@ -150,7 +153,6 @@ class ClockWidget(Widget):
     COLOR_POMODORO_BG_FOCUS = (184, 56, 56)
     COLOR_POMODORO_BG_BREAK = (48, 136, 72)
 
-    FONT_STYLE_OPTIONS = {"matrix"}
     CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
     FONT_LINE_SHAPES = {
         "matrix": {
@@ -226,15 +228,17 @@ class ClockWidget(Widget):
         self._stocks_mini_hold_key = None
         self._stocks_mini_hold_started = 0.0
         self._pomodoro_state_cache = None
+        self._last_config_reload = 0.0
 
-        try:
-            self.font_tall = ImageFont.truetype(config.FONT_PATH_TALL, 10)
-        except Exception:
-            self.font_tall = ImageFont.load_default()
-        try:
-            self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
-        except Exception:
-            self.font_small = ImageFont.load_default()
+        self._clock_face_font_cache = {}
+        self._widget_font_cache = {}
+        self._widget_font_candidates_cache = None
+        self._spleen_font_candidates_cache = None
+        self._text_font_fit_cache = {}
+        self._scroll_text_render_cache = {}
+        self._rendered_clock_face_cache = self._SHARED_RENDERED_CLOCK_FACE_CACHE
+        self.font_small = self._load_spleen_size("5x8") or ImageFont.load_default()
+        self.font_tall = self._load_spleen_size("6x12") or self.font_small
 
         self._widget_presenters = self._build_widget_presenters()
         self._layout_presets = self._build_layout_presets()
@@ -242,8 +246,7 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- config
 
     def _font_style(self):
-        style = str(getattr(config, "CLOCK_FONT_STYLE", "matrix") or "matrix").strip().lower()
-        return style if style in self.FONT_STYLE_OPTIONS else "matrix"
+        return "font_spleen"
 
     def _clock_size(self):
         raw = getattr(config, "CLOCK_SIZE", getattr(config, "CLOCK_SIZE_SCALE", 1.0))
@@ -290,6 +293,108 @@ class ClockWidget(Widget):
             accent_2=self._parse_color_override(getattr(config, "CLOCK_COLOR_ACCENT_2", "")) or self.COLOR_ACCENT_2,
             dim=self._parse_color_override(getattr(config, "CLOCK_COLOR_DIM", "")) or self.COLOR_DIM,
         )
+
+    def _load_spleen_size(self, size_key):
+        spec = config.get_spleen_font_size(size_key)
+        path = (spec or {}).get("path")
+        if not path:
+            return None
+        try:
+            size = int((spec or {}).get("font_size") or (spec or {}).get("height") or self._clock_face_font_size(path))
+        except Exception:
+            size = self._clock_face_font_size(path)
+        cache_key = ("spleen", path, size)
+        if cache_key not in self._clock_face_font_cache:
+            self._clock_face_font_cache[cache_key] = ImageFont.truetype(path, size)
+        return self._clock_face_font_cache[cache_key]
+
+    def _spleen_font_candidates(self):
+        if self._spleen_font_candidates_cache is not None:
+            return self._spleen_font_candidates_cache
+
+        fonts = []
+        for size in config.get_spleen_font_sizes():
+            font = self._load_spleen_size(size.get("key"))
+            if font is None:
+                continue
+            fonts.append((int(size.get("height") or self._clock_face_font_size(size.get("path"))), font, size))
+        fonts.sort(key=lambda item: item[0])
+        if not fonts:
+            fonts.append((6, self.font_small, {"key": "fallback", "height": 6}))
+        self._spleen_font_candidates_cache = tuple(fonts)
+        return fonts
+
+    def _font_text_height(self, draw, text, font):
+        _left, _top, _width, height = self._font_text_metrics(draw, text or "0", font)
+        return max(1, height)
+
+    def _load_widget_font(self, key, path, size):
+        cache_key = (key, path, int(size))
+        if cache_key not in self._widget_font_cache:
+            self._widget_font_cache[cache_key] = ImageFont.truetype(path, int(size))
+        return self._widget_font_cache[cache_key]
+
+    def _widget_font_candidates(self):
+        if self._widget_font_candidates_cache is not None:
+            return self._widget_font_candidates_cache
+
+        specs = (
+            ("4x6", config.FONT_PATH_SMALL, config.FONT_SIZE_SMALL),
+            ("spleen-5x8", "assets/fonts/spleen/5x8.bdf", 8),
+            ("spleen-6x12", "assets/fonts/spleen/6x12.bdf", 12),
+            ("spleen-8x16", "assets/fonts/spleen/8x16.bdf", 16),
+            ("spleen-12x24", "assets/fonts/spleen/12x24.bdf", 24),
+        )
+        fonts = []
+        for key, path, size in specs:
+            try:
+                fonts.append((int(size), self._load_widget_font(key, path, size), {"key": key, "height": int(size)}))
+            except Exception:
+                continue
+        if not fonts:
+            fonts.append((6, ImageFont.load_default(), {"key": "fallback", "height": 6}))
+        self._widget_font_candidates_cache = tuple(fonts)
+        return self._widget_font_candidates_cache
+
+    def _font_for_box(self, draw, text, max_width, max_height, *, prefer_width_fit=True):
+        text = str(text or "")
+        max_width = max(1, int(max_width))
+        max_height = max(1, int(max_height))
+        cache_key = (text, max_width, max_height, bool(prefer_width_fit))
+        cached = self._text_font_fit_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        candidates = self._widget_font_candidates()
+        selected = candidates[0][1]
+        for _height, font, _size in candidates:
+            left, top, width, height = self._font_text_metrics(draw, text or "0", font)
+            if height <= max_height and (not prefer_width_fit or width <= max_width):
+                selected = font
+        self._text_font_fit_cache[cache_key] = selected
+        return selected
+
+    def _draw_text_box(self, draw, box, text, fill, *, align="center", valign="center", ellipsis="..."):
+        x, y, w, h = box
+        if w <= 0 or h <= 0:
+            return
+        font = self._font_for_box(draw, text, max(1, w - 2), max(1, h), prefer_width_fit=True)
+        fit = self._fit_text(text, max(1, w - 2), font, ellipsis=ellipsis)
+        left, top, text_w, text_h = self._font_text_metrics(draw, fit, font)
+        if align == "left":
+            tx = x + 1 - left
+        elif align == "right":
+            tx = x + max(1, w - text_w - 1) - left
+        else:
+            tx = x + max(0, (w - text_w) // 2) - left
+        if valign == "top":
+            ty = y - top
+        elif valign == "bottom":
+            ty = y + max(0, h - text_h) - top
+        else:
+            ty = y + max(0, (h - text_h) // 2) - top
+        draw.text((tx, ty), fit, font=font, fill=fill)
+        return font
 
     def _layout(self):
         layout = str(getattr(config, "CLOCK_WIDGET_LAYOUT", "horizontal") or "horizontal").strip().lower()
@@ -587,7 +692,10 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- state
 
     def update(self):
-        config_manager.reload_config()
+        now = time.time()
+        if now - self._last_config_reload >= 1.0:
+            config_manager.reload_config()
+            self._last_config_reload = now
 
     # --------------------------------------------------------------- draw
 
@@ -755,24 +863,54 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- clock faces
 
     def _render_clock_face(self, w, h, variant, theme):
+        cache_key = self._clock_face_render_cache_key(w, h, variant, theme)
+        cached = self._rendered_clock_face_cache.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+
         img = Image.new("RGB", (max(1, w), max(1, h)), theme.bg)
         d = ImageDraw.Draw(img)
         style = self._font_style()
 
         try:
-            renderer = {
-                "matrix": self._draw_face_digital_matrix,
-                "segment": self._draw_face_digital_segment,
-            }.get(style, self._draw_face_digital_matrix)
-            renderer(d, w, h, variant, theme)
+            self._draw_face_font(d, w, h, variant, theme, style)
         except Exception:
             # Keep clock mode alive even if one face errors in an edge case.
             try:
-                self._draw_face_digital_matrix(d, w, h, variant, theme)
+                d.text((1, 1), self._time_text(False), font=self.font_tall, fill=theme.primary)
             except Exception:
                 d.text((1, 1), self._time_text(False), font=self.font_small, fill=theme.primary)
 
+        if len(self._rendered_clock_face_cache) >= 32:
+            self._rendered_clock_face_cache.pop(next(iter(self._rendered_clock_face_cache)), None)
+        self._rendered_clock_face_cache[cache_key] = img.copy()
         return img
+
+    def _clock_face_render_cache_key(self, w, h, variant, theme):
+        now, hour, ampm = self._time_parts()
+        time_text = f"{hour:02d}:{now.minute:02d}"
+        return (
+            int(w),
+            int(h),
+            str(variant),
+            time_text,
+            now.strftime("%Y-%m-%d"),
+            now.strftime("%a %b %d").upper(),
+            ampm,
+            self._use_24h(),
+            self._show_date(),
+            self._show_ampm(),
+            str(getattr(config, "CLOCK_OVERLAY_ORDER", "ampm_date") or "ampm_date"),
+            self._effective_clock_size(),
+            self._clock_face_size_key(),
+            theme.bg,
+            theme.primary,
+            theme.accent,
+            theme.accent_2,
+            theme.dim,
+            self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")),
+            self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")),
+        )
 
     def _time_parts(self):
         now = datetime.now()
@@ -870,17 +1008,132 @@ class ClockWidget(Widget):
         }
 
     def _draw_clock_overlays(self, draw, w, h, variant, ampm, theme, date_text, metrics):
-        if self._show_date() and metrics["bottom_band"] > 0:
-            dw = int(self.font_small.getlength(date_text))
-            date_y = h - metrics["bottom_band"] + max(0, (metrics["bottom_band"] - 6) // 2)
-            # Allow a true 1px downward nudge; previous clamp could pin to same row.
-            date_y = min(h - 5, date_y + 3)
-            draw.text((max(0, (w - dw) // 2), date_y), date_text, font=self.font_small, fill=theme.accent)
+        def draw_overlay(slot, content):
+            if content == "date":
+                if not self._show_date():
+                    return
+                text = date_text
+                color = self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")) or theme.accent
+                y_offset = -1 if slot == "top" else 1
+            elif content == "ampm":
+                if not (self._show_ampm() and ampm and not self._use_24h()):
+                    return
+                text = ampm
+                color = self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")) or theme.accent_2
+                y_offset = -1 if slot == "top" else 1
+            else:
+                return
 
-        if self._show_ampm() and ampm and not self._use_24h() and metrics["top_band"] > 0:
-            aw = int(self.font_small.getlength(ampm))
-            ampm_y = max(0, (metrics["top_band"] - 6) // 2)
-            draw.text((max(0, (w - aw) // 2), ampm_y), ampm, font=self.font_small, fill=theme.accent_2)
+            band_key = "top_band" if slot == "top" else "bottom_band"
+            band_h = metrics.get(band_key, 0)
+            if band_h <= 0:
+                return
+            font = self._font_for_box(draw, text, max(1, w - 2), max(1, band_h), prefer_width_fit=True)
+            left, top, text_w, text_h = self._font_text_metrics(draw, text, font)
+            if slot == "top":
+                y = max(0, (band_h - text_h) // 2) - top + y_offset
+            else:
+                y = h - band_h + max(0, (band_h - text_h) // 2) - top + y_offset
+            x = max(0, (w - text_w) // 2) - left
+            draw.text((x, y), text, font=font, fill=color)
+
+        order = str(getattr(config, "CLOCK_OVERLAY_ORDER", "ampm_date") or "ampm_date").strip().lower()
+        slots = {
+            "top": "date" if order == "date_ampm" else "ampm",
+            "bottom": "ampm" if order == "date_ampm" else "date",
+        }
+        draw_overlay("top", slots["top"])
+        draw_overlay("bottom", slots["bottom"])
+
+    def _clock_face_size_key(self):
+        size = self._effective_clock_size()
+        if size >= 1.0:
+            return "12x24"
+        if size >= 0.75:
+            return "8x16"
+        return "5x8"
+
+    def _clock_face_font_spec(self):
+        size_key = self._clock_face_size_key()
+        spec = config.get_spleen_font_size(size_key)
+        return {
+            "path": (spec or {}).get("path"),
+            "scale": max(1, int((spec or {}).get("scale") or 1)),
+            "font_size": (spec or {}).get("font_size"),
+        }
+
+    def _clock_face_font_size(self, path):
+        label = str(path or "")
+        match = re.search(r"(\d+)x(\d+)", label, re.IGNORECASE)
+        if match:
+            return max(1, int(match.group(2)))
+        return 10
+
+    def _load_clock_face_font(self):
+        spec = self._clock_face_font_spec()
+        path = spec["path"]
+        if not path:
+            return None
+        try:
+            size = int(spec.get("font_size") or self._clock_face_font_size(path))
+        except Exception:
+            size = self._clock_face_font_size(path)
+        cache_key = (path, size)
+        if cache_key not in self._clock_face_font_cache:
+            self._clock_face_font_cache[cache_key] = ImageFont.truetype(path, size)
+        return self._clock_face_font_cache[cache_key]
+
+    def _font_text_metrics(self, draw, text, font):
+        if hasattr(draw, "textbbox"):
+            left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+            return left, top, right - left, bottom - top
+        left, top, right, bottom = font.getbbox(text)
+        return left, top, right - left, bottom - top
+
+    def _draw_face_font(self, draw, w, h, variant, theme, style):
+        now, hour, ampm = self._time_parts()
+        time_text = f"{hour:02d}:{now.minute:02d}"
+        date_text = now.strftime("%a %b %d").upper()
+        metrics = {
+            "top_band": self._overlay_band_height(h, variant, self._show_ampm() and ampm and not self._use_24h()),
+            "bottom_band": self._overlay_band_height(h, variant, self._show_date()),
+        }
+        if variant == "full":
+            font = self._load_clock_face_font()
+        else:
+            available_h = max(1, h - metrics["top_band"] - metrics["bottom_band"])
+            font = self._font_for_box(draw, time_text, max(1, w - 2), available_h, prefer_width_fit=True)
+        if font is None:
+            draw.text((1, 1), self._time_text(False), font=self.font_tall, fill=theme.primary)
+            return
+
+        clock_top = metrics["top_band"]
+        clock_bottom = max(clock_top + 1, h - metrics["bottom_band"])
+        text_left, text_top, text_w, text_h = self._font_text_metrics(draw, time_text, font)
+        scale = self._clock_face_font_spec()["scale"]
+        if scale > 1:
+            text_img = Image.new("RGB", (max(1, text_w), max(1, text_h)), theme.bg)
+            text_draw = ImageDraw.Draw(text_img)
+            text_draw.text((-text_left, -text_top), time_text, font=font, fill=theme.primary)
+            text_img = text_img.resize((text_img.width * scale, text_img.height * scale), Image.Resampling.NEAREST)
+            x = max(0, (w - text_img.width) // 2)
+            y = clock_top + max(0, (clock_bottom - clock_top - text_img.height) // 2)
+            draw.bitmap((x, y), text_img.convert("1"), fill=theme.primary)
+        else:
+            x = max(0, (w - text_w) // 2) - text_left
+            y = clock_top + max(0, (clock_bottom - clock_top - text_h) // 2) - text_top
+            draw.text((x, y), time_text, font=font, fill=theme.primary)
+
+        self._draw_clock_overlays(
+            draw,
+            w,
+            h,
+            variant,
+            ampm,
+            theme,
+            date_text,
+            metrics,
+        )
 
     def _segment_rects_for_digit(self, x, y, dw, dh, thickness, digit):
         thickness = max(1, min(thickness, max(1, min(dw // 3, dh // 4))))
@@ -1116,24 +1369,24 @@ class ClockWidget(Widget):
 
         presenter = self._widget_presenters.get(pane.source)
         if presenter is None:
-            txt = self._fit_text(pane.source.upper(), max(0, pane.bounds.width - 2), self.font_small)
-            draw.text(
-                (pane.bounds.x + 1, pane.bounds.y + max(0, (pane.bounds.height - 6) // 2)),
-                txt,
-                font=self.font_small,
-                fill=self.COLOR_DIM,
+            self._draw_text_box(
+                draw,
+                (pane.bounds.x, pane.bounds.y, pane.bounds.width, pane.bounds.height),
+                pane.source.upper(),
+                self.COLOR_DIM,
+                align="left",
             )
             return
 
         try:
             presenter.draw(draw, pane)
         except Exception:
-            fallback = self._fit_text("WIDGET ERR", max(0, pane.bounds.width - 2), self.font_small)
-            draw.text(
-                (pane.bounds.x + 1, pane.bounds.y + max(0, (pane.bounds.height - 6) // 2)),
-                fallback,
-                font=self.font_small,
-                fill=self.COLOR_DOWN,
+            self._draw_text_box(
+                draw,
+                (pane.bounds.x, pane.bounds.y, pane.bounds.width, pane.bounds.height),
+                "WIDGET ERR",
+                self.COLOR_DOWN,
+                align="left",
             )
 
     def _current_metro_station_label(self):
@@ -1184,22 +1437,23 @@ class ClockWidget(Widget):
 
         region = Image.new("RGB", (w, h), self.COLOR_BG)
         rd = ImageDraw.Draw(region)
-        text_w = int(self.font_small.getlength(txt))
-        y_text = max(0, (h - 6) // 2)
         try:
             forced = max(0.0, float(force_scroll_pixels))
         except Exception:
             forced = 0.0
 
         visible_w = max(1, w - 2)
+        font = self._font_for_box(rd, txt, visible_w, h, prefer_width_fit=not always_scroll)
+        left, top, text_w, text_h = self._font_text_metrics(rd, txt, font)
+        y_text = max(0, (h - text_h) // 2) - top
         if not always_scroll and text_w <= visible_w and forced <= 0.0:
             if align == "left":
-                text_x = 1
+                text_x = 1 - left
             elif align == "right":
-                text_x = max(1, w - text_w - 1)
+                text_x = max(1, w - text_w - 1) - left
             else:
-                text_x = max(1, (w - text_w) // 2)
-            rd.text((text_x, y_text), txt, font=self.font_small, fill=color)
+                text_x = max(1, (w - text_w) // 2) - left
+            rd.text((text_x, y_text), txt, font=font, fill=color)
             self.canvas.paste(region, (x, y))
             return state
 
@@ -1207,14 +1461,23 @@ class ClockWidget(Widget):
 
         # 1 px every N frames → uniform motion; N comes from SCROLL_SPEED.
         gap = 10
-        cycle = text_w + gap
+        color_key = tuple(color) if isinstance(color, (list, tuple)) else color
+        render_key = (txt, color_key, h, id(font))
+        strip = self._scroll_text_render_cache.get(render_key)
+        if strip is None:
+            strip = Image.new("RGB", (max(1, text_w), h), self.COLOR_BG)
+            strip_draw = ImageDraw.Draw(strip)
+            strip_draw.text((-left, y_text), txt, font=font, fill=color)
+            self._scroll_text_render_cache[render_key] = strip
+
+        cycle = strip.width + gap
         offset = self._scroll_offsets.get(key, 0.0)
         widget_name = str(key).split(":", 1)[0].split("-", 1)[0]
         step = 1.0 / scroll.frame_stride(widget_name)
         if wrap:
             offset = (offset + step) % cycle
         else:
-            max_offset = max(0.0, float(text_w - visible_w))
+            max_offset = max(0.0, float(strip.width - visible_w))
             if forced > 0.0:
                 max_offset = max(max_offset, forced)
             offset = offset + step
@@ -1230,11 +1493,11 @@ class ClockWidget(Widget):
 
         if wrap:
             start_x = w - int(offset)
-            rd.text((start_x, y_text), txt, font=self.font_small, fill=color)
-            rd.text((start_x - cycle, y_text), txt, font=self.font_small, fill=color)
+            region.paste(strip, (start_x, 0))
+            region.paste(strip, (start_x - cycle, 0))
         else:
             start_x = 1 - int(offset)
-            rd.text((start_x, y_text), txt, font=self.font_small, fill=color)
+            region.paste(strip, (start_x, 0))
         self.canvas.paste(region, (x, y))
         return state
 
@@ -1252,17 +1515,21 @@ class ClockWidget(Widget):
 
         gap = 8
         strip_w = gap
+        probe = Image.new("RGB", (1, 1), self.COLOR_BG)
+        probe_draw = ImageDraw.Draw(probe)
+        font = self._font_for_box(probe_draw, " ".join(text for text, _ in rendered_parts), max(1, w - 2), h, prefer_width_fit=False)
         for txt, _color in rendered_parts:
-            strip_w += int(self.font_small.getlength(txt)) + gap
+            strip_w += int(font.getlength(txt)) + gap
         strip_w = max(strip_w, 1)
 
         strip = Image.new("RGB", (strip_w, h), self.COLOR_BG)
         sd = ImageDraw.Draw(strip)
         cx = gap // 2
-        text_y = max(0, (h - 6) // 2)
+        _left, top, _text_w, text_h = self._font_text_metrics(sd, "0", font)
+        text_y = max(0, (h - text_h) // 2) - top
         for txt, color in rendered_parts:
-            sd.text((cx, text_y), txt, font=self.font_small, fill=color)
-            cx += int(self.font_small.getlength(txt)) + gap
+            sd.text((cx, text_y), txt, font=font, fill=color)
+            cx += int(font.getlength(txt)) + gap
 
         # 1 px every N frames → uniform motion; N comes from SCROLL_SPEED.
         widget_name = str(key).split(":", 1)[0].split("-", 1)[0]
@@ -1281,7 +1548,7 @@ class ClockWidget(Widget):
     def _draw_widget_metro(self, draw, x, y, w, h, scroll_mode="metro"):
         trains = getattr(self.metro, "trains", []) or []
         if not trains:
-            draw.text((x + 1, y + max(0, (h - 6) // 2)), "NO TRAINS", font=self.font_small, fill=self.COLOR_DIM)
+            self._draw_text_box(draw, (x, y, w, h), "NO TRAINS", self.COLOR_DIM, align="left")
             return
 
         mode = self._normalize_scroll_mode(scroll_mode, fallback="metro")
@@ -1313,7 +1580,8 @@ class ClockWidget(Widget):
 
         line_color = self.metro._line_color(line) if hasattr(self.metro, "_line_color") else self.COLOR_ACCENT
         line_label = (line[:2] or "?").upper()
-        line_label_w = int(self.font_small.getlength(line_label))
+        line_font = self._font_for_box(draw, line_label, max(1, w // 3), h, prefer_width_fit=True)
+        line_label_w = int(line_font.getlength(line_label))
 
         # Fixed left segment for line ID, like the main metro row "icon + static line".
         left_w = min(max(8, line_label_w + 4), max(8, w // 3))
@@ -1321,8 +1589,9 @@ class ClockWidget(Widget):
         right_w = max(1, w - left_w)
 
         line_x = x + max(1, (left_w - line_label_w) // 2)
-        line_y = y + max(0, (h - 6) // 2)
-        draw.text((line_x, line_y), line_label, font=self.font_small, fill=line_color)
+        _left, top, _tw, line_h = self._font_text_metrics(draw, line_label, line_font)
+        line_y = y + max(0, (h - line_h) // 2) - top
+        draw.text((line_x, line_y), line_label, font=line_font, fill=line_color)
 
         mins_label = f"{mins}M" if mins.isdigit() else mins
         scroll_text = f"{dest.upper()} {mins_label}".strip()
@@ -1395,13 +1664,13 @@ class ClockWidget(Widget):
         if not text:
             return
 
-        selected_font = font or self.font_tall
+        selected_font = font or self._font_for_box(draw, text, max(1, w - 2), h, prefer_width_fit=True)
         if ":" not in text:
             fit = self._fit_text(text, max(1, w - 2), selected_font)
             text_w = int(selected_font.getlength(fit))
-            font_h = 6 if selected_font is self.font_small else 10
+            _left, top, _tw, font_h = self._font_text_metrics(draw, fit, selected_font)
             y_off = max(0, (h - font_h) // 2)
-            draw.text((x + max(0, (w - text_w) // 2), y + y_off), fit, font=selected_font, fill=color)
+            draw.text((x + max(0, (w - text_w) // 2), y + y_off - top), fit, font=selected_font, fill=color)
             return
 
         mins, secs = text.split(":", 1)
@@ -1410,14 +1679,15 @@ class ClockWidget(Widget):
         if not mins or not secs:
             fit = self._fit_text(text, max(1, w - 2), selected_font)
             text_w = int(selected_font.getlength(fit))
-            font_h = 6 if selected_font is self.font_small else 10
+            _left, top, _tw, font_h = self._font_text_metrics(draw, fit, selected_font)
             y_off = max(0, (h - font_h) // 2)
-            draw.text((x + max(0, (w - text_w) // 2), y + y_off), fit, font=selected_font, fill=color)
+            draw.text((x + max(0, (w - text_w) // 2), y + y_off - top), fit, font=selected_font, fill=color)
             return
 
         mins_w = int(selected_font.getlength(mins))
         secs_w = int(selected_font.getlength(secs))
-        strip_h = 10 if selected_font is self.font_tall else 6
+        _left, top, _tw, selected_h = self._font_text_metrics(draw, text, selected_font)
+        strip_h = max(1, selected_h)
         strip_w = max(1, mins_w + 2 + secs_w)
         if strip_w > max(1, w - 1) and selected_font is not self.font_small:
             self._draw_timer_text(
@@ -1436,16 +1706,16 @@ class ClockWidget(Widget):
         strip = Image.new("RGB", (strip_w, strip_h), bg_color)
         strip_draw = ImageDraw.Draw(strip)
         cursor = 0
-        strip_draw.text((cursor, 0), mins, font=selected_font, fill=color)
+        strip_draw.text((cursor, -top), mins, font=selected_font, fill=color)
         cursor += mins_w
         if strip_h >= 10:
-            strip_draw.point((cursor, 3), fill=color)
-            strip_draw.point((cursor, 7), fill=color)
+            strip_draw.point((cursor, max(1, strip_h // 3)), fill=color)
+            strip_draw.point((cursor, max(1, (strip_h * 2) // 3)), fill=color)
         else:
             # Small-size timer keeps a single-dot colon to avoid crowding.
-            strip_draw.point((cursor, 3), fill=color)
+            strip_draw.point((cursor, max(1, strip_h // 2)), fill=color)
         cursor += 2
-        strip_draw.text((cursor, 0), secs, font=selected_font, fill=color)
+        strip_draw.text((cursor, -top), secs, font=selected_font, fill=color)
 
         paste_x = x + max(0, (w - strip.width) // 2)
         paste_y = y + max(0, (h - strip.height) // 2)
@@ -1495,18 +1765,10 @@ class ClockWidget(Widget):
                 h=value_h,
                 color=self.COLOR_MAIN,
                 bg_color=bg_color,
-                font=self.font_tall,
             )
             return
 
-        paused = self._fit_text("PAUSED", max(1, value_w - 2), self.font_small)
-        paused_w = int(self.font_small.getlength(paused))
-        draw.text(
-            (value_x + max(0, (value_w - paused_w) // 2), value_y + max(0, (value_h - 6) // 2)),
-            paused,
-            font=self.font_small,
-            fill=self.COLOR_MAIN,
-        )
+        self._draw_text_box(draw, (value_x, value_y, value_w, value_h), "PAUSED", self.COLOR_MAIN)
 
     def _draw_widget_pomodoro(self, draw, x, y, w, h, focused=False):
         if w <= 0 or h <= 0:
@@ -1533,9 +1795,7 @@ class ClockWidget(Widget):
             )
             return
 
-        phase_fit = self._fit_text(phase_label, max(1, w - 2), self.font_small)
-        phase_w = int(self.font_small.getlength(phase_fit))
-        draw.text((x + max(0, (w - phase_w) // 2), y + 1), phase_fit, font=self.font_small, fill=phase_color)
+        self._draw_text_box(draw, (x, y, w, 8), phase_label, phase_color)
 
         layout = str(state.get("layout", "mode_time_task") or "mode_time_task").strip().lower()
         show_task = layout != "mode_time"
@@ -1558,13 +1818,13 @@ class ClockWidget(Widget):
                 h=timer_h,
                 color=self.COLOR_MAIN,
                 bg_color=self.COLOR_BG,
-                font=self.font_tall,
             )
         else:
-            paused_font = self.font_small if show_task else self.font_tall
+            paused_font = self._font_for_box(draw, timer_txt, max(1, w - 2), timer_h, prefer_width_fit=True)
             paused = self._fit_text(timer_txt, max(1, w - 2), paused_font)
             paused_w = int(paused_font.getlength(paused))
-            paused_y = timer_y + (0 if paused_font is self.font_small else max(0, (timer_h - 10) // 2))
+            _left, top, _tw, paused_h = self._font_text_metrics(draw, paused, paused_font)
+            paused_y = timer_y + max(0, (timer_h - paused_h) // 2) - top
             draw.text((x + max(0, (w - paused_w) // 2), paused_y), paused, font=paused_font, fill=self.COLOR_MAIN)
 
         if not show_task:
@@ -1576,25 +1836,27 @@ class ClockWidget(Widget):
         max_lines = 2 if task_h >= 12 else 1
 
         if task:
-            task_lines = self._wrap_text_lines(task.upper(), max(1, w - 2), self.font_small, max_lines=max_lines)
+            task_font = self._font_for_box(draw, task.upper(), max(1, w - 2), max(1, task_h // max_lines), prefer_width_fit=False)
+            task_lines = self._wrap_text_lines(task.upper(), max(1, w - 2), task_font, max_lines=max_lines)
             task_color = self.COLOR_ACCENT
         else:
+            task_font = self._font_for_box(draw, "NO TASK", max(1, w - 2), max(1, task_h), prefer_width_fit=True)
             task_lines = ["NO TASK"]
             task_color = self.COLOR_DIM
 
         if not task_lines:
             return
 
-        line_h = 6
+        _left, top, _tw, line_h = self._font_text_metrics(draw, "0", task_font)
         visible_lines = task_lines[: max(1, task_h // line_h)]
         total_h = max(1, len(visible_lines) * line_h)
         start_y = task_top + max(0, (task_h - total_h) // 2)
         for idx, line in enumerate(visible_lines):
-            line_w = int(self.font_small.getlength(line))
+            line_w = int(task_font.getlength(line))
             draw.text(
-                (x + max(0, (w - line_w) // 2), start_y + idx * line_h),
+                (x + max(0, (w - line_w) // 2), start_y + idx * line_h - top),
                 line,
-                font=self.font_small,
+                font=task_font,
                 fill=task_color,
             )
 
@@ -1635,7 +1897,7 @@ class ClockWidget(Widget):
     def _draw_widget_weather(self, draw, x, y, w, h, focused=False):
         data = self._weather_data()
         if not data:
-            draw.text((x + 1, y + max(0, (h - 6) // 2)), "WEATHER", font=self.font_small, fill=self.COLOR_DIM)
+            self._draw_text_box(draw, (x, y, w, h), "WEATHER", self.COLOR_DIM, align="left")
             return
 
         temp = round(data["main"]["temp"])
@@ -1649,20 +1911,16 @@ class ClockWidget(Widget):
             self.canvas.paste(icon, (x + max(0, (w - icon_w) // 2), y + 1))
 
             temp_text = f"{temp}\N{DEGREE SIGN}"
-            tw = int(self.font_tall.getlength(temp_text))
-            draw.text((x + max(0, (w - tw) // 2), y + icon_h + 1), temp_text, font=self.font_tall, fill=self.COLOR_MAIN)
+            self._draw_text_box(draw, (x, y + icon_h, w, max(1, h - icon_h - 7)), temp_text, self.COLOR_MAIN)
 
             if h >= 24:
-                lbl = self._fit_text(label, max(0, w - 2), self.font_small)
-                lw = int(self.font_small.getlength(lbl))
-                draw.text((x + max(0, (w - lw) // 2), y + h - 7), lbl, font=self.font_small, fill=self.COLOR_ACCENT)
+                self._draw_text_box(draw, (x, y + h - 8, w, 8), label, self.COLOR_ACCENT)
             return
 
         unit_raw = str(getattr(config, "WEATHER_UNITS", "metric") or "metric").strip().lower()
         unit_suffix = "F" if unit_raw in {"imperial", "f", "fahrenheit"} else "C"
         text = f"{temp}\N{DEGREE SIGN}{unit_suffix}"
-        fit = self._fit_text(text, max(0, w - 2), self.font_small)
-        draw.text((x + max(1, (w - int(self.font_small.getlength(fit))) // 2), y + max(0, (h - 6) // 2)), fit, font=self.font_small, fill=self.COLOR_MAIN)
+        self._draw_text_box(draw, (x, y, w, h), text, self.COLOR_MAIN)
 
     def _stock_symbols(self):
         if hasattr(self.stocks, "_symbols"):
@@ -1685,15 +1943,15 @@ class ClockWidget(Widget):
     def _draw_widget_stocks(self, draw, x, y, w, h, focused=False, scroll_mode="metro"):
         symbols = self._stock_symbols()
         if not symbols:
-            draw.text((x + 1, y + max(0, (h - 6) // 2)), "NO STOCKS", font=self.font_small, fill=self.COLOR_DIM)
+            self._draw_text_box(draw, (x, y, w, h), "NO STOCKS", self.COLOR_DIM, align="left")
             return
 
         if focused:
             symbol = symbols[self._stock_idx % len(symbols)]
             data = self._stock_data(symbol, "1D")
-            draw.text((x + max(0, (w - int(self.font_tall.getlength(symbol))) // 2), y + 1), symbol, font=self.font_tall, fill=self.COLOR_MAIN)
+            self._draw_text_box(draw, (x, y, w, min(14, h)), symbol, self.COLOR_MAIN)
             if not data or data.get("last_price") is None:
-                draw.text((x + max(0, (w - int(self.font_small.getlength("..."))) // 2), y + h - 8), "...", font=self.font_small, fill=self.COLOR_DIM)
+                self._draw_text_box(draw, (x, y + h - 8, w, 8), "...", self.COLOR_DIM)
                 return
 
             last = data.get("last_price")
@@ -1703,10 +1961,8 @@ class ClockWidget(Widget):
             price = self.stocks._fmt_price(last) if hasattr(self.stocks, "_fmt_price") else str(last)
             color = self.COLOR_UP if change >= 0 else self.COLOR_DOWN
 
-            p_fit = self._fit_text(price, max(0, w - 2), self.font_small)
-            pct_fit = self._fit_text(pct, max(0, w - 2), self.font_small)
-            draw.text((x + max(0, (w - int(self.font_small.getlength(p_fit))) // 2), y + 14), p_fit, font=self.font_small, fill=self.COLOR_MAIN)
-            draw.text((x + max(0, (w - int(self.font_small.getlength(pct_fit))) // 2), y + h - 8), pct_fit, font=self.font_small, fill=color)
+            self._draw_text_box(draw, (x, y + 13, w, max(1, h - 21)), price, self.COLOR_MAIN)
+            self._draw_text_box(draw, (x, y + h - 8, w, 8), pct, color)
             return
 
         # Horizontal split stock ticker (mini).
@@ -1715,7 +1971,7 @@ class ClockWidget(Widget):
             symbol = symbols[self._stock_idx % len(symbols)]
             data = self._stock_data(symbol, "1D")
             if not data or data.get("last_price") is None:
-                draw.text((x + 1, y + max(0, (h - 6) // 2)), "STOCKS LOADING", font=self.font_small, fill=self.COLOR_DIM)
+                self._draw_text_box(draw, (x, y, w, h), "STOCKS LOADING", self.COLOR_DIM, align="left")
                 return
 
             last = data.get("last_price")
@@ -1777,7 +2033,7 @@ class ClockWidget(Widget):
             parts.append((f"{sym} {price} {pct}", color))
 
         if not parts:
-            draw.text((x + 1, y + max(0, (h - 6) // 2)), "STOCKS LOADING", font=self.font_small, fill=self.COLOR_DIM)
+            self._draw_text_box(draw, (x, y, w, h), "STOCKS LOADING", self.COLOR_DIM, align="left")
             return
 
         ticker_key = " | ".join(text for text, _color in parts)
@@ -1795,7 +2051,7 @@ class ClockWidget(Widget):
         data = getattr(self.flight, "data", None)
         if not data:
             txt = str(getattr(self.flight, "status_text", "FLIGHT")).upper()
-            draw.text((x + 1, y + max(0, (h - 6) // 2)), self._fit_text(txt, max(0, w - 2), self.font_small), font=self.font_small, fill=self.COLOR_DIM)
+            self._draw_text_box(draw, (x, y, w, h), txt, self.COLOR_DIM, align="left")
             return
 
         flight_no = str((data.get("flight") or {}).get("iata") or getattr(config, "FLIGHT_NUMBER", "FLIGHT")).upper()
@@ -1816,7 +2072,7 @@ class ClockWidget(Widget):
     def _draw_widget_sports(self, draw, x, y, w, h, focused=False, scroll_mode="metro"):
         games = getattr(self.sports, "games", []) or []
         if not games:
-            draw.text((x + 1, y + max(0, (h - 6) // 2)), "NO GAMES", font=self.font_small, fill=self.COLOR_DIM)
+            self._draw_text_box(draw, (x, y, w, h), "NO GAMES", self.COLOR_DIM, align="left")
             return
 
         idx = getattr(self.sports, "current_game_index", 0) % len(games)
@@ -1826,11 +2082,9 @@ class ClockWidget(Widget):
 
         if focused:
             status = self.sports._status_text(game) if hasattr(self.sports, "_status_text") else "LIVE"
-            status_fit = self._fit_text(status, max(1, w - 2), self.font_small)
-            status_w = int(self.font_small.getlength(status_fit))
-            draw.text((x + max(0, (w - status_w) // 2), y + 1), status_fit, font=self.font_small, fill=self.COLOR_DIM)
-
             status_band_h = 8
+            self._draw_text_box(draw, (x, y, w, status_band_h), status, self.COLOR_DIM)
+
             row_gap = 2
             row_h = max(8, (h - status_band_h - row_gap) // 2)
             away_y = y + status_band_h
@@ -1839,20 +2093,27 @@ class ClockWidget(Widget):
 
             def draw_team_row(team, other, side, row_y):
                 team_color = tuple(team.get("color") or self.COLOR_ACCENT)
-                draw.rectangle((x, row_y + 1, x + bar_w - 1, min(y + h - 1, row_y + 7)), fill=team_color)
+                draw.rectangle((x, row_y + 1, x + bar_w - 1, min(y + h - 1, row_y + row_h - 1)), fill=team_color)
 
                 score = str(team.get("score", 0))
-                score_w = int(self.font_tall.getlength(score))
+                score_font = self._font_for_box(draw, score, max(1, w // 4), row_h, prefer_width_fit=True)
+                score_w = int(score_font.getlength(score))
                 score_x = x + w - score_w - 1
-                draw.text((score_x, row_y), score, font=self.font_tall, fill=self.COLOR_MAIN)
+                _left, score_top, _tw, score_h = self._font_text_metrics(draw, score, score_font)
+                score_y = row_y + max(0, (row_h - score_h) // 2) - score_top
+                draw.text((score_x, score_y), score, font=score_font, fill=self.COLOR_MAIN)
 
                 name_x = x + bar_w + 2
                 name_max_w = max(1, score_x - name_x - 1)
-                name = self._fit_text(str(team.get("abbr", "---")), name_max_w, self.font_tall)
-                draw.text((name_x, row_y), name, font=self.font_tall, fill=team_color)
+                name_raw = str(team.get("abbr", "---"))
+                name_font = self._font_for_box(draw, name_raw, name_max_w, row_h, prefer_width_fit=True)
+                name = self._fit_text(name_raw, name_max_w, name_font)
+                _left, name_top, _tw, name_h = self._font_text_metrics(draw, name, name_font)
+                name_y = row_y + max(0, (row_h - name_h) // 2) - name_top
+                draw.text((name_x, name_y), name, font=name_font, fill=team_color)
 
                 if game.get("possession") == side and hasattr(self.sports, "_draw_possession_arrow"):
-                    arrow_x = name_x + int(self.font_tall.getlength(name)) + 1
+                    arrow_x = name_x + int(name_font.getlength(name)) + 1
                     if arrow_x + 3 < score_x:
                         self.sports._draw_possession_arrow(draw, arrow_x, row_y + 2)
 
@@ -1935,12 +2196,12 @@ class ClockWidget(Widget):
 
     # --------------------------------------------------------------- utils
 
-    def _fit_text(self, text, max_width, font):
+    def _fit_text(self, text, max_width, font, ellipsis="..."):
         if not text:
             return ""
         txt = str(text)
         if int(font.getlength(txt)) <= max_width:
             return txt
-        while txt and int(font.getlength(txt + "...")) > max_width:
+        while txt and int(font.getlength(txt + ellipsis)) > max_width:
             txt = txt[:-1]
-        return (txt + "...") if txt else ""
+        return (txt + ellipsis) if txt else ""

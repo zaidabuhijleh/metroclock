@@ -23,7 +23,7 @@ class FlightWidget(Widget):
         self.COLOR_GREY = (150, 150, 150)
 
         try:
-            self.font = ImageFont.truetype(config.FONT_PATH_TALL, 10)
+            self.font = ImageFont.truetype(config.FONT_PATH_TALL, config.FONT_SIZE_TALL)
         except:
             self.font = ImageFont.load_default()
 
@@ -107,7 +107,7 @@ class FlightWidget(Widget):
                 self._status_scroll_text = text
                 self._status_scroll_frame = 0
             full_path = text_width + 15
-            scroll_pos = (self._status_scroll_frame // scroll.frame_stride("flight")) % (full_path + 30)
+            scroll_pos = int(self._status_scroll_frame / scroll.frame_stride("flight")) % (full_path + 30)
             self._status_scroll_frame += 1
             offset = max(0, scroll_pos - 15)
             if offset > text_width - width_limit:

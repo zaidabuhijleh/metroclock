@@ -11,7 +11,7 @@ class SetupStatusWidget(Widget):
         super().__init__(width, height)
         self._status_provider = status_provider
         try:
-            self.font = ImageFont.truetype(config.FONT_PATH_SMALL, 6)
+            self.font = ImageFont.truetype(config.FONT_PATH_SMALL, config.FONT_SIZE_SMALL)
         except Exception:
             self.font = ImageFont.load_default()
 
