@@ -138,6 +138,8 @@ class ClockLayoutPreset:
 class ClockWidget(Widget):
     """Standalone clock renderer with shared compact drawing helpers."""
 
+    _SHARED_RENDERED_CLOCK_FACE_CACHE = {}
+
     COLOR_BG = (0, 0, 0)
     COLOR_MAIN = (232, 238, 255)
     COLOR_ACCENT = (128, 186, 255)
@@ -226,11 +228,13 @@ class ClockWidget(Widget):
         self._stocks_mini_hold_key = None
         self._stocks_mini_hold_started = 0.0
         self._pomodoro_state_cache = None
+        self._last_config_reload = 0.0
 
         self._clock_face_font_cache = {}
         self._spleen_font_candidates_cache = None
         self._text_font_fit_cache = {}
         self._scroll_text_render_cache = {}
+        self._rendered_clock_face_cache = self._SHARED_RENDERED_CLOCK_FACE_CACHE
         self.font_small = self._load_spleen_size("5x8") or ImageFont.load_default()
         self.font_tall = self._load_spleen_size("6x12") or self.font_small
 
@@ -658,7 +662,10 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- state
 
     def update(self):
-        config_manager.reload_config()
+        now = time.time()
+        if now - self._last_config_reload >= 1.0:
+            config_manager.reload_config()
+            self._last_config_reload = now
 
     # --------------------------------------------------------------- draw
 
@@ -826,6 +833,11 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- clock faces
 
     def _render_clock_face(self, w, h, variant, theme):
+        cache_key = self._clock_face_render_cache_key(w, h, variant, theme)
+        cached = self._rendered_clock_face_cache.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+
         img = Image.new("RGB", (max(1, w), max(1, h)), theme.bg)
         d = ImageDraw.Draw(img)
         style = self._font_style()
@@ -839,7 +851,36 @@ class ClockWidget(Widget):
             except Exception:
                 d.text((1, 1), self._time_text(False), font=self.font_small, fill=theme.primary)
 
+        if len(self._rendered_clock_face_cache) >= 32:
+            self._rendered_clock_face_cache.pop(next(iter(self._rendered_clock_face_cache)), None)
+        self._rendered_clock_face_cache[cache_key] = img.copy()
         return img
+
+    def _clock_face_render_cache_key(self, w, h, variant, theme):
+        now, hour, ampm = self._time_parts()
+        time_text = f"{hour:02d}:{now.minute:02d}"
+        return (
+            int(w),
+            int(h),
+            str(variant),
+            time_text,
+            now.strftime("%Y-%m-%d"),
+            now.strftime("%a %b %d").upper(),
+            ampm,
+            self._use_24h(),
+            self._show_date(),
+            self._show_ampm(),
+            str(getattr(config, "CLOCK_OVERLAY_ORDER", "ampm_date") or "ampm_date"),
+            self._effective_clock_size(),
+            self._clock_face_size_key(),
+            theme.bg,
+            theme.primary,
+            theme.accent,
+            theme.accent_2,
+            theme.dim,
+            self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")),
+            self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")),
+        )
 
     def _time_parts(self):
         now = datetime.now()
