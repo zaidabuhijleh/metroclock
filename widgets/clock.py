@@ -1048,9 +1048,9 @@ class ClockWidget(Widget):
     def _clock_face_size_key(self):
         size = self._effective_clock_size()
         if size >= 1.0:
-            return "8x16"
+            return "12x24"
         if size >= 0.75:
-            return "6x12"
+            return "8x16"
         return "5x8"
 
     def _clock_face_font_spec(self):

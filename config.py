@@ -33,8 +33,8 @@ FONT_SIZE_SMALL = 6
 SPLEEN_FONT_FAMILY = "spleen"
 SPLEEN_FONT_SIZE_BY_CLOCK_SIZE = {
     0.5: "5x8",
-    0.75: "6x12",
-    1.0: "8x16",
+    0.75: "8x16",
+    1.0: "12x24",
 }
 SPLEEN_FONT_SIZE_ORDER = ("5x8", "6x12", "8x16", "12x24")
 CLOCK_FONT_STYLE = "font_spleen"
