@@ -290,7 +290,7 @@ class StocksWidget(Widget):
         # Advance 1 px every `stride` frames so motion is uniform regardless
         # of frame-to-frame timing jitter (and globally tunable via SCROLL_SPEED).
         self.ticker_frame += 1
-        src_x = (self.ticker_frame // scroll.frame_stride("stocks")) % strip.width
+        src_x = int(self.ticker_frame / scroll.frame_stride("stocks")) % strip.width
         first_w = min(self.width, strip.width - src_x)
         if first_w > 0:
             self.canvas.paste(

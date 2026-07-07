@@ -947,7 +947,7 @@ class MetroWidget(Widget):
             if prev_key != key or time_on_page < 0.05:
                 frames = 0
             scroll_frames = max(0, frames - self._scroll_hold_frames)
-            offset = min(scroll_frames // scroll.frame_stride("metro"), int(max_offset))
+            offset = min(int(scroll_frames / scroll.frame_stride("metro")), int(max_offset))
             self._row_scroll_state[row_y] = (key, frames + 1)
 
             x_pos = text_start_x - offset

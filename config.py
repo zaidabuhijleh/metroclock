@@ -102,11 +102,12 @@ STOCKS_TICKER_SPEED = 25  # legacy/unused — see SCROLL_SPEED
 # produce uniform motion on the LED matrix (whole pixels per fixed frame stride).
 #   "slow"   -> 1 px every 3 frames
 #   "medium" -> 1 px every 2 frames
+#   "relaxed"-> about 3/4 fast
 #   "fast"   -> 1 px every frame  (default)
 SCROLL_SPEED = "fast"
 # Per-widget overrides (leave as None or "" to inherit SCROLL_SPEED).
 SCROLL_SPEED_STOCKS = None
-SCROLL_SPEED_METRO = None
+SCROLL_SPEED_METRO = "relaxed"
 SCROLL_SPEED_SPORTS = None
 SCROLL_SPEED_FLIGHT = None
 
