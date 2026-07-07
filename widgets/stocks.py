@@ -339,12 +339,12 @@ class StocksWidget(Widget):
         for it in items:
             sym_w = int(ticker_font.getlength(it["symbol"]))
             price_w = self._measure_price_tall(self._fmt_price(it["last_price"]), font=ticker_font)
-            pct_w = int(ticker_font.getlength(self._fmt_pct(it["last_price"], it["prev_close"])))
+            pct_w = int(ticker_font.getlength(self._fmt_pct(it["last_price"], it["prev_close"], signed=False)))
             ah_w = 0
             if it["market_state"] in {"PRE", "POST"}:
                 ah_w = int(self.font_small.getlength("AH")) + 2
-            # SYM <space 3> price <space 3> arrow(3) <space 2> pct (+ optional AH tag)
-            widths.append(sym_w + 3 + price_w + 3 + 3 + 2 + pct_w + ah_w)
+            # SYM <space 3> price <space 4> pct (+ optional AH tag)
+            widths.append(sym_w + 3 + price_w + 4 + pct_w + ah_w)
 
         total_w = sum(widths) + gap * len(items)
         if total_w < self.width:
@@ -367,12 +367,9 @@ class StocksWidget(Widget):
 
             price_str = self._fmt_price(it["last_price"])
             self._draw_price_tall(d, x, y_text, price_str, self.COLOR_TEXT, font=ticker_font)
-            x += self._measure_price_tall(price_str, font=ticker_font) + 3
+            x += self._measure_price_tall(price_str, font=ticker_font) + 4
 
-            self._draw_arrow(d, x, y_text + max(0, (ticker_h - 4) // 2), change >= 0, chg_color)
-            x += 3 + 2
-
-            pct_str = self._fmt_pct(it["last_price"], it["prev_close"])
+            pct_str = self._fmt_pct(it["last_price"], it["prev_close"], signed=False)
             d.text((x, y_text), pct_str, font=ticker_font, fill=chg_color)
             x += int(ticker_font.getlength(pct_str))
 
@@ -414,8 +411,8 @@ class StocksWidget(Widget):
         self._draw_focus_header(draw, sym, price_str)
 
         # Sub row: change + timeframe label
-        chg_str = self._fmt_change(last, prev, signed=True, with_dollar=True)
-        pct_str = self._fmt_pct(last, prev, signed=True)
+        chg_str = self._fmt_change(last, prev, signed=False, with_dollar=True)
+        pct_str = self._fmt_pct(last, prev, signed=False)
         # tag for after-hours/pre on top-left of sub-row
         ms = data.get("market_state", "")
         x_sub = 1
@@ -606,32 +603,13 @@ class StocksWidget(Widget):
         except Exception:
             return 8
 
-    def _decimal_dot_y(self, y, font):
-        try:
-            return y + max(0, self._font_height(font) - 3)
-        except Exception:
-            return y + 5
-
     def _measure_price_tall(self, price_str, font=None):
         font = font or self.font_tall
-        if "." not in price_str:
-            return int(font.getlength(price_str))
-        whole, frac = price_str.split(".", 1)
-        return int(font.getlength(whole)) + 1 + int(font.getlength(frac))
+        return int(font.getlength(price_str))
 
     def _draw_price_tall(self, draw, x, y, price_str, color, font=None):
         font = font or self.font_tall
-        # Use a 1-pixel decimal dot for compact, cleaner price rendering.
-        if "." not in price_str:
-            draw.text((x, y), price_str, font=font, fill=color)
-            return
-        whole, frac = price_str.split(".", 1)
-        draw.text((x, y), whole, font=font, fill=color)
-        x_dot = x + int(font.getlength(whole))
-        y_dot = self._decimal_dot_y(y, font)
-        draw.point((x_dot, y_dot), fill=color)
-        draw.point((x_dot, y_dot + 1), fill=color)
-        draw.text((x_dot + 1, y), frac, font=font, fill=color)
+        draw.text((x, y), price_str, font=font, fill=color)
 
     def _draw_text_small_with_compact_plus(self, draw, x, y, text, color):
         if not text:
