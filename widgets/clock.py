@@ -1959,7 +1959,7 @@ class ClockWidget(Widget):
             change = self.stocks._change(last, prev) if hasattr(self.stocks, "_change") else 0.0
             pct = self.stocks._fmt_pct(last, prev, signed=False) if hasattr(self.stocks, "_fmt_pct") else "--%"
             price = self.stocks._fmt_price(last) if hasattr(self.stocks, "_fmt_price") else str(last)
-            color = self.COLOR_UP if change >= 0 else self.COLOR_DOWN
+            color = self._stock_change_color(change)
 
             self._draw_text_box(draw, (x, y + 13, w, max(1, h - 21)), price, self.COLOR_MAIN)
             self._draw_text_box(draw, (x, y + h - 8, w, 8), pct, color)
@@ -1980,7 +1980,7 @@ class ClockWidget(Widget):
             price = self.stocks._fmt_price(last) if hasattr(self.stocks, "_fmt_price") else str(last)
             pct = self.stocks._fmt_pct(last, prev, signed=False) if hasattr(self.stocks, "_fmt_pct") else "--%"
             text = f"{symbol} {price} {pct}"
-            color = self.COLOR_UP if change >= 0 else self.COLOR_DOWN
+            color = self._stock_change_color(change)
             scroll_key = f"stocks-mini:metro:{symbol}"
             if self._stocks_mini_last_symbol != symbol:
                 self._stocks_mini_last_symbol = symbol
@@ -2029,7 +2029,7 @@ class ClockWidget(Widget):
             change = self.stocks._change(last, prev) if hasattr(self.stocks, "_change") else 0.0
             price = self.stocks._fmt_price(last) if hasattr(self.stocks, "_fmt_price") else str(last)
             pct = self.stocks._fmt_pct(last, prev, signed=False) if hasattr(self.stocks, "_fmt_pct") else "--%"
-            color = self.COLOR_UP if change >= 0 else self.COLOR_DOWN
+            color = self._stock_change_color(change)
             parts.append((f"{sym} {price} {pct}", color))
 
         if not parts:
@@ -2046,6 +2046,18 @@ class ClockWidget(Widget):
             key=f"stocks:ticker:{ticker_key}",
             speed=18.0,
         )
+
+    def _stock_change_color(self, change):
+        if hasattr(self.stocks, "_change_color"):
+            try:
+                return self.stocks._change_color(change)
+            except Exception:
+                pass
+        if change > 0:
+            return self.COLOR_UP
+        if change < 0:
+            return self.COLOR_DOWN
+        return self.COLOR_DIM
 
     def _draw_widget_flight(self, draw, x, y, w, h, scroll_mode="metro"):
         data = getattr(self.flight, "data", None)
