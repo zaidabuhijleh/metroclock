@@ -76,6 +76,10 @@ class StocksWidget(Widget):
             self.font_small = ImageFont.truetype(config.FONT_PATH_SMALL, config.FONT_SIZE_SMALL)
         except Exception:
             self.font_small = ImageFont.load_default()
+        try:
+            self.font_ticker = ImageFont.truetype("assets/fonts/spleen/6x12.bdf", 12)
+        except Exception:
+            self.font_ticker = self.font_tall
 
     # ------------------------------------------------------------- config
 
@@ -329,12 +333,13 @@ class StocksWidget(Widget):
             return self._strip_img
 
         gap = 10
+        ticker_font = self.font_ticker
         # Pre-compute widths using a temporary draw context.
         widths = []
         for it in items:
-            sym_w = int(self.font_tall.getlength(it["symbol"]))
-            price_w = self._measure_price_tall(self._fmt_price(it["last_price"]))
-            pct_w = int(self.font_tall.getlength(self._fmt_pct(it["last_price"], it["prev_close"])))
+            sym_w = int(ticker_font.getlength(it["symbol"]))
+            price_w = self._measure_price_tall(self._fmt_price(it["last_price"]), font=ticker_font)
+            pct_w = int(ticker_font.getlength(self._fmt_pct(it["last_price"], it["prev_close"])))
             ah_w = 0
             if it["market_state"] in {"PRE", "POST"}:
                 ah_w = int(self.font_small.getlength("AH")) + 2
@@ -348,30 +353,33 @@ class StocksWidget(Widget):
         img = Image.new("RGB", (total_w, self.height), self.COLOR_BG)
         d = ImageDraw.Draw(img)
 
-        y_text = (self.height - 10) // 2  # vertical center for 10px font
+        ticker_h = self._font_height(ticker_font)
+        small_h = self._font_height(self.font_small)
+        y_text = max(0, (self.height - ticker_h) // 2)
 
         x = 0
         for it, _w in zip(items, widths):
             change = self._change(it["last_price"], it["prev_close"])
             chg_color = self._change_color(change)
 
-            d.text((x, y_text), it["symbol"], font=self.font_tall, fill=self.COLOR_TEXT)
-            x += int(self.font_tall.getlength(it["symbol"])) + 3
+            d.text((x, y_text), it["symbol"], font=ticker_font, fill=self.COLOR_TEXT)
+            x += int(ticker_font.getlength(it["symbol"])) + 3
 
             price_str = self._fmt_price(it["last_price"])
-            self._draw_price_tall(d, x, y_text, price_str, self.COLOR_TEXT)
-            x += self._measure_price_tall(price_str) + 3
+            self._draw_price_tall(d, x, y_text, price_str, self.COLOR_TEXT, font=ticker_font)
+            x += self._measure_price_tall(price_str, font=ticker_font) + 3
 
-            self._draw_arrow(d, x, y_text + 2, change >= 0, chg_color)
+            self._draw_arrow(d, x, y_text + max(0, (ticker_h - 4) // 2), change >= 0, chg_color)
             x += 3 + 2
 
             pct_str = self._fmt_pct(it["last_price"], it["prev_close"])
-            d.text((x, y_text), pct_str, font=self.font_tall, fill=chg_color)
-            x += int(self.font_tall.getlength(pct_str))
+            d.text((x, y_text), pct_str, font=ticker_font, fill=chg_color)
+            x += int(ticker_font.getlength(pct_str))
 
             if it["market_state"] in {"PRE", "POST"}:
                 x += 2
-                d.text((x, y_text + 2), "AH", font=self.font_small, fill=self.COLOR_AFTER_HOURS)
+                ah_y = y_text + max(0, (ticker_h - small_h) // 2)
+                d.text((x, ah_y), "AH", font=self.font_small, fill=self.COLOR_AFTER_HOURS)
                 x += int(self.font_small.getlength("AH"))
 
             x += gap
@@ -591,23 +599,39 @@ class StocksWidget(Widget):
             text = text[:-1]
         return (text + ellipsis) if text else ""
 
-    def _measure_price_tall(self, price_str):
-        if "." not in price_str:
-            return int(self.font_tall.getlength(price_str))
-        whole, frac = price_str.split(".", 1)
-        return int(self.font_tall.getlength(whole)) + 1 + int(self.font_tall.getlength(frac))
+    def _font_height(self, font):
+        try:
+            top, bottom = font.getbbox("0")[1], font.getbbox("0")[3]
+            return max(1, int(bottom - top))
+        except Exception:
+            return 8
 
-    def _draw_price_tall(self, draw, x, y, price_str, color):
+    def _decimal_dot_y(self, y, font):
+        try:
+            return y + max(0, self._font_height(font) - 3)
+        except Exception:
+            return y + 5
+
+    def _measure_price_tall(self, price_str, font=None):
+        font = font or self.font_tall
+        if "." not in price_str:
+            return int(font.getlength(price_str))
+        whole, frac = price_str.split(".", 1)
+        return int(font.getlength(whole)) + 1 + int(font.getlength(frac))
+
+    def _draw_price_tall(self, draw, x, y, price_str, color, font=None):
+        font = font or self.font_tall
         # Use a 1-pixel decimal dot for compact, cleaner price rendering.
         if "." not in price_str:
-            draw.text((x, y), price_str, font=self.font_tall, fill=color)
+            draw.text((x, y), price_str, font=font, fill=color)
             return
         whole, frac = price_str.split(".", 1)
-        draw.text((x, y), whole, font=self.font_tall, fill=color)
-        x_dot = x + int(self.font_tall.getlength(whole))
-        y_dot = y + 8
+        draw.text((x, y), whole, font=font, fill=color)
+        x_dot = x + int(font.getlength(whole))
+        y_dot = self._decimal_dot_y(y, font)
         draw.point((x_dot, y_dot), fill=color)
-        draw.text((x_dot + 1, y), frac, font=self.font_tall, fill=color)
+        draw.point((x_dot, y_dot + 1), fill=color)
+        draw.text((x_dot + 1, y), frac, font=font, fill=color)
 
     def _draw_text_small_with_compact_plus(self, draw, x, y, text, color):
         if not text:
