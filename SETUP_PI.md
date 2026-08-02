@@ -30,6 +30,7 @@ This script:
 - applies known fix for `Imaging.h`
 - writes/enables `metroclock.service`
 - prepares `/etc/metroclock/config.json`
+- installs `hostapd`/`dnsmasq` for setup mode and `avahi-daemon` for `metroclock.local`
 
 ## 3) Set Boot Config Flags
 
@@ -83,3 +84,7 @@ sudo systemctl status metroclock --no-pager -l
 curl -sS http://127.0.0.1/api/status | head -c 500; echo
 ```
 
+The Wi-Fi setup manager keeps monitoring after boot. If saved Wi-Fi drops, it
+starts `MetroClock-Setup`, then retries saved Wi-Fi every
+`WIFI_SETUP_RETRY_SECONDS` seconds so late phone hotspots can recover without a
+power-cycle.

@@ -27,9 +27,16 @@ class SetupStatusWidget(Widget):
         ip = str(status.get("hotspot_ip") or "192.168.4.1")
         reason = str(status.get("reason") or "WiFi setup")
         last_error = str(status.get("last_error") or "")
+        active = bool(status.get("active"))
+        checking = bool(status.get("checking"))
 
         if last_error:
             pages = self._error_pages(last_error)
+        elif checking and not active:
+            pages = [
+                ("WIFI CHECK", "TRY SAVED", reason.upper()[:16]),
+                ("HOTSPOT", "PAUSED", "RETRYING"),
+            ]
         else:
             pages = [
                 ("WIFI LOST", "SETUP MODE", reason.upper()[:16]),
