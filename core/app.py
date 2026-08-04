@@ -9,6 +9,7 @@ import config
 import web_server
 from core.display import Display
 from core.modes import DEFAULT_MODE_CATALOG, ModeCatalog
+from core.status_frame import render_status_frame
 from core.widget import Widget
 from widgets.ambient import AmbientWidget
 from widgets.clock import ClockWidget
@@ -103,6 +104,15 @@ class DisplayManager:
         self._display.draw_image(image)
         self._display.push()
 
+    def status_frame(self, lines):
+        return render_status_frame(self._hardware.width, self._hardware.height, lines)
+
+    def present_status(self, lines, brightness: int, mode: str = "setup"):
+        self.ensure_mode(mode)
+        frame = self.status_frame(lines)
+        self.present(frame, brightness)
+        return frame
+
 
 class WidgetRenderer:
     """Wraps a widget with a uniform render lifecycle."""
@@ -186,6 +196,9 @@ class MetroClockApp:
         self._error_delay = error_delay
         self._last_mode = None
         self._last_perf_log = 0.0
+        self._last_error_frame_at = 0.0
+        self._last_error_signature = None
+        self._last_blank_frame_log = 0.0
 
     @classmethod
     def build_default(cls) -> "MetroClockApp":
@@ -196,6 +209,10 @@ class MetroClockApp:
             brightness=config.MATRIX_BRIGHTNESS,
         )
         display = DisplayManager(hardware=hardware)
+        try:
+            display.present_status(("BOOTING", "METROCLOCK", "STARTING"), hardware.brightness)
+        except Exception as exc:
+            print(f"Startup status frame failed: {exc}", flush=True)
         widgets = WidgetRegistry(width=config.MATRIX_WIDTH, height=config.MATRIX_HEIGHT)
         try:
             from core.wifi_setup import WifiSetupManager
@@ -220,14 +237,18 @@ class MetroClockApp:
             print("\nExiting...")
 
     def _tick(self):
-        mode = self._state_provider.get_display_mode()
-        if self._wifi_setup_manager is not None and self._wifi_setup_manager.should_show_setup_message():
-            mode = "setup"
+        mode = "unknown"
         try:
+            mode = self._state_provider.get_display_mode()
+            if self._wifi_setup_manager is not None and self._wifi_setup_manager.should_show_setup_message():
+                mode = "setup"
             tick_start = time.perf_counter()
             self._display.ensure_mode(mode)
             ensured_at = time.perf_counter()
             frame = self._widgets.render_mode(mode)
+            if self._is_blank_frame(frame):
+                self._log_blank_frame(mode)
+                frame = self._display.status_frame(("NO CONTENT", mode, "FRAME BLANK"))
             rendered_at = time.perf_counter()
             brightness = self._state_provider.get_brightness()
             self._display.present(frame, brightness)
@@ -238,7 +259,46 @@ class MetroClockApp:
         except Exception as exc:
             print(f"Render loop error ({mode}): {exc}", flush=True)
             traceback.print_exc()
+            self._present_error_frame(mode, exc)
             time.sleep(self._error_delay)
+
+    def _present_error_frame(self, mode: str, exc: Exception):
+        now = time.time()
+        signature = (str(mode), type(exc).__name__, str(exc)[:64])
+        if signature == self._last_error_signature and now - self._last_error_frame_at < 5.0:
+            return
+
+        try:
+            frame = self._display.present_status(
+                ("RENDER ERR", str(mode or "UNKNOWN"), str(exc) or type(exc).__name__),
+                self._fallback_brightness(),
+            )
+            web_server.set_latest_frame(frame)
+            self._last_error_frame_at = now
+            self._last_error_signature = signature
+        except Exception as status_exc:
+            print(f"Error status frame failed: {status_exc}", flush=True)
+
+    @staticmethod
+    def _fallback_brightness() -> int:
+        try:
+            return int(web_server.get_brightness())
+        except Exception:
+            return int(getattr(config, "MATRIX_BRIGHTNESS", 100))
+
+    @staticmethod
+    def _is_blank_frame(frame) -> bool:
+        try:
+            return frame.getbbox() is None
+        except Exception:
+            return False
+
+    def _log_blank_frame(self, mode: str):
+        now = time.time()
+        if now - self._last_blank_frame_log < 5.0:
+            return
+        print(f"Blank frame from mode={mode}; showing fallback status", flush=True)
+        self._last_blank_frame_log = now
 
     def _log_perf_if_needed(self, mode, tick_start, ensured_at, rendered_at, presented_at):
         total_ms = (presented_at - tick_start) * 1000.0

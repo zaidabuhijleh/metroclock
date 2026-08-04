@@ -33,6 +33,8 @@ class WifiSetupStatus:
     hotspot_ssid: str = "MetroClock-Setup"
     hotspot_ip: str = "192.168.4.1"
     url: str = "http://192.168.4.1"
+    retry_interval_seconds: int = 120
+    monitor_interval_seconds: int = 15
     last_error: str = ""
     updated_at: float = field(default_factory=time.time)
 
@@ -49,6 +51,8 @@ class WifiSetupStatus:
             "hotspot_ssid": self.hotspot_ssid,
             "hotspot_ip": self.hotspot_ip,
             "url": self.url,
+            "retry_interval_seconds": self.retry_interval_seconds,
+            "monitor_interval_seconds": self.monitor_interval_seconds,
             "last_error": self.last_error,
             "updated_at": self.updated_at,
         }
@@ -65,16 +69,22 @@ class WifiSetupManager:
             self.connect_timeout = max(5, int(getattr(config, "WIFI_CONNECT_TIMEOUT_SECONDS", 45)))
         except Exception:
             self.connect_timeout = 45
+        self.retry_interval = self._config_seconds("WIFI_SETUP_RETRY_SECONDS", 120, minimum=30)
+        self.monitor_interval = self._config_seconds("WIFI_MONITOR_INTERVAL_SECONDS", 15, minimum=5)
         self.enabled = bool(getattr(config, "WIFI_SETUP_ENABLED", True))
         self._lock = threading.Lock()
+        self._transition_lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._last_status_log = None
         self._status = WifiSetupStatus(
             enabled=self.enabled,
             interface=self.interface,
             hotspot_ssid=self.hotspot_ssid,
             hotspot_ip=self.hotspot_ip,
             url=f"http://{self.hotspot_ip}",
+            retry_interval_seconds=self.retry_interval,
+            monitor_interval_seconds=self.monitor_interval,
         )
 
     def start(self):
@@ -91,36 +101,19 @@ class WifiSetupManager:
         status = self.status()
         if status.get("active") or status.get("last_error"):
             return True
-        return bool(getattr(config, "SETUP_MODE", False) and not status.get("checking"))
+        return bool(getattr(config, "SETUP_MODE", False))
 
     def connect_to_network(self, ssid: str, password: str = ""):
         ssid = str(ssid or "").strip()
         if not ssid:
             raise ValueError("SSID required")
-        self._write_wpa_supplicant_network(ssid, str(password or ""))
-        config_manager.write_config({"SETUP_MODE": False})
-        self._set_status(active=False, checking=True, reason=f"Connecting to {ssid}", ssid=ssid, last_error="")
 
-        def _connect():
-            try:
-                self._stop_hotspot()
-                self._restart_wifi_client()
-                if self._wait_for_connection(self.connect_timeout):
-                    connected = self._connection_info()
-                    self._set_status(
-                        active=False,
-                        connected=True,
-                        checking=False,
-                        reason="Connected",
-                        ssid=connected.get("ssid", ssid),
-                        ip=connected.get("ip", ""),
-                    )
-                else:
-                    self._start_hotspot("Could not join WiFi")
-            except Exception as exc:
-                self._start_hotspot(f"WiFi connect failed: {exc}")
-
-        threading.Thread(target=_connect, name="wifi-connect", daemon=True).start()
+        threading.Thread(
+            target=self._connect_to_network,
+            args=(ssid, str(password or "")),
+            name="wifi-connect",
+            daemon=True,
+        ).start()
 
     def _run(self):
         if not self.enabled:
@@ -136,25 +129,70 @@ class WifiSetupManager:
             )
             return
 
-        self._set_status(checking=True, reason="Trying saved WiFi networks")
-        if getattr(config, "SETUP_MODE", False):
-            self._stop_hotspot()
-            self._restart_wifi_client()
+        was_in_setup_mode = bool(getattr(config, "SETUP_MODE", False))
+        if not self._try_saved_wifi(
+            "Trying saved WiFi networks",
+            restart_client=was_in_setup_mode,
+            stop_hotspot=was_in_setup_mode,
+        ):
+            self._start_hotspot("Could not join saved WiFi")
 
-        if self._wait_for_connection(self.connect_timeout):
-            connected = self._connection_info()
+        self._supervise()
+
+    def _supervise(self):
+        while not self._stop_event.is_set():
+            status = self.status()
+            if status.get("active") or status.get("last_error"):
+                if self._wait_for_stop(self.retry_interval):
+                    return
+                if not self._try_saved_wifi("Retrying saved WiFi", restart_client=True, stop_hotspot=True):
+                    self._start_hotspot("Could not join saved WiFi")
+                continue
+
+            if self._wait_for_stop(self.monitor_interval):
+                return
+            if self._is_connected():
+                self._refresh_connected_status()
+                continue
+
+            if not self._try_saved_wifi("WiFi lost; reconnecting", restart_client=True, stop_hotspot=False):
+                self._start_hotspot("WiFi lost")
+
+    def _connect_to_network(self, ssid: str, password: str):
+        try:
+            with self._transition_lock:
+                self._write_wpa_supplicant_network(ssid, password)
+                config_manager.write_config({"SETUP_MODE": False})
+            if not self._try_saved_wifi(
+                f"Connecting to {ssid}",
+                restart_client=True,
+                stop_hotspot=True,
+                fallback_ssid=ssid,
+            ):
+                self._start_hotspot("Could not join WiFi")
+        except Exception as exc:
+            self._start_hotspot(f"WiFi connect failed: {exc}")
+
+    def _try_saved_wifi(self, reason: str, restart_client: bool, stop_hotspot: bool, fallback_ssid: str = "") -> bool:
+        with self._transition_lock:
             self._set_status(
                 active=False,
-                connected=True,
-                checking=False,
-                reason="Connected",
-                ssid=connected.get("ssid", ""),
-                ip=connected.get("ip", ""),
+                connected=False,
+                checking=True,
+                reason=reason,
+                ssid=fallback_ssid,
+                ip="",
+                last_error="",
             )
-            config_manager.write_config({"SETUP_MODE": False})
-            return
-
-        self._start_hotspot("Could not join saved WiFi")
+            if stop_hotspot:
+                self._stop_hotspot()
+            if restart_client:
+                self._restart_wifi_client()
+            if not self._wait_for_connection(self.connect_timeout):
+                self._set_status(active=False, connected=False, checking=False, reason=reason)
+                return False
+            self._mark_connected(fallback_ssid=fallback_ssid)
+            return True
 
     def _wait_for_connection(self, timeout_seconds: int) -> bool:
         deadline = time.time() + timeout_seconds
@@ -164,38 +202,62 @@ class WifiSetupManager:
             time.sleep(2)
         return self._is_connected()
 
+    def _wait_for_stop(self, timeout_seconds: int) -> bool:
+        return self._stop_event.wait(max(1, int(timeout_seconds)))
+
     def _start_hotspot(self, reason: str):
-        try:
-            self._ensure_hotspot_config()
-            self._run_command(["systemctl", "stop", "wpa_supplicant"], timeout=8)
-            self._run_command(["systemctl", "stop", f"wpa_supplicant@{self.interface}"], timeout=8)
-            self._run_command(["ip", "addr", "flush", "dev", self.interface], timeout=8, check=True)
-            self._run_command(["ip", "addr", "add", f"{self.hotspot_ip}/24", "dev", self.interface], timeout=8, check=True)
-            self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8, check=True)
-            self._run_command(["systemctl", "restart", "dnsmasq"], timeout=12, check=True)
-            self._run_command(["systemctl", "unmask", "hostapd"], timeout=12)
-            self._run_command(["systemctl", "restart", "hostapd"], timeout=12, check=True)
-            config_manager.write_config({"SETUP_MODE": True})
-            self._set_status(
-                active=True,
-                connected=False,
-                checking=False,
-                reason=reason,
-                ssid="",
-                ip=self.hotspot_ip,
-                last_error="",
-            )
-        except Exception as exc:
-            config_manager.write_config({"SETUP_MODE": False})
-            self._restart_wifi_client()
-            self._set_status(
-                active=False,
-                connected=False,
-                checking=False,
-                reason=reason,
-                ip="",
-                last_error=str(exc),
-            )
+        with self._transition_lock:
+            try:
+                self._ensure_hotspot_config()
+                self._run_command(["systemctl", "stop", "wpa_supplicant"], timeout=8)
+                self._run_command(["systemctl", "stop", f"wpa_supplicant@{self.interface}"], timeout=8)
+                self._run_command(["ip", "addr", "flush", "dev", self.interface], timeout=8, check=True)
+                self._run_command(["ip", "addr", "add", f"{self.hotspot_ip}/24", "dev", self.interface], timeout=8, check=True)
+                self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8, check=True)
+                self._run_command(["systemctl", "restart", "dnsmasq"], timeout=12, check=True)
+                self._run_command(["systemctl", "unmask", "hostapd"], timeout=12)
+                self._run_command(["systemctl", "restart", "hostapd"], timeout=12, check=True)
+                config_manager.write_config({"SETUP_MODE": True})
+                self._set_status(
+                    active=True,
+                    connected=False,
+                    checking=False,
+                    reason=reason,
+                    ssid="",
+                    ip=self.hotspot_ip,
+                    last_error="",
+                )
+            except Exception as exc:
+                config_manager.write_config({"SETUP_MODE": False})
+                self._restart_wifi_client()
+                self._set_status(
+                    active=False,
+                    connected=False,
+                    checking=False,
+                    reason=reason,
+                    ip="",
+                    last_error=str(exc),
+                )
+
+    def _mark_connected(self, fallback_ssid: str = ""):
+        connected = self._connection_info()
+        self._set_status(
+            active=False,
+            connected=True,
+            checking=False,
+            reason="Connected",
+            ssid=connected.get("ssid") or fallback_ssid,
+            ip=connected.get("ip", ""),
+            last_error="",
+        )
+        config_manager.write_config({"SETUP_MODE": False})
+
+    def _refresh_connected_status(self):
+        connected = self._connection_info()
+        status = self.status()
+        if connected.get("ssid", "") == status.get("ssid", "") and connected.get("ip", "") == status.get("ip", ""):
+            return
+        self._mark_connected(fallback_ssid=str(status.get("ssid") or ""))
 
     def _stop_hotspot(self):
         self._run_command(["systemctl", "stop", "hostapd"], timeout=8)
@@ -330,7 +392,9 @@ class WifiSetupManager:
         ip = info.get("ip", "")
         if not ip or ip == self.hotspot_ip:
             return False
-        return bool(info.get("ssid") or self._has_default_route())
+        if self._resolve_command("iwgetid") is not None:
+            return bool(info.get("ssid"))
+        return self._has_default_route()
 
     def _connection_info(self) -> Dict[str, str]:
         return {
@@ -419,4 +483,42 @@ class WifiSetupManager:
             self._status.hotspot_ssid = self.hotspot_ssid
             self._status.hotspot_ip = self.hotspot_ip
             self._status.url = f"http://{self.hotspot_ip}"
+            self._status.retry_interval_seconds = self.retry_interval
+            self._status.monitor_interval_seconds = self.monitor_interval
             self._status.updated_at = time.time()
+            self._log_status_locked()
+
+    def _log_status_locked(self):
+        snapshot = (
+            self._status.active,
+            self._status.connected,
+            self._status.checking,
+            self._status.reason,
+            self._status.ssid,
+            self._status.ip,
+            self._status.last_error,
+        )
+        if snapshot == self._last_status_log:
+            return
+        error = self._status.last_error
+        if len(error) > 120:
+            error = error[:117] + "..."
+        print(
+            "WiFi status: "
+            f"active={self._status.active} "
+            f"connected={self._status.connected} "
+            f"checking={self._status.checking} "
+            f"ssid={self._status.ssid or '-'} "
+            f"ip={self._status.ip or '-'} "
+            f"reason={self._status.reason!r} "
+            f"error={error!r}",
+            flush=True,
+        )
+        self._last_status_log = snapshot
+
+    @staticmethod
+    def _config_seconds(key: str, default: int, minimum: int) -> int:
+        try:
+            return max(minimum, int(getattr(config, key, default)))
+        except Exception:
+            return default

@@ -16,6 +16,7 @@ sudo apt-get install -y \
   python3-dev \
   hostapd \
   dnsmasq \
+  avahi-daemon \
   wireless-tools \
   build-essential \
   cmake \
@@ -83,6 +84,7 @@ fi
 sudo systemctl unmask hostapd || true
 sudo systemctl disable --now hostapd || true
 sudo systemctl disable --now dnsmasq || true
+sudo systemctl enable --now avahi-daemon || true
 sudo systemctl daemon-reload
 sudo systemctl enable metroclock
 sudo systemctl restart metroclock
