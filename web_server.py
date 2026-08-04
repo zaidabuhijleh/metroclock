@@ -615,6 +615,8 @@ def _mask_config(cfg: dict) -> dict:
         "WMATA_API_KEY",
         "OPENWEATHER_API_KEY",
         "AVIATIONSTACK_API_KEY",
+        "METROCLOCK_CLOUD_DEVICE_TOKEN",
+        "METROCLOCK_CLOUD_PAIRING_CODE",
     }
     result = {}
     for key, value in cfg.items():

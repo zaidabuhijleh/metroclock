@@ -185,6 +185,7 @@ class MetroClockApp:
         widgets: WidgetRegistry,
         display: DisplayManager,
         wifi_setup_manager=None,
+        cloud_agent=None,
         loop_delay: float = 0.02,
         error_delay: float = 0.25,
     ):
@@ -192,6 +193,7 @@ class MetroClockApp:
         self._widgets = widgets
         self._display = display
         self._wifi_setup_manager = wifi_setup_manager
+        self._cloud_agent = cloud_agent
         self._loop_delay = loop_delay
         self._error_delay = error_delay
         self._last_mode = None
@@ -221,13 +223,28 @@ class MetroClockApp:
         except Exception as exc:
             print(f"WiFi setup manager disabled: {exc}")
             wifi_setup_manager = None
-        return cls(state_provider=web_server, widgets=widgets, display=display, wifi_setup_manager=wifi_setup_manager)
+        try:
+            from core.cloud_agent import MetroClockCloudAgent
+
+            cloud_agent = MetroClockCloudAgent()
+        except Exception as exc:
+            print(f"Cloud agent disabled: {exc}")
+            cloud_agent = None
+        return cls(
+            state_provider=web_server,
+            widgets=widgets,
+            display=display,
+            wifi_setup_manager=wifi_setup_manager,
+            cloud_agent=cloud_agent,
+        )
 
     def run_forever(self):
         if self._wifi_setup_manager is not None:
             web_server.set_wifi_setup_manager(self._wifi_setup_manager)
             self._wifi_setup_manager.start()
         web_server.start_server()
+        if self._cloud_agent is not None:
+            self._cloud_agent.start()
         print("Dashboard Started. Press Ctrl+C to exit.", flush=True)
 
         try:
