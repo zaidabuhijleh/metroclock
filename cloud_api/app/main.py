@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -152,8 +153,8 @@ def health():
 
 @app.get("/debug", response_class=HTMLResponse)
 def debug_dashboard():
-    return HTMLResponse(
-        """<!doctype html>
+    current_settings = get_settings()
+    page = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -254,6 +255,20 @@ def debug_dashboard():
 
   <section>
     <h2>Auth</h2>
+    <div class="grid">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="email">
+      </div>
+      <div>
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password">
+      </div>
+    </div>
+    <button onclick="signIn()">Sign In</button>
+    <button class="secondary" onclick="signUp()">Sign Up</button>
+    <button class="secondary" onclick="signOut()">Sign Out</button>
+    <pre id="authOut"></pre>
     <label for="token">Supabase user access token</label>
     <textarea id="token" placeholder="eyJ..."></textarea>
     <button class="secondary" onclick="saveToken()">Save Token Locally</button>
@@ -308,8 +323,11 @@ def debug_dashboard():
 </main>
 
 <script>
+const SUPABASE_URL = __SUPABASE_URL__;
+const SUPABASE_PUBLISHABLE_KEY = __SUPABASE_PUBLISHABLE_KEY__;
 const tokenEl = document.getElementById("token");
 tokenEl.value = localStorage.getItem("metroclockDebugToken") || "";
+document.getElementById("email").value = localStorage.getItem("metroclockDebugEmail") || "";
 
 function saveToken() {
   localStorage.setItem("metroclockDebugToken", tokenEl.value.trim());
@@ -331,6 +349,76 @@ function authHeaders() {
 
 function show(id, value) {
   document.getElementById(id).textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+async function supabaseAuth(path, body) {
+  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+    throw new Error("Supabase debug auth is not configured on this server.");
+  }
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_PUBLISHABLE_KEY
+    },
+    body: JSON.stringify(body)
+  });
+  const text = await res.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; }
+  catch { data = text; }
+  if (!res.ok) throw new Error(JSON.stringify(data));
+  return data;
+}
+
+function authBody() {
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  if (!email || !password) throw new Error("Email and password are required.");
+  localStorage.setItem("metroclockDebugEmail", email);
+  return { email, password };
+}
+
+function storeSession(data) {
+  if (!data.access_token) {
+    show("authOut", {
+      message: "No access token returned. If this was sign up, email confirmation may be required.",
+      response: data
+    });
+    return;
+  }
+  tokenEl.value = data.access_token;
+  saveToken();
+  show("authOut", {
+    signed_in: true,
+    user: data.user ? { id: data.user.id, email: data.user.email } : null,
+    expires_in: data.expires_in
+  });
+}
+
+async function signIn() {
+  try {
+    const data = await supabaseAuth("token?grant_type=password", authBody());
+    storeSession(data);
+  } catch (err) {
+    show("authOut", String(err.message || err));
+  }
+}
+
+async function signUp() {
+  try {
+    const body = authBody();
+    body.data = { display_name: "MetroClock Debug" };
+    const data = await supabaseAuth("signup", body);
+    storeSession(data);
+  } catch (err) {
+    show("authOut", String(err.message || err));
+  }
+}
+
+function signOut() {
+  clearToken();
+  show("authOut", { signed_in: false });
 }
 
 async function request(path, options) {
@@ -405,7 +493,9 @@ async function sendCommand() {
 </script>
 </body>
 </html>"""
-    )
+    page = page.replace("__SUPABASE_URL__", json.dumps(current_settings.supabase_url))
+    page = page.replace("__SUPABASE_PUBLISHABLE_KEY__", json.dumps(current_settings.supabase_publishable_key))
+    return HTMLResponse(page)
 
 
 @app.post("/api/devices/pair", response_model=PairDeviceResponse)

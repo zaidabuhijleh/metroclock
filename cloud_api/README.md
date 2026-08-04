@@ -76,11 +76,15 @@ normal flow.
 ## Internal Debug Page
 
 `GET /debug` serves a tiny internal helper page for manual testing. It lets you
-paste a Supabase user access token, create pairing tokens, list devices, and
-send simple commands.
+sign in with Supabase email/password auth, create pairing tokens, list devices,
+and send simple commands. You can also paste a Supabase user access token
+manually if needed.
 
 This is for development/debugging only. It should not be presented as a
 customer dashboard.
+
+Google sign-in can be added later after the Google provider and redirect URLs
+are configured in Supabase Auth.
 
 ## Implemented Pi Endpoints
 
