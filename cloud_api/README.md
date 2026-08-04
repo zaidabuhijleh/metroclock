@@ -86,6 +86,16 @@ customer dashboard.
 Google sign-in can be added later after the Google provider and redirect URLs
 are configured in Supabase Auth.
 
+For email confirmation in the debug page, add this URL in Supabase Auth URL
+Configuration as an allowed redirect URL:
+
+```text
+https://metroclock-cloud-api.onrender.com/debug
+```
+
+If this is not configured, Supabase may redirect confirmations to the default
+Site URL, which is often `http://localhost:3000`.
+
 ## Implemented Pi Endpoints
 
 - `POST /api/devices/pair`

@@ -329,6 +329,8 @@ const tokenEl = document.getElementById("token");
 tokenEl.value = localStorage.getItem("metroclockDebugToken") || "";
 document.getElementById("email").value = localStorage.getItem("metroclockDebugEmail") || "";
 
+captureSessionFromHash();
+
 function saveToken() {
   localStorage.setItem("metroclockDebugToken", tokenEl.value.trim());
 }
@@ -371,6 +373,25 @@ async function supabaseAuth(path, body) {
   return data;
 }
 
+function captureSessionFromHash() {
+  if (!window.location.hash) return;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const accessToken = params.get("access_token");
+  const refreshToken = params.get("refresh_token");
+  if (!accessToken) return;
+  tokenEl.value = accessToken;
+  saveToken();
+  if (refreshToken) {
+    localStorage.setItem("metroclockDebugRefreshToken", refreshToken);
+  }
+  history.replaceState(null, "", window.location.pathname);
+  show("authOut", {
+    signed_in: true,
+    source: "email_confirmation_redirect",
+    expires_in: params.get("expires_in")
+  });
+}
+
 function authBody() {
   const email = document.getElementById("email").value.trim();
   const password = document.getElementById("password").value;
@@ -409,7 +430,8 @@ async function signUp() {
   try {
     const body = authBody();
     body.data = { display_name: "MetroClock Debug" };
-    const data = await supabaseAuth("signup", body);
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const data = await supabaseAuth(`signup?redirect_to=${encodeURIComponent(redirectTo)}`, body);
     storeSession(data);
   } catch (err) {
     show("authOut", String(err.message || err));
