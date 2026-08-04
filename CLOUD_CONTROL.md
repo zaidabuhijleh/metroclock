@@ -20,13 +20,67 @@ Cloud control is disabled unless both `METROCLOCK_CLOUD_ENABLED` and
 
 ## Pairing Flow
 
-1. User creates a pairing code from the future web/mobile account UI.
-2. User enters `METROCLOCK_CLOUD_BASE_URL`, `METROCLOCK_CLOUD_PAIRING_CODE`,
-   and sets `METROCLOCK_CLOUD_ENABLED=true` on the device.
+1. The signed-in iOS app creates a short-lived pairing token with
+   `POST /api/pairing-tokens`.
+2. During local setup, the iOS app sends the cloud URL and pairing token to the
+   MetroClock automatically.
 3. The Pi calls `POST /api/devices/pair`.
 4. The backend validates the pairing code, assigns the device to the user, and
    returns a long-lived `device_token`.
 5. The Pi stores `METROCLOCK_CLOUD_DEVICE_TOKEN` and clears the pairing code.
+
+Manual entry can remain as a support/debug fallback, but it should not be the
+default user experience.
+
+## App-Facing Endpoints
+
+These endpoints are for the iOS app and internal debug dashboard. They require
+a Supabase Auth user access token:
+
+```http
+Authorization: Bearer <supabase-user-access-token>
+```
+
+### `POST /api/pairing-tokens`
+
+Creates a short-lived token that the app passes to the Pi during setup.
+
+Request:
+
+```json
+{
+  "device_name": "Kitchen MetroClock",
+  "ttl_seconds": 600
+}
+```
+
+Response:
+
+```json
+{
+  "pairing_token": "pair_...",
+  "expires_at": "2026-08-04T20:00:00+00:00"
+}
+```
+
+### `GET /api/me/devices`
+
+Returns devices visible to the signed-in user, plus latest status.
+
+### `POST /api/devices/{device_uid}/commands`
+
+Creates a pending command for a device the signed-in user owns/admins.
+
+Request:
+
+```json
+{
+  "action": "set_mode",
+  "payload": {
+    "mode": "clock"
+  }
+}
+```
 
 ## Backend Endpoints Expected By The Pi
 

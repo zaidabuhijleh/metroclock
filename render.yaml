@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: metroclock-cloud-api
+    runtime: python
+    rootDir: cloud_api
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: METROCLOCK_CORS_ORIGINS
+        sync: false

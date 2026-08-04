@@ -7,6 +7,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Settings:
     supabase_url: str
+    supabase_publishable_key: str
     supabase_service_role_key: str
     cors_origins: tuple[str, ...]
 
@@ -18,6 +19,7 @@ def _split_csv(value: str) -> tuple[str, ...]:
 def get_settings() -> Settings:
     return Settings(
         supabase_url=os.environ.get("SUPABASE_URL", "").strip(),
+        supabase_publishable_key=os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip(),
         supabase_service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
         cors_origins=_split_csv(os.environ.get("METROCLOCK_CORS_ORIGINS", "")),
     )
