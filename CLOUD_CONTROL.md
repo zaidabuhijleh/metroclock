@@ -23,7 +23,7 @@ Cloud control is disabled unless both `METROCLOCK_CLOUD_ENABLED` and
 1. The signed-in iOS app creates a short-lived pairing token with
    `POST /api/pairing-tokens`.
 2. During local setup, the iOS app sends the cloud URL and pairing token to the
-   MetroClock automatically.
+   MetroClock automatically with `POST /api/cloud/setup` on the local Pi API.
 3. The Pi calls `POST /api/devices/pair`.
 4. The backend validates the pairing code, assigns the device to the user, and
    returns a long-lived `device_token`.
@@ -31,6 +31,53 @@ Cloud control is disabled unless both `METROCLOCK_CLOUD_ENABLED` and
 
 Manual entry can remain as a support/debug fallback, but it should not be the
 default user experience.
+
+## Local Pi Setup Endpoint
+
+The local Pi API accepts cloud setup from the iOS app while the app is connected
+to the device over setup Wi-Fi or the local network.
+
+### `POST /api/cloud/setup`
+
+Request:
+
+```json
+{
+  "cloud_base_url": "https://metroclock-cloud-api.onrender.com",
+  "pairing_token": "pair_...",
+  "cloud_enabled": true
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "changed": [
+    "METROCLOCK_CLOUD_ENABLED",
+    "METROCLOCK_CLOUD_BASE_URL",
+    "METROCLOCK_CLOUD_PAIRING_CODE"
+  ],
+  "cloud": {
+    "enabled": true,
+    "configured": true,
+    "base_url": "https://metroclock-cloud-api.onrender.com",
+    "device_id": "stable-device-id",
+    "device_token_set": false,
+    "pairing_code_set": true
+  }
+}
+```
+
+### `GET /api/cloud/status`
+
+Returns masked cloud setup state.
+
+### `POST /api/cloud/disable`
+
+Disables cloud control and clears any pending pairing token. Existing device
+tokens are left in place so cloud can be re-enabled without re-pairing.
 
 ## App-Facing Endpoints
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from postgrest.exceptions import APIError
 import requests
 from supabase import Client
@@ -147,6 +148,264 @@ def _authenticate_device(
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/debug", response_class=HTMLResponse)
+def debug_dashboard():
+    return HTMLResponse(
+        """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MetroClock Cloud Debug</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101213;
+      color: #f4f7f8;
+    }
+    body {
+      margin: 0;
+      padding: 32px;
+      background: #101213;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 28px;
+      margin: 0 0 6px;
+    }
+    h2 {
+      font-size: 18px;
+      margin: 0 0 14px;
+    }
+    p {
+      color: #b8c1c5;
+      line-height: 1.45;
+    }
+    section {
+      border-top: 1px solid #2a3033;
+      padding: 22px 0;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: #c7d0d4;
+      margin-bottom: 6px;
+    }
+    input, textarea, select {
+      box-sizing: border-box;
+      width: 100%;
+      border: 1px solid #465056;
+      background: #171a1c;
+      color: #f4f7f8;
+      padding: 10px 11px;
+      border-radius: 6px;
+      font: inherit;
+      margin-bottom: 12px;
+    }
+    textarea {
+      min-height: 84px;
+      resize: vertical;
+    }
+    button {
+      border: 0;
+      border-radius: 6px;
+      background: #30b47b;
+      color: #07110c;
+      font-weight: 700;
+      padding: 10px 14px;
+      cursor: pointer;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+    button.secondary {
+      background: #2f373b;
+      color: #eef4f5;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #080909;
+      border: 1px solid #2a3033;
+      border-radius: 6px;
+      padding: 14px;
+      min-height: 80px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 720px) {
+      body { padding: 18px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>MetroClock Cloud Debug</h1>
+  <p>Internal helper for pairing-token and command testing. Paste a Supabase user access token from a signed-in test session.</p>
+
+  <section>
+    <h2>Auth</h2>
+    <label for="token">Supabase user access token</label>
+    <textarea id="token" placeholder="eyJ..."></textarea>
+    <button class="secondary" onclick="saveToken()">Save Token Locally</button>
+    <button class="secondary" onclick="clearToken()">Clear</button>
+  </section>
+
+  <section>
+    <h2>Create Pairing Token</h2>
+    <div class="grid">
+      <div>
+        <label for="deviceName">Device name</label>
+        <input id="deviceName" value="MetroClock Debug">
+      </div>
+      <div>
+        <label for="ttl">TTL seconds</label>
+        <input id="ttl" type="number" min="60" max="3600" value="600">
+      </div>
+    </div>
+    <button onclick="createPairingToken()">Create Pairing Token</button>
+    <pre id="pairingOut"></pre>
+  </section>
+
+  <section>
+    <h2>Devices</h2>
+    <button onclick="listDevices()">Refresh Devices</button>
+    <pre id="devicesOut"></pre>
+  </section>
+
+  <section>
+    <h2>Send Command</h2>
+    <label for="deviceUid">Device UID</label>
+    <input id="deviceUid" placeholder="device_id from /api/me/devices">
+    <div class="grid">
+      <div>
+        <label for="action">Action</label>
+        <select id="action">
+          <option value="set_mode">set_mode</option>
+          <option value="set_settings">set_settings</option>
+        </select>
+      </div>
+      <div>
+        <label for="mode">Mode for set_mode</label>
+        <input id="mode" value="clock">
+      </div>
+    </div>
+    <label for="payload">Payload JSON</label>
+    <textarea id="payload">{"mode":"clock"}</textarea>
+    <button onclick="fillModePayload()">Use Mode Payload</button>
+    <button onclick="sendCommand()">Send Command</button>
+    <pre id="commandOut"></pre>
+  </section>
+</main>
+
+<script>
+const tokenEl = document.getElementById("token");
+tokenEl.value = localStorage.getItem("metroclockDebugToken") || "";
+
+function saveToken() {
+  localStorage.setItem("metroclockDebugToken", tokenEl.value.trim());
+}
+
+function clearToken() {
+  tokenEl.value = "";
+  localStorage.removeItem("metroclockDebugToken");
+}
+
+function authHeaders() {
+  const token = tokenEl.value.trim();
+  if (!token) throw new Error("Paste a Supabase user access token first.");
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${token}`
+  };
+}
+
+function show(id, value) {
+  document.getElementById(id).textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+async function request(path, options) {
+  const res = await fetch(path, options);
+  const text = await res.text();
+  let body;
+  try { body = text ? JSON.parse(text) : {}; }
+  catch { body = text; }
+  if (!res.ok) throw new Error(JSON.stringify(body));
+  return body;
+}
+
+async function createPairingToken() {
+  try {
+    saveToken();
+    const body = {
+      device_name: document.getElementById("deviceName").value.trim() || null,
+      ttl_seconds: Number(document.getElementById("ttl").value || 600)
+    };
+    const data = await request("/api/pairing-tokens", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(body)
+    });
+    show("pairingOut", data);
+  } catch (err) {
+    show("pairingOut", String(err.message || err));
+  }
+}
+
+async function listDevices() {
+  try {
+    saveToken();
+    const data = await request("/api/me/devices", {
+      method: "GET",
+      headers: authHeaders()
+    });
+    show("devicesOut", data);
+    if (data.devices && data.devices[0]) {
+      document.getElementById("deviceUid").value = data.devices[0].device_uid;
+    }
+  } catch (err) {
+    show("devicesOut", String(err.message || err));
+  }
+}
+
+function fillModePayload() {
+  const mode = document.getElementById("mode").value.trim() || "clock";
+  document.getElementById("payload").value = JSON.stringify({ mode }, null, 2);
+}
+
+async function sendCommand() {
+  try {
+    saveToken();
+    const deviceUid = document.getElementById("deviceUid").value.trim();
+    if (!deviceUid) throw new Error("Device UID is required.");
+    const payload = JSON.parse(document.getElementById("payload").value || "{}");
+    const body = {
+      action: document.getElementById("action").value,
+      payload
+    };
+    const data = await request(`/api/devices/${encodeURIComponent(deviceUid)}/commands`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(body)
+    });
+    show("commandOut", data);
+  } catch (err) {
+    show("commandOut", String(err.message || err));
+  }
+}
+</script>
+</body>
+</html>"""
+    )
 
 
 @app.post("/api/devices/pair", response_model=PairDeviceResponse)

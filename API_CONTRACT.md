@@ -29,6 +29,25 @@ runtime-editable fields. Secret fields are masked in read responses:
 - `METROCLOCK_CLOUD_DEVICE_TOKEN`
 - `METROCLOCK_CLOUD_PAIRING_CODE`
 
+### Local Cloud Setup Endpoints
+
+- `GET /api/cloud/status`
+- `POST /api/cloud/setup`
+- `POST /api/cloud/disable`
+
+`POST /api/cloud/setup` is used by the iOS app during local setup. It stores
+the cloud URL and short-lived pairing token so the Pi can pair outbound.
+
+Request:
+
+```json
+{
+  "cloud_base_url": "https://metroclock-cloud-api.onrender.com",
+  "pairing_token": "pair_...",
+  "cloud_enabled": true
+}
+```
+
 ## Core Read Endpoints
 
 ### `GET /api/status`

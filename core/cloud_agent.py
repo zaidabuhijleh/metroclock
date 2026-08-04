@@ -117,6 +117,7 @@ class MetroClockCloudAgent:
             "METROCLOCK_CLOUD_DEVICE_TOKEN": token,
             "METROCLOCK_CLOUD_PAIRING_CODE": "",
         })
+        config_manager.reload_config()
         print("MetroClock cloud pairing complete.", flush=True)
 
     def _heartbeat_if_due(self):

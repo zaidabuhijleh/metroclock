@@ -73,6 +73,15 @@ The pairing token is meant to be passed automatically from the iOS app to the
 MetroClock during local setup. Users should not need to type it manually in the
 normal flow.
 
+## Internal Debug Page
+
+`GET /debug` serves a tiny internal helper page for manual testing. It lets you
+paste a Supabase user access token, create pairing tokens, list devices, and
+send simple commands.
+
+This is for development/debugging only. It should not be presented as a
+customer dashboard.
+
 ## Implemented Pi Endpoints
 
 - `POST /api/devices/pair`
