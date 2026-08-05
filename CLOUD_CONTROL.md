@@ -29,6 +29,7 @@ Cloud control is disabled unless both `METROCLOCK_CLOUD_ENABLED` and
 - `METROCLOCK_CLOUD_PAIRING_CODE`: short-lived code created in the user account
 - `METROCLOCK_CLOUD_HEARTBEAT_SECONDS`: status report cadence, default `30`
 - `METROCLOCK_CLOUD_COMMAND_POLL_SECONDS`: command poll cadence, default `5`
+- `METROCLOCK_CLOUD_PREVIEW_SECONDS`: remote preview upload cadence, default `2`
 
 ## Pairing Flow
 
@@ -126,6 +127,15 @@ Response:
 
 Returns devices visible to the signed-in user, plus latest status.
 
+### `GET /api/devices/{device_uid}/preview`
+
+Returns the latest preview frame uploaded by the Pi for users who own/admin the
+device. The MVP stores this latest frame in the cloud API process memory, so it
+is a remote snapshot rather than a live stream and will be empty until the Pi
+uploads again after an API restart.
+
+Response: `image/png` or `image/jpeg`.
+
 ### `POST /api/devices/{device_uid}/commands`
 
 Creates a pending command for a device the signed-in user owns/admins.
@@ -221,6 +231,18 @@ Authorization: Bearer <device_token>
 Body: current status/settings payload. This mirrors the local `/api/status`
 shape and includes `device_id`, `app_version`, `api_version`, `display_mode`,
 `wifi_setup`, `weather_preview`, `ambient_scene`, and editable settings.
+
+### `POST /api/devices/{device_id}/preview`
+
+Headers:
+
+```http
+Authorization: Bearer <device_token>
+Content-Type: image/png
+```
+
+Body: latest rendered preview frame. The cloud API keeps only the most recent
+frame per device for app-facing remote preview.
 
 ### `GET /api/devices/{device_id}/commands`
 

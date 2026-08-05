@@ -69,6 +69,7 @@ Authorization: Bearer <supabase-user-access-token>
 
 - `POST /api/pairing-tokens`
 - `GET /api/me/devices`
+- `GET /api/devices/{device_uid}/preview`
 - `POST /api/devices/{device_uid}/commands`
 - `GET /api/devices/{device_uid}/settings`
 - `PATCH /api/devices/{device_uid}/settings`
@@ -105,6 +106,7 @@ Site URL, which is often `http://localhost:3000`.
 
 - `POST /api/devices/pair`
 - `POST /api/devices/{device_uid}/heartbeat`
+- `POST /api/devices/{device_uid}/preview`
 - `GET /api/devices/{device_uid}/commands`
 - `GET /api/devices/{device_uid}/events`
 - `POST /api/devices/{device_uid}/commands/{command_id}/ack`

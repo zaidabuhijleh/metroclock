@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import queue
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from postgrest.exceptions import APIError
 import requests
 from supabase import Client
@@ -37,6 +38,17 @@ app = FastAPI(title="MetroClock Cloud API")
 settings = get_settings()
 _device_event_queues: dict[str, list[queue.Queue[dict[str, Any]]]] = {}
 _device_event_lock = threading.Lock()
+_device_preview_lock = threading.Lock()
+_device_preview_frames: dict[str, "DevicePreviewFrame"] = {}
+_max_preview_bytes = 256 * 1024
+_allowed_preview_content_types = {"image/png", "image/jpeg"}
+
+
+@dataclass(frozen=True)
+class DevicePreviewFrame:
+    content: bytes
+    content_type: str
+    updated_at: str
 
 if settings.cors_origins:
     app.add_middleware(
@@ -899,6 +911,68 @@ def device_heartbeat(
         on_conflict="device_id",
     ).execute()
     return {"ok": True}
+
+
+@app.post("/api/devices/{device_uid}/preview")
+async def upload_device_preview(
+    device_uid: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    device = _authenticate_device(device_uid, authorization, supabase)
+    content_type = str(request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type not in _allowed_preview_content_types:
+        raise HTTPException(status_code=415, detail="Preview must be image/png or image/jpeg")
+
+    content_length = str(request.headers.get("content-length") or "").strip()
+    if content_length:
+        try:
+            if int(content_length) > _max_preview_bytes:
+                raise HTTPException(status_code=413, detail="Preview image is too large")
+        except ValueError:
+            pass
+
+    content = await request.body()
+    if not content:
+        raise HTTPException(status_code=400, detail="Preview image is empty")
+    if len(content) > _max_preview_bytes:
+        raise HTTPException(status_code=413, detail="Preview image is too large")
+
+    frame = DevicePreviewFrame(
+        content=content,
+        content_type=content_type,
+        updated_at=_now_iso(),
+    )
+    with _device_preview_lock:
+        _device_preview_frames[device["id"]] = frame
+    return {"ok": True, "updated_at": frame.updated_at}
+
+
+@app.get("/api/devices/{device_uid}/preview")
+def get_device_preview(
+    device_uid: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    user = _authenticate_user(authorization)
+    _ensure_profile(supabase, user)
+    device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
+
+    with _device_preview_lock:
+        frame = _device_preview_frames.get(device["id"])
+    if frame is None:
+        raise HTTPException(status_code=404, detail="Preview is not available yet")
+
+    return Response(
+        content=frame.content,
+        media_type=frame.content_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-MetroClock-Preview-Updated-At": frame.updated_at,
+        },
+    )
 
 
 @app.get("/api/devices/{device_uid}/commands", response_model=CommandListResponse)
