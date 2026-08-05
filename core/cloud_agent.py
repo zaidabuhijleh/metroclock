@@ -24,6 +24,7 @@ class MetroClockCloudAgent:
         self._event_thread: Optional[threading.Thread] = None
         self._command_poll_lock = threading.Lock()
         self._last_heartbeat_at = 0.0
+        self._last_heartbeat_signature: Optional[str] = None
         self._last_command_poll_at = 0.0
         self._last_error_log_at = 0.0
 
@@ -138,17 +139,45 @@ class MetroClockCloudAgent:
         print("MetroClock cloud pairing complete.", flush=True)
 
     def _heartbeat_if_due(self):
+        signature = self._current_status_signature()
         now = time.time()
-        if now - self._last_heartbeat_at < self._heartbeat_seconds():
+        due = now - self._last_heartbeat_at >= self._heartbeat_seconds()
+        changed = signature != self._last_heartbeat_signature
+        if not due and not changed:
             return
+
+        status = self._status_payload()
+        signature = self._status_signature(status)
         self._last_heartbeat_at = now
+        self._last_heartbeat_signature = signature
         response = requests.post(
             self._url(f"/api/devices/{web_server._get_device_id()}/heartbeat"),
-            json=self._status_payload(),
+            json=status,
             headers=self._headers(),
             timeout=10,
         )
         response.raise_for_status()
+
+    @staticmethod
+    def _current_status_signature() -> str:
+        return MetroClockCloudAgent._status_signature({
+            "display_mode": web_server.get_display_mode(),
+            "brightness": web_server.get_brightness(),
+            "ambient_scene": web_server.get_ambient_scene(),
+            "weather_preview": web_server.get_weather_preview(),
+        })
+
+    @staticmethod
+    def _status_signature(status: Dict[str, Any]) -> str:
+        # Exclude reported_at and countdown-like state so healthy devices do not
+        # heartbeat every render tick.
+        tracked = {
+            "display_mode": status.get("display_mode"),
+            "brightness": status.get("brightness"),
+            "ambient_scene": status.get("ambient_scene"),
+            "weather_preview": status.get("weather_preview"),
+        }
+        return json.dumps(tracked, sort_keys=True, default=str)
 
     def _poll_commands_if_due(self):
         now = time.time()

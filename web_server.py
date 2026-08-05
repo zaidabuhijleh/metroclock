@@ -834,11 +834,15 @@ def api_settings_post():
 @app.route("/api/mode", methods=["POST"])
 def api_mode():
     data = request.get_json(force=True) or {}
-    mode = data.get("mode", "").lower()
+    mode = str(data.get("mode") or "").strip().lower()
     if not DEFAULT_MODE_CATALOG.is_supported(mode):
         return jsonify({"ok": False, "error": "Invalid mode"}), 400
-    set_display_mode(mode)
-    return jsonify({"ok": True, "mode": mode})
+    try:
+        changed = config_manager.write_config({"DISPLAY_MODE": mode})
+        set_display_mode(mode)
+        return jsonify({"ok": True, "mode": mode, "changed": list(changed.keys())})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/weather/preview", methods=["POST"])
