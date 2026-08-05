@@ -203,6 +203,9 @@ def health():
 @app.get("/debug", response_class=HTMLResponse)
 def debug_dashboard():
     current_settings = get_settings()
+    if not current_settings.debug_dashboard_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
     page = """<!doctype html>
 <html lang="en">
 <head>

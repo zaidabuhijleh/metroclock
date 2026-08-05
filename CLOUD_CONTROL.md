@@ -12,6 +12,11 @@ Commands use a hybrid realtime path:
 - When a command is created, the cloud API sends `commands_available`; the Pi
   immediately fetches pending commands and acknowledges results.
 
+The SSE wake-up path is best-effort in the MVP deployment. It uses in-process
+listeners and assumes one API process; polling is the correctness fallback if
+the stream reconnects, the process restarts, or the API later runs more than
+one worker.
+
 ## Pi Runtime Settings
 
 These settings are optional and runtime-editable through the existing local API.
@@ -19,7 +24,7 @@ Cloud control is disabled unless both `METROCLOCK_CLOUD_ENABLED` and
 `METROCLOCK_CLOUD_BASE_URL` are configured.
 
 - `METROCLOCK_CLOUD_ENABLED`: boolean, default `false`
-- `METROCLOCK_CLOUD_BASE_URL`: backend origin, for example `https://api.example.com`
+- `METROCLOCK_CLOUD_BASE_URL`: HTTPS backend origin, for example `https://api.example.com`
 - `METROCLOCK_CLOUD_DEVICE_TOKEN`: bearer token issued by the backend after pairing
 - `METROCLOCK_CLOUD_PAIRING_CODE`: short-lived code created in the user account
 - `METROCLOCK_CLOUD_HEARTBEAT_SECONDS`: status report cadence, default `30`

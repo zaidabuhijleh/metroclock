@@ -17,3 +17,5 @@ services:
         sync: false
       - key: METROCLOCK_CORS_ORIGINS
         sync: false
+      - key: METROCLOCK_DEBUG_DASHBOARD_ENABLED
+        value: "false"

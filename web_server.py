@@ -976,8 +976,8 @@ def _normalize_cloud_base_url(value) -> str:
     if not base_url:
         raise ValueError("cloud_base_url is required")
     parsed = urlparse(base_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("cloud_base_url must be an http(s) URL")
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("cloud_base_url must be an https URL")
     return base_url
 
 

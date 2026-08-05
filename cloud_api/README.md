@@ -34,6 +34,7 @@ uvicorn app.main:app --reload
 - `SUPABASE_URL`
 - `SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `METROCLOCK_DEBUG_DASHBOARD_ENABLED` defaults to `false`
 
 The service role key must never be shipped to the Pi or browser clients.
 
@@ -50,6 +51,7 @@ This repo includes a root-level `render.yaml` Blueprint that deploys
    - `SUPABASE_PUBLISHABLE_KEY`
    - `SUPABASE_SERVICE_ROLE_KEY`
    - `METROCLOCK_CORS_ORIGINS`
+   - `METROCLOCK_DEBUG_DASHBOARD_ENABLED` if you need the internal debug page
 5. Deploy.
 6. Test `https://<your-service>.onrender.com/health`.
 
@@ -75,13 +77,13 @@ normal flow.
 
 ## Internal Debug Page
 
-`GET /debug` serves a tiny internal helper page for manual testing. It lets you
-sign in with Supabase email/password auth, create pairing tokens, list devices,
-and send simple commands. You can also paste a Supabase user access token
-manually if needed.
+`GET /debug` serves a tiny internal helper page for manual testing when
+`METROCLOCK_DEBUG_DASHBOARD_ENABLED=true`. It lets you sign in with Supabase
+email/password auth, create pairing tokens, list devices, and send simple
+commands. You can also paste a Supabase user access token manually if needed.
 
-This is for development/debugging only. It should not be presented as a
-customer dashboard.
+This is disabled by default and is for development/debugging only. It should
+not be presented as a customer dashboard.
 
 Google sign-in can be added later after the Google provider and redirect URLs
 are configured in Supabase Auth.
@@ -105,3 +107,10 @@ Site URL, which is often `http://localhost:3000`.
 - `POST /api/devices/{device_uid}/commands/{command_id}/ack`
 
 These match the contract in `../CLOUD_CONTROL.md`.
+
+`/events` uses in-process Server-Sent Events to reduce command latency on the
+single-instance MVP deployment. Polling remains the correctness path, so
+commands still arrive if the SSE stream reconnects, the process restarts, or a
+future deployment runs more than one worker. Move event delivery to a shared
+transport such as Supabase Realtime, Redis pub/sub, or a managed queue before
+scaling the API beyond one process.
