@@ -17,14 +17,17 @@ from app.settings import get_settings
 from app.schemas import (
     CommandAckRequest,
     CommandListResponse,
+    CommandStatusResponse,
     CreateCommandRequest,
     CreateCommandResponse,
     CreatePairingTokenRequest,
     CreatePairingTokenResponse,
+    DeviceSettingsResponse,
     DeviceListResponse,
     DeviceSummary,
     PairDeviceRequest,
     PairDeviceResponse,
+    UpdateDeviceSettingsRequest,
 )
 from app.security import generate_device_token, generate_pairing_token, hash_device_token
 from app.supabase_client import get_supabase
@@ -167,6 +170,48 @@ def _fetch_device_by_uid(supabase: Client, device_uid: str) -> dict[str, Any]:
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     return device
+
+
+def _ensure_user_can_control_device(supabase: Client, user_id: str, device_id: str):
+    membership_response = (
+        supabase.table("device_memberships")
+        .select("role")
+        .eq("device_id", device_id)
+        .eq("user_id", user_id)
+        .in_("role", ["owner", "admin"])
+        .limit(1)
+        .execute()
+    )
+    if not _single_or_none(membership_response):
+        raise HTTPException(status_code=403, detail="You do not have permission to control this device")
+
+
+def _create_device_command(
+    supabase: Client,
+    device_id: str,
+    device_uid: str,
+    user_id: str,
+    action: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    command_response = (
+        supabase.table("device_commands")
+        .insert(
+            {
+                "device_id": device_id,
+                "requested_by": user_id,
+                "action": action,
+                "payload": payload,
+                "status": "pending",
+            }
+        )
+        .execute()
+    )
+    command = _single_or_none(command_response)
+    if not command:
+        raise HTTPException(status_code=500, detail="Failed to create command")
+    _notify_device(device_uid, {"type": "commands_available", "command_id": command["id"]})
+    return command
 
 
 def _authenticate_device(
@@ -721,6 +766,54 @@ def list_my_devices(
     return DeviceListResponse(devices=devices)
 
 
+@app.get("/api/devices/{device_uid}/settings", response_model=DeviceSettingsResponse)
+def get_device_settings(
+    device_uid: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    user = _authenticate_user(authorization)
+    _ensure_profile(supabase, user)
+    device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
+
+    status_response = (
+        supabase.table("device_status")
+        .select("status, reported_at")
+        .eq("device_id", device["id"])
+        .limit(1)
+        .execute()
+    )
+    status_row = _single_or_none(status_response) or {}
+    settings = status_row.get("status") if isinstance(status_row.get("status"), dict) else {}
+    return DeviceSettingsResponse(
+        settings=settings,
+        reported_at=status_row.get("reported_at"),
+    )
+
+
+@app.patch("/api/devices/{device_uid}/settings", response_model=CreateCommandResponse)
+def update_device_settings(
+    device_uid: str,
+    request: UpdateDeviceSettingsRequest,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    user = _authenticate_user(authorization)
+    _ensure_profile(supabase, user)
+    device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
+    command = _create_device_command(
+        supabase=supabase,
+        device_id=device["id"],
+        device_uid=device_uid,
+        user_id=user["id"],
+        action="set_settings",
+        payload=request.settings,
+    )
+    return CreateCommandResponse(id=command["id"], status=command["status"])
+
+
 @app.post("/api/devices/{device_uid}/commands", response_model=CreateCommandResponse)
 def create_device_command(
     device_uid: str,
@@ -731,38 +824,54 @@ def create_device_command(
     user = _authenticate_user(authorization)
     _ensure_profile(supabase, user)
     device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
 
-    membership_response = (
-        supabase.table("device_memberships")
-        .select("role")
+    action, payload = _normalize_command_request(request)
+    command = _create_device_command(
+        supabase=supabase,
+        device_id=device["id"],
+        device_uid=device_uid,
+        user_id=user["id"],
+        action=action,
+        payload=payload,
+    )
+    return CreateCommandResponse(id=command["id"], status=command["status"])
+
+
+@app.get("/api/devices/{device_uid}/commands/{command_id}", response_model=CommandStatusResponse)
+def get_device_command_status(
+    device_uid: str,
+    command_id: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    user = _authenticate_user(authorization)
+    _ensure_profile(supabase, user)
+    device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
+
+    response = (
+        supabase.table("device_commands")
+        .select("id, action, status, payload, result, error, created_at, sent_at, acknowledged_at")
+        .eq("id", command_id)
         .eq("device_id", device["id"])
-        .eq("user_id", user["id"])
-        .in_("role", ["owner", "admin"])
         .limit(1)
         .execute()
     )
-    if not _single_or_none(membership_response):
-        raise HTTPException(status_code=403, detail="You do not have permission to control this device")
-
-    action, payload = _normalize_command_request(request)
-    command_response = (
-        supabase.table("device_commands")
-        .insert(
-            {
-                "device_id": device["id"],
-                "requested_by": user["id"],
-                "action": action,
-                "payload": payload,
-                "status": "pending",
-            }
-        )
-        .execute()
-    )
-    command = _single_or_none(command_response)
+    command = _single_or_none(response)
     if not command:
-        raise HTTPException(status_code=500, detail="Failed to create command")
-    _notify_device(device_uid, {"type": "commands_available", "command_id": command["id"]})
-    return CreateCommandResponse(id=command["id"], status=command["status"])
+        raise HTTPException(status_code=404, detail="Command not found")
+    return CommandStatusResponse(
+        id=command["id"],
+        action=command["action"],
+        status=command["status"],
+        payload=command.get("payload") or {},
+        result=command.get("result"),
+        error=command.get("error"),
+        created_at=command.get("created_at"),
+        sent_at=command.get("sent_at"),
+        acknowledged_at=command.get("acknowledged_at"),
+    )
 
 
 @app.post("/api/devices/{device_uid}/heartbeat")

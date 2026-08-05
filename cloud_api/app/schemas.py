@@ -65,3 +65,24 @@ class CreateCommandRequest(BaseModel):
 class CreateCommandResponse(BaseModel):
     id: str
     status: str
+
+
+class DeviceSettingsResponse(BaseModel):
+    settings: dict[str, Any] = Field(default_factory=dict)
+    reported_at: str | None = None
+
+
+class UpdateDeviceSettingsRequest(BaseModel):
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class CommandStatusResponse(BaseModel):
+    id: str
+    action: str
+    status: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: str | None = None
+    sent_at: str | None = None
+    acknowledged_at: str | None = None

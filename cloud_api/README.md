@@ -70,6 +70,9 @@ Authorization: Bearer <supabase-user-access-token>
 - `POST /api/pairing-tokens`
 - `GET /api/me/devices`
 - `POST /api/devices/{device_uid}/commands`
+- `GET /api/devices/{device_uid}/settings`
+- `PATCH /api/devices/{device_uid}/settings`
+- `GET /api/devices/{device_uid}/commands/{command_id}`
 
 The pairing token is meant to be passed automatically from the iOS app to the
 MetroClock during local setup. Users should not need to type it manually in the

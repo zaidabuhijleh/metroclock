@@ -141,6 +141,53 @@ Request:
 }
 ```
 
+### `GET /api/devices/{device_uid}/settings`
+
+Returns the latest settings/status payload reported by the Pi heartbeat. Secret
+values are masked by the Pi before they reach the cloud API.
+
+Response:
+
+```json
+{
+  "settings": {
+    "DISPLAY_MODE": "clock",
+    "WEATHER_ZIP": "20001"
+  },
+  "reported_at": "2026-08-05T19:30:00+00:00"
+}
+```
+
+### `PATCH /api/devices/{device_uid}/settings`
+
+Queues a `set_settings` command for a device the signed-in user owns/admins.
+The iOS app can poll the returned command id until it is acknowledged.
+
+Request:
+
+```json
+{
+  "settings": {
+    "STOCKS_SYMBOLS": "AAPL,MSFT,SPY",
+    "STOCKS_VIEW_MODE": "ticker"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "id": "command-id",
+  "status": "pending"
+}
+```
+
+### `GET /api/devices/{device_uid}/commands/{command_id}`
+
+Returns command status for app-created commands so clients can show success or
+surface the Pi's failure message.
+
 ## Backend Endpoints Expected By The Pi
 
 ### `POST /api/devices/pair`
