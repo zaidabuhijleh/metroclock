@@ -205,6 +205,7 @@ class MetroClockApp:
         self._last_blank_frame_log = 0.0
         self._last_presented_frame = None
         self._displayed_mode = None
+        self._crossfade_excluded_modes = {"metro", "stocks"}
 
     @classmethod
     def build_default(cls) -> "MetroClockApp":
@@ -286,7 +287,8 @@ class MetroClockApp:
     def _present_frame(self, mode: str, frame, brightness: int):
         previous_frame = self._last_presented_frame
         mode_changed = self._displayed_mode is not None and mode != self._displayed_mode
-        if mode_changed and self._can_crossfade(previous_frame, frame):
+        should_crossfade = mode_changed and mode not in self._crossfade_excluded_modes
+        if should_crossfade and self._can_crossfade(previous_frame, frame):
             self._crossfade(previous_frame, frame, brightness)
         else:
             self._display.present(frame, brightness)
