@@ -260,13 +260,13 @@ class MetroClockApp:
             if self._wifi_setup_manager is not None and self._wifi_setup_manager.should_show_setup_message():
                 mode = "setup"
             tick_start = time.perf_counter()
-            self._display.ensure_mode(mode)
-            ensured_at = time.perf_counter()
             frame = self._widgets.render_mode(mode)
             if self._is_blank_frame(frame):
                 self._log_blank_frame(mode)
                 frame = self._display.status_frame(("NO CONTENT", mode, "FRAME BLANK"))
             rendered_at = time.perf_counter()
+            self._display.ensure_mode(mode)
+            ensured_at = time.perf_counter()
             brightness = self._state_provider.get_brightness()
             self._display.present(frame, brightness)
             presented_at = time.perf_counter()
@@ -330,9 +330,9 @@ class MetroClockApp:
             "PERF "
             f"mode={mode} "
             f"total={total_ms:.1f}ms "
-            f"ensure={(ensured_at - tick_start) * 1000.0:.1f}ms "
-            f"render={(rendered_at - ensured_at) * 1000.0:.1f}ms "
-            f"present={(presented_at - rendered_at) * 1000.0:.1f}ms",
+            f"render={(rendered_at - tick_start) * 1000.0:.1f}ms "
+            f"ensure={(ensured_at - rendered_at) * 1000.0:.1f}ms "
+            f"present={(presented_at - ensured_at) * 1000.0:.1f}ms",
             flush=True,
         )
         self._last_mode = mode
