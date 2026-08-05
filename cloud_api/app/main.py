@@ -300,7 +300,7 @@ def debug_dashboard():
 <body>
 <main>
   <h1>MetroClock Cloud Debug</h1>
-  <p>Internal helper for pairing-token and command testing. Paste a Supabase user access token from a signed-in test session.</p>
+  <p>Internal helper for pairing-token and command testing. Sign in with a Supabase test user to generate tokens and send commands.</p>
 
   <section>
     <h2>Auth</h2>
@@ -392,7 +392,7 @@ function clearToken() {
 
 function authHeaders() {
   const token = tokenEl.value.trim();
-  if (!token) throw new Error("Paste a Supabase user access token first.");
+  if (!token) throw new Error("Sign in first to get a Supabase user session.");
   return {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${token}`
