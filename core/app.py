@@ -5,6 +5,8 @@ import traceback
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional, Protocol
 
+from PIL import Image
+
 import config
 import web_server
 from core.display import Display
@@ -201,6 +203,9 @@ class MetroClockApp:
         self._last_error_frame_at = 0.0
         self._last_error_signature = None
         self._last_blank_frame_log = 0.0
+        self._last_presented_frame = None
+        self._displayed_mode = None
+        self._crossfade_excluded_modes = {"metro", "stocks"}
 
     @classmethod
     def build_default(cls) -> "MetroClockApp":
@@ -260,15 +265,15 @@ class MetroClockApp:
             if self._wifi_setup_manager is not None and self._wifi_setup_manager.should_show_setup_message():
                 mode = "setup"
             tick_start = time.perf_counter()
-            self._display.ensure_mode(mode)
-            ensured_at = time.perf_counter()
             frame = self._widgets.render_mode(mode)
             if self._is_blank_frame(frame):
                 self._log_blank_frame(mode)
                 frame = self._display.status_frame(("NO CONTENT", mode, "FRAME BLANK"))
             rendered_at = time.perf_counter()
+            self._display.ensure_mode(mode)
+            ensured_at = time.perf_counter()
             brightness = self._state_provider.get_brightness()
-            self._display.present(frame, brightness)
+            self._present_frame(mode, frame, brightness)
             presented_at = time.perf_counter()
             web_server.set_latest_frame(frame)
             self._log_perf_if_needed(mode, tick_start, ensured_at, rendered_at, presented_at)
@@ -278,6 +283,42 @@ class MetroClockApp:
             traceback.print_exc()
             self._present_error_frame(mode, exc)
             time.sleep(self._error_delay)
+
+    def _present_frame(self, mode: str, frame, brightness: int):
+        previous_frame = self._last_presented_frame
+        mode_changed = self._displayed_mode is not None and mode != self._displayed_mode
+        should_crossfade = mode_changed and mode not in self._crossfade_excluded_modes
+        if should_crossfade and self._can_crossfade(previous_frame, frame):
+            self._crossfade(previous_frame, frame, brightness)
+        else:
+            self._display.present(frame, brightness)
+
+        try:
+            self._last_presented_frame = frame.copy()
+        except Exception:
+            self._last_presented_frame = None
+        self._displayed_mode = mode
+
+    @staticmethod
+    def _can_crossfade(previous_frame, next_frame) -> bool:
+        return (
+            isinstance(previous_frame, Image.Image)
+            and isinstance(next_frame, Image.Image)
+            and previous_frame.size == next_frame.size
+        )
+
+    def _crossfade(self, previous_frame, next_frame, brightness: int):
+        previous = previous_frame.convert("RGB")
+        next_image = next_frame.convert("RGB")
+        steps = 5
+        delay = 0.03
+
+        for step in range(1, steps + 1):
+            alpha = step / steps
+            blended = Image.blend(previous, next_image, alpha)
+            self._display.present(blended, brightness)
+            if step < steps:
+                time.sleep(delay)
 
     def _present_error_frame(self, mode: str, exc: Exception):
         now = time.time()
@@ -330,9 +371,9 @@ class MetroClockApp:
             "PERF "
             f"mode={mode} "
             f"total={total_ms:.1f}ms "
-            f"ensure={(ensured_at - tick_start) * 1000.0:.1f}ms "
-            f"render={(rendered_at - ensured_at) * 1000.0:.1f}ms "
-            f"present={(presented_at - rendered_at) * 1000.0:.1f}ms",
+            f"render={(rendered_at - tick_start) * 1000.0:.1f}ms "
+            f"ensure={(ensured_at - rendered_at) * 1000.0:.1f}ms "
+            f"present={(presented_at - ensured_at) * 1000.0:.1f}ms",
             flush=True,
         )
         self._last_mode = mode
