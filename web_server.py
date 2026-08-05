@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 import uuid
+from urllib.parse import urlparse
 
 import config
 import config_manager
@@ -34,6 +35,8 @@ WRITE_ENDPOINTS = {
     "/api/ambient/scene",
     "/api/pomodoro/action",
     "/api/wifi/connect",
+    "/api/cloud/setup",
+    "/api/cloud/disable",
     "/api/restart",
     "/api/reboot",
 }
@@ -615,6 +618,8 @@ def _mask_config(cfg: dict) -> dict:
         "WMATA_API_KEY",
         "OPENWEATHER_API_KEY",
         "AVIATIONSTACK_API_KEY",
+        "METROCLOCK_CLOUD_DEVICE_TOKEN",
+        "METROCLOCK_CLOUD_PAIRING_CODE",
     }
     result = {}
     for key, value in cfg.items():
@@ -948,6 +953,79 @@ def api_wifi_connect():
     else:
         return jsonify({"ok": False, "error": "WiFi setup manager unavailable"}), 500
     return jsonify({"ok": True, "wifi_setup": get_wifi_setup_status()})
+
+
+def _cloud_status_payload() -> dict:
+    cfg = config_manager.read_config()
+    base_url = str(cfg.get("METROCLOCK_CLOUD_BASE_URL") or "").strip()
+    enabled = bool(cfg.get("METROCLOCK_CLOUD_ENABLED"))
+    return {
+        "enabled": enabled,
+        "configured": enabled and bool(base_url),
+        "base_url": base_url,
+        "device_id": _get_device_id(),
+        "device_token_set": bool(cfg.get("METROCLOCK_CLOUD_DEVICE_TOKEN")),
+        "pairing_code_set": bool(cfg.get("METROCLOCK_CLOUD_PAIRING_CODE")),
+        "heartbeat_seconds": cfg.get("METROCLOCK_CLOUD_HEARTBEAT_SECONDS"),
+        "command_poll_seconds": cfg.get("METROCLOCK_CLOUD_COMMAND_POLL_SECONDS"),
+    }
+
+
+def _normalize_cloud_base_url(value) -> str:
+    base_url = str(value or "").strip().rstrip("/")
+    if not base_url:
+        raise ValueError("cloud_base_url is required")
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("cloud_base_url must be an https URL")
+    return base_url
+
+
+@app.route("/api/cloud/status")
+def api_cloud_status():
+    return jsonify({"ok": True, "cloud": _cloud_status_payload()})
+
+
+@app.route("/api/cloud/setup", methods=["POST"])
+def api_cloud_setup():
+    data = request.get_json(force=True) or {}
+    try:
+        base_url = _normalize_cloud_base_url(data.get("cloud_base_url") or data.get("base_url"))
+        cloud_enabled = bool(data.get("cloud_enabled", True))
+        if not cloud_enabled:
+            raise ValueError("Use /api/cloud/disable to disable cloud control")
+        pairing_token = str(
+            data.get("pairing_token")
+            or data.get("pairing_code")
+            or data.get("cloud_pairing_code")
+            or ""
+        ).strip()
+        if not pairing_token:
+            raise ValueError("pairing_token is required")
+
+        updates = {
+            "METROCLOCK_CLOUD_ENABLED": True,
+            "METROCLOCK_CLOUD_BASE_URL": base_url,
+            "METROCLOCK_CLOUD_PAIRING_CODE": pairing_token,
+        }
+        changed = config_manager.write_config(updates)
+        return jsonify({"ok": True, "changed": list(changed.keys()), "cloud": _cloud_status_payload()})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/cloud/disable", methods=["POST"])
+def api_cloud_disable():
+    try:
+        changed = config_manager.write_config({
+            "METROCLOCK_CLOUD_ENABLED": False,
+            "METROCLOCK_CLOUD_PAIRING_CODE": "",
+        })
+        return jsonify({"ok": True, "changed": list(changed.keys()), "cloud": _cloud_status_payload()})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/restart", methods=["POST"])

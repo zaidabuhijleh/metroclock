@@ -17,6 +17,37 @@ This document defines the alpha API contract used by the web UI and iOS app.
   - Header: `X-MetroClock-Token: <token>`
   - Header: `Authorization: Bearer <token>`
 
+## Cloud Control
+
+Cloud control is optional and outbound-only. When configured, the Pi talks to a
+backend using the settings documented in `CLOUD_CONTROL.md`; the backend does
+not call the local Flask server directly.
+
+The local API exposes the cloud settings through `/api/settings` like other
+runtime-editable fields. Secret fields are masked in read responses:
+
+- `METROCLOCK_CLOUD_DEVICE_TOKEN`
+- `METROCLOCK_CLOUD_PAIRING_CODE`
+
+### Local Cloud Setup Endpoints
+
+- `GET /api/cloud/status`
+- `POST /api/cloud/setup`
+- `POST /api/cloud/disable`
+
+`POST /api/cloud/setup` is used by the iOS app during local setup. It stores
+the cloud URL and short-lived pairing token so the Pi can pair outbound.
+
+Request:
+
+```json
+{
+  "cloud_base_url": "https://metroclock-cloud-api.onrender.com",
+  "pairing_token": "pair_...",
+  "cloud_enabled": true
+}
+```
+
 ## Core Read Endpoints
 
 ### `GET /api/status`
