@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 import threading
 import time
@@ -20,6 +21,8 @@ class MetroClockCloudAgent:
     def __init__(self):
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._event_thread: Optional[threading.Thread] = None
+        self._command_poll_lock = threading.Lock()
         self._last_heartbeat_at = 0.0
         self._last_command_poll_at = 0.0
         self._last_error_log_at = 0.0
@@ -29,6 +32,8 @@ class MetroClockCloudAgent:
             return
         self._thread = threading.Thread(target=self._run, name="metroclock-cloud-agent", daemon=True)
         self._thread.start()
+        self._event_thread = threading.Thread(target=self._run_events, name="metroclock-cloud-events", daemon=True)
+        self._event_thread.start()
 
     def stop(self):
         self._stop.set()
@@ -51,6 +56,18 @@ class MetroClockCloudAgent:
                 self._log_error(f"Cloud agent error: {exc}")
 
             self._stop.wait(1)
+
+    def _run_events(self):
+        while not self._stop.is_set():
+            try:
+                config_manager.reload_config()
+                if not self._enabled() or not self._device_token():
+                    self._stop.wait(5)
+                    continue
+                self._listen_for_events()
+            except Exception as exc:
+                self._log_error(f"Cloud events error: {exc}")
+                self._stop.wait(5)
 
     @staticmethod
     def _enabled() -> bool:
@@ -138,16 +155,59 @@ class MetroClockCloudAgent:
         if now - self._last_command_poll_at < self._poll_seconds():
             return
         self._last_command_poll_at = now
+        self._poll_commands_now()
+
+    def _poll_commands_now(self):
+        with self._command_poll_lock:
+            self._last_command_poll_at = time.time()
+            response = requests.get(
+                self._url(f"/api/devices/{web_server._get_device_id()}/commands"),
+                headers=self._headers(),
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json() if response.content else {}
+            commands = data.get("commands") or []
+            if isinstance(commands, list):
+                self._execute_commands(commands)
+
+    def _listen_for_events(self):
         response = requests.get(
-            self._url(f"/api/devices/{web_server._get_device_id()}/commands"),
+            self._url(f"/api/devices/{web_server._get_device_id()}/events"),
             headers=self._headers(),
-            timeout=10,
+            stream=True,
+            timeout=(10, 90),
         )
         response.raise_for_status()
-        data = response.json() if response.content else {}
-        commands = data.get("commands") or []
-        if isinstance(commands, list):
-            self._execute_commands(commands)
+        print("MetroClock cloud realtime connected.", flush=True)
+        event_name = None
+        data_lines = []
+        for raw_line in response.iter_lines(decode_unicode=True):
+            if self._stop.is_set():
+                break
+            line = raw_line or ""
+            if line.startswith(":"):
+                continue
+            if not line:
+                self._handle_event_message(event_name, data_lines)
+                event_name = None
+                data_lines = []
+                continue
+            if line.startswith("event:"):
+                event_name = line[6:].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+
+    def _handle_event_message(self, event_name, data_lines):
+        if not data_lines:
+            return
+        try:
+            payload = json.loads("\n".join(data_lines))
+        except Exception:
+            payload = {}
+        event_type = str(event_name or payload.get("type") or "").strip()
+        if event_type == "commands_available":
+            self._poll_commands_now()
 
     def _execute_commands(self, commands: Iterable[Dict[str, Any]]):
         for command in commands:

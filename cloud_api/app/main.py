@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import queue
+import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from postgrest.exceptions import APIError
 import requests
 from supabase import Client
@@ -30,6 +32,8 @@ from app.supabase_client import get_supabase
 
 app = FastAPI(title="MetroClock Cloud API")
 settings = get_settings()
+_device_event_queues: dict[str, list[queue.Queue[dict[str, Any]]]] = {}
+_device_event_lock = threading.Lock()
 
 if settings.cors_origins:
     app.add_middleware(
@@ -43,6 +47,40 @@ if settings.cors_origins:
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _register_device_listener(device_uid: str) -> queue.Queue[dict[str, Any]]:
+    event_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=20)
+    with _device_event_lock:
+        _device_event_queues.setdefault(device_uid, []).append(event_queue)
+    return event_queue
+
+
+def _unregister_device_listener(device_uid: str, event_queue: queue.Queue[dict[str, Any]]):
+    with _device_event_lock:
+        queues = _device_event_queues.get(device_uid, [])
+        if event_queue in queues:
+            queues.remove(event_queue)
+        if not queues:
+            _device_event_queues.pop(device_uid, None)
+
+
+def _notify_device(device_uid: str, event: dict[str, Any]):
+    with _device_event_lock:
+        queues = list(_device_event_queues.get(device_uid, []))
+    for event_queue in queues:
+        try:
+            event_queue.put_nowait(event)
+        except queue.Full:
+            try:
+                event_queue.get_nowait()
+                event_queue.put_nowait(event)
+            except Exception:
+                pass
+
+
+def _sse_message(event_name: str, data: dict[str, Any]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
 
 
 def _reported_at_iso(status: dict[str, Any]) -> str:
@@ -104,6 +142,17 @@ def _ensure_profile(supabase: Client, user: dict[str, Any]):
         },
         on_conflict="id",
     ).execute()
+
+
+def _normalize_command_request(request: CreateCommandRequest) -> tuple[str, dict[str, Any]]:
+    action = request.action
+    payload = request.payload
+    if isinstance(payload.get("payload"), dict):
+        nested_action = str(payload.get("action") or "").strip()
+        if nested_action:
+            action = nested_action
+        payload = payload["payload"]
+    return action, payload
 
 
 def _fetch_device_by_uid(supabase: Client, device_uid: str) -> dict[str, Any]:
@@ -316,6 +365,7 @@ def debug_dashboard():
     </div>
     <label for="payload">Payload JSON</label>
     <textarea id="payload">{"mode":"clock"}</textarea>
+    <p>Payload only. For set_mode, use <code>{"mode":"weather"}</code>.</p>
     <button onclick="fillModePayload()">Use Mode Payload</button>
     <button onclick="sendCommand()">Send Command</button>
     <pre id="commandOut"></pre>
@@ -691,14 +741,15 @@ def create_device_command(
     if not _single_or_none(membership_response):
         raise HTTPException(status_code=403, detail="You do not have permission to control this device")
 
+    action, payload = _normalize_command_request(request)
     command_response = (
         supabase.table("device_commands")
         .insert(
             {
                 "device_id": device["id"],
                 "requested_by": user["id"],
-                "action": request.action,
-                "payload": request.payload,
+                "action": action,
+                "payload": payload,
                 "status": "pending",
             }
         )
@@ -707,6 +758,7 @@ def create_device_command(
     command = _single_or_none(command_response)
     if not command:
         raise HTTPException(status_code=500, detail="Failed to create command")
+    _notify_device(device_uid, {"type": "commands_available", "command_id": command["id"]})
     return CreateCommandResponse(id=command["id"], status=command["status"])
 
 
@@ -758,6 +810,38 @@ def list_device_commands(
     if command_ids:
         supabase.table("device_commands").update({"status": "sent", "sent_at": _now_iso()}).in_("id", command_ids).execute()
     return CommandListResponse(commands=commands)
+
+
+@app.get("/api/devices/{device_uid}/events")
+def stream_device_events(
+    device_uid: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    _authenticate_device(device_uid, authorization, supabase)
+    event_queue = _register_device_listener(device_uid)
+
+    def event_stream():
+        try:
+            yield _sse_message("ready", {"ok": True, "device_uid": device_uid})
+            while True:
+                try:
+                    event = event_queue.get(timeout=20)
+                    yield _sse_message(str(event.get("type") or "message"), event)
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+        finally:
+            _unregister_device_listener(device_uid, event_queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/devices/{device_uid}/commands/{command_id}/ack")

@@ -101,6 +101,7 @@ Site URL, which is often `http://localhost:3000`.
 - `POST /api/devices/pair`
 - `POST /api/devices/{device_uid}/heartbeat`
 - `GET /api/devices/{device_uid}/commands`
+- `GET /api/devices/{device_uid}/events`
 - `POST /api/devices/{device_uid}/commands/{command_id}/ack`
 
 These match the contract in `../CLOUD_CONTROL.md`.

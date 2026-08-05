@@ -5,6 +5,13 @@ report status, poll for pending commands, and acknowledge command results. The
 Pi always initiates outbound HTTPS requests; the backend never needs direct
 network access to the device.
 
+Commands use a hybrid realtime path:
+
+- The Pi keeps a local polling fallback.
+- The Pi also opens an outbound Server-Sent Events stream.
+- When a command is created, the cloud API sends `commands_available`; the Pi
+  immediately fetches pending commands and acknowledges results.
+
 ## Pi Runtime Settings
 
 These settings are optional and runtime-editable through the existing local API.
@@ -186,6 +193,26 @@ Response:
   ]
 }
 ```
+
+### `GET /api/devices/{device_id}/events`
+
+Headers:
+
+```http
+Authorization: Bearer <device_token>
+```
+
+Server-Sent Events stream used to wake the Pi when commands are available.
+
+Example event:
+
+```text
+event: commands_available
+data: {"type":"commands_available","command_id":"cmd_123"}
+```
+
+The Pi should respond by calling `GET /api/devices/{device_id}/commands`.
+Polling remains the fallback if the event stream disconnects.
 
 Supported MVP commands:
 
