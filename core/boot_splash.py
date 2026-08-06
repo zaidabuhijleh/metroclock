@@ -23,18 +23,21 @@ def render_boot_splash(
     colors: Sequence[Color] = METROCLOCK_MARK_COLORS,
     background: Color = (0, 0, 0),
 ) -> Image.Image:
-    image = Image.new("RGB", (width, height), background)
     if width <= 0 or height <= 0 or not colors:
-        return image
+        return Image.new("RGB", (max(1, width), max(1, height)), background)
 
+    scale = 4
+    scaled_width = width * scale
+    scaled_height = height * scale
+    image = Image.new("RGB", (scaled_width, scaled_height), background)
     draw = ImageDraw.Draw(image)
     count = len(colors)
-    radius = max(2, int(round(min(height * 0.19, width / 12.8))))
-    gap = max(1, int(round(radius * 0.4)))
+    radius = max(2, int(round(min(height * 0.21, width / 12.0)))) * scale
+    gap = max(1, int(round((radius / scale) * 0.55))) * scale
     total_width = count * radius * 2 + (count - 1) * gap
 
-    left = max(0, (width - total_width) // 2)
-    center_y = height // 2
+    left = max(0, (scaled_width - total_width) // 2)
+    center_y = scaled_height // 2
     step = radius * 2 + gap
 
     for index, color in enumerate(colors):
@@ -49,4 +52,11 @@ def render_boot_splash(
             fill=color,
         )
 
-    return image
+    return image.resize((width, height), _lanczos_filter())
+
+
+def _lanczos_filter():
+    resampling = getattr(Image, "Resampling", None)
+    if resampling is not None:
+        return resampling.LANCZOS
+    return Image.LANCZOS
