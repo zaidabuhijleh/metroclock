@@ -194,7 +194,7 @@ class MetroClockCloudAgent:
 
         buf = io.BytesIO()
         try:
-            frame.convert("RGB").save(buf, format="PNG", optimize=True)
+            frame.convert("RGB").save(buf, format="PNG")
         except Exception as exc:
             self._log_error(f"Cloud preview encode error: {exc}")
             return

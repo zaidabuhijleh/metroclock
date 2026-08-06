@@ -41,6 +41,8 @@ _device_event_lock = threading.Lock()
 _device_preview_lock = threading.Lock()
 _device_preview_frames: dict[str, "DevicePreviewFrame"] = {}
 _max_preview_bytes = 256 * 1024
+_max_preview_devices = 500
+_preview_frame_ttl = timedelta(hours=1)
 _allowed_preview_content_types = {"image/png", "image/jpeg"}
 
 
@@ -49,6 +51,8 @@ class DevicePreviewFrame:
     content: bytes
     content_type: str
     updated_at: str
+    received_at: datetime
+
 
 if settings.cors_origins:
     app.add_middleware(
@@ -105,6 +109,34 @@ def _reported_at_iso(status: dict[str, Any]) -> str:
     if isinstance(reported_at, str) and reported_at.strip():
         return reported_at.strip()
     return _now_iso()
+
+
+def _settings_from_status(status: Any) -> dict[str, Any]:
+    if not isinstance(status, dict):
+        return {}
+    return {key: value for key, value in status.items() if isinstance(key, str) and key.isupper()}
+
+
+def _prune_device_preview_frames(now: datetime):
+    expires_before = now - _preview_frame_ttl
+    expired_device_ids = [
+        device_id
+        for device_id, frame in _device_preview_frames.items()
+        if frame.received_at < expires_before
+    ]
+    for device_id in expired_device_ids:
+        _device_preview_frames.pop(device_id, None)
+
+    overflow = len(_device_preview_frames) - _max_preview_devices
+    if overflow <= 0:
+        return
+
+    oldest_device_ids = sorted(
+        _device_preview_frames,
+        key=lambda device_id: _device_preview_frames[device_id].received_at,
+    )
+    for device_id in oldest_device_ids[:overflow]:
+        _device_preview_frames.pop(device_id, None)
 
 
 def _single_or_none(response) -> dict[str, Any] | None:
@@ -797,9 +829,8 @@ def get_device_settings(
         .execute()
     )
     status_row = _single_or_none(status_response) or {}
-    settings = status_row.get("status") if isinstance(status_row.get("status"), dict) else {}
     return DeviceSettingsResponse(
-        settings=settings,
+        settings=_settings_from_status(status_row.get("status")),
         reported_at=status_row.get("reported_at"),
     )
 
@@ -939,13 +970,16 @@ async def upload_device_preview(
     if len(content) > _max_preview_bytes:
         raise HTTPException(status_code=413, detail="Preview image is too large")
 
+    now = datetime.now(UTC)
     frame = DevicePreviewFrame(
         content=content,
         content_type=content_type,
-        updated_at=_now_iso(),
+        updated_at=now.isoformat(),
+        received_at=now,
     )
     with _device_preview_lock:
         _device_preview_frames[device["id"]] = frame
+        _prune_device_preview_frames(now)
     return {"ok": True, "updated_at": frame.updated_at}
 
 
