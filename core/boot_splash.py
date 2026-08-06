@@ -32,8 +32,8 @@ def render_boot_splash(
     image = Image.new("RGB", (scaled_width, scaled_height), background)
     draw = ImageDraw.Draw(image)
     count = len(colors)
-    radius = max(2, int(round(min(height * 0.21, width / 12.0)))) * scale
-    gap = max(1, int(round((radius / scale) * 0.55))) * scale
+    radius = max(2, int(round(min(height * 0.26, width / 10.0)))) * scale
+    gap = 0
     total_width = count * radius * 2 + (count - 1) * gap
 
     left = max(0, (scaled_width - total_width) // 2)
