@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160" viewBox="0 0 640 160" role="img" aria-labelledby="title">
+  <title id="title">MetroClock five-circle brand mark</title>
+  <rect width="640" height="160" fill="none"/>
+  <circle cx="128" cy="80" r="48" fill="#dd2f45"/>
+  <circle cx="224" cy="80" r="48" fill="#ff981d"/>
+  <circle cx="320" cy="80" r="48" fill="#0788c8"/>
+  <circle cx="416" cy="80" r="48" fill="#009d5b"/>
+  <circle cx="512" cy="80" r="48" fill="#f8cc18"/>
+</svg>

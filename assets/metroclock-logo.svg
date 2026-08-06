@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="320" viewBox="0 0 1000 320" role="img" aria-labelledby="title">
+  <title id="title">MetroClock logo</title>
+  <rect width="1000" height="320" fill="none"/>
+  <rect x="40" y="55" width="920" height="210" rx="105" fill="#202427"/>
+  <circle cx="134" cy="160" r="37" fill="#dd2f45"/>
+  <circle cx="204" cy="160" r="37" fill="#ff981d"/>
+  <circle cx="274" cy="160" r="37" fill="#0788c8"/>
+  <circle cx="344" cy="160" r="37" fill="#009d5b"/>
+  <circle cx="414" cy="160" r="37" fill="#f8cc18"/>
+  <text x="490" y="146" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="104" font-weight="900">metro</text>
+  <text x="492" y="226" fill="#d9dddb" font-family="Arial, Helvetica, sans-serif" font-size="82" font-weight="900">clock</text>
+</svg>
