@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">MetroClock app icon source</title>
+  <rect width="1024" height="1024" fill="#202427"/>
+  <circle cx="132" cy="512" r="88" fill="#dd2f45"/>
+  <circle cx="322" cy="512" r="88" fill="#ff981d"/>
+  <circle cx="512" cy="512" r="88" fill="#0788c8"/>
+  <circle cx="702" cy="512" r="88" fill="#009d5b"/>
+  <circle cx="892" cy="512" r="88" fill="#f8cc18"/>
+</svg>
