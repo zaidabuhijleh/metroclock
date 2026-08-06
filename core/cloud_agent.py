@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import socket
 import threading
@@ -25,6 +27,9 @@ class MetroClockCloudAgent:
         self._command_poll_lock = threading.Lock()
         self._last_heartbeat_at = 0.0
         self._last_command_poll_at = 0.0
+        self._last_preview_upload_at = 0.0
+        self._last_preview_upload_success_at = 0.0
+        self._last_preview_signature: str | None = None
         self._last_error_log_at = 0.0
 
     def start(self):
@@ -52,6 +57,7 @@ class MetroClockCloudAgent:
                 if self._device_token():
                     self._heartbeat_if_due()
                     self._poll_commands_if_due()
+                    self._upload_preview_if_due()
             except Exception as exc:
                 self._log_error(f"Cloud agent error: {exc}")
 
@@ -94,6 +100,10 @@ class MetroClockCloudAgent:
     @staticmethod
     def _poll_seconds() -> int:
         return MetroClockCloudAgent._coerce_interval("METROCLOCK_CLOUD_COMMAND_POLL_SECONDS", 5, 2, 300)
+
+    @staticmethod
+    def _preview_seconds() -> int:
+        return MetroClockCloudAgent._coerce_interval("METROCLOCK_CLOUD_PREVIEW_SECONDS", 2, 1, 300)
 
     @staticmethod
     def _coerce_interval(key: str, default: int, minimum: int, maximum: int) -> int:
@@ -170,6 +180,46 @@ class MetroClockCloudAgent:
             commands = data.get("commands") or []
             if isinstance(commands, list):
                 self._execute_commands(commands)
+
+    def _upload_preview_if_due(self):
+        now = time.time()
+        interval = self._preview_seconds()
+        if now - self._last_preview_upload_at < interval:
+            return
+        self._last_preview_upload_at = now
+
+        frame = web_server.get_latest_frame()
+        if frame is None:
+            return
+
+        buf = io.BytesIO()
+        try:
+            frame.convert("RGB").save(buf, format="PNG")
+        except Exception as exc:
+            self._log_error(f"Cloud preview encode error: {exc}")
+            return
+
+        content = buf.getvalue()
+        signature = hashlib.blake2s(content, digest_size=8).hexdigest()
+        keepalive_seconds = max(60, interval * 30)
+        if (
+            signature == self._last_preview_signature
+            and now - self._last_preview_upload_success_at < keepalive_seconds
+        ):
+            return
+
+        try:
+            response = requests.post(
+                self._url(f"/api/devices/{web_server._get_device_id()}/preview"),
+                data=content,
+                headers={**self._headers(), "Content-Type": "image/png"},
+                timeout=10,
+            )
+            response.raise_for_status()
+            self._last_preview_signature = signature
+            self._last_preview_upload_success_at = now
+        except Exception as exc:
+            self._log_error(f"Cloud preview upload error: {exc}")
 
     def _listen_for_events(self):
         response = requests.get(
@@ -268,6 +318,7 @@ class MetroClockCloudAgent:
             "ip": web_server._get_ip(),
             "display_mode": web_server.get_display_mode(),
             "brightness": web_server.get_brightness(),
+            "cloud_preview_seconds": MetroClockCloudAgent._preview_seconds(),
             "wifi_setup": web_server.get_wifi_setup_status(),
             "weather_preview": web_server.get_weather_preview(),
             "ambient_scene": web_server.get_ambient_scene(),

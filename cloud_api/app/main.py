@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import queue
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from postgrest.exceptions import APIError
 import requests
 from supabase import Client
@@ -17,14 +18,17 @@ from app.settings import get_settings
 from app.schemas import (
     CommandAckRequest,
     CommandListResponse,
+    CommandStatusResponse,
     CreateCommandRequest,
     CreateCommandResponse,
     CreatePairingTokenRequest,
     CreatePairingTokenResponse,
+    DeviceSettingsResponse,
     DeviceListResponse,
     DeviceSummary,
     PairDeviceRequest,
     PairDeviceResponse,
+    UpdateDeviceSettingsRequest,
 )
 from app.security import generate_device_token, generate_pairing_token, hash_device_token
 from app.supabase_client import get_supabase
@@ -34,6 +38,21 @@ app = FastAPI(title="MetroClock Cloud API")
 settings = get_settings()
 _device_event_queues: dict[str, list[queue.Queue[dict[str, Any]]]] = {}
 _device_event_lock = threading.Lock()
+_device_preview_lock = threading.Lock()
+_device_preview_frames: dict[str, "DevicePreviewFrame"] = {}
+_max_preview_bytes = 256 * 1024
+_max_preview_devices = 500
+_preview_frame_ttl = timedelta(hours=1)
+_allowed_preview_content_types = {"image/png", "image/jpeg"}
+
+
+@dataclass(frozen=True)
+class DevicePreviewFrame:
+    content: bytes
+    content_type: str
+    updated_at: str
+    received_at: datetime
+
 
 if settings.cors_origins:
     app.add_middleware(
@@ -90,6 +109,34 @@ def _reported_at_iso(status: dict[str, Any]) -> str:
     if isinstance(reported_at, str) and reported_at.strip():
         return reported_at.strip()
     return _now_iso()
+
+
+def _settings_from_status(status: Any) -> dict[str, Any]:
+    if not isinstance(status, dict):
+        return {}
+    return {key: value for key, value in status.items() if isinstance(key, str) and key.isupper()}
+
+
+def _prune_device_preview_frames(now: datetime):
+    expires_before = now - _preview_frame_ttl
+    expired_device_ids = [
+        device_id
+        for device_id, frame in _device_preview_frames.items()
+        if frame.received_at < expires_before
+    ]
+    for device_id in expired_device_ids:
+        _device_preview_frames.pop(device_id, None)
+
+    overflow = len(_device_preview_frames) - _max_preview_devices
+    if overflow <= 0:
+        return
+
+    oldest_device_ids = sorted(
+        _device_preview_frames,
+        key=lambda device_id: _device_preview_frames[device_id].received_at,
+    )
+    for device_id in oldest_device_ids[:overflow]:
+        _device_preview_frames.pop(device_id, None)
 
 
 def _single_or_none(response) -> dict[str, Any] | None:
@@ -167,6 +214,48 @@ def _fetch_device_by_uid(supabase: Client, device_uid: str) -> dict[str, Any]:
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     return device
+
+
+def _ensure_user_can_control_device(supabase: Client, user_id: str, device_id: str):
+    membership_response = (
+        supabase.table("device_memberships")
+        .select("role")
+        .eq("device_id", device_id)
+        .eq("user_id", user_id)
+        .in_("role", ["owner", "admin"])
+        .limit(1)
+        .execute()
+    )
+    if not _single_or_none(membership_response):
+        raise HTTPException(status_code=403, detail="You do not have permission to control this device")
+
+
+def _create_device_command(
+    supabase: Client,
+    device_id: str,
+    device_uid: str,
+    user_id: str,
+    action: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    command_response = (
+        supabase.table("device_commands")
+        .insert(
+            {
+                "device_id": device_id,
+                "requested_by": user_id,
+                "action": action,
+                "payload": payload,
+                "status": "pending",
+            }
+        )
+        .execute()
+    )
+    command = _single_or_none(command_response)
+    if not command:
+        raise HTTPException(status_code=500, detail="Failed to create command")
+    _notify_device(device_uid, {"type": "commands_available", "command_id": command["id"]})
+    return command
 
 
 def _authenticate_device(
@@ -721,6 +810,53 @@ def list_my_devices(
     return DeviceListResponse(devices=devices)
 
 
+@app.get("/api/devices/{device_uid}/settings", response_model=DeviceSettingsResponse)
+def get_device_settings(
+    device_uid: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    user = _authenticate_user(authorization)
+    _ensure_profile(supabase, user)
+    device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
+
+    status_response = (
+        supabase.table("device_status")
+        .select("status, reported_at")
+        .eq("device_id", device["id"])
+        .limit(1)
+        .execute()
+    )
+    status_row = _single_or_none(status_response) or {}
+    return DeviceSettingsResponse(
+        settings=_settings_from_status(status_row.get("status")),
+        reported_at=status_row.get("reported_at"),
+    )
+
+
+@app.patch("/api/devices/{device_uid}/settings", response_model=CreateCommandResponse)
+def update_device_settings(
+    device_uid: str,
+    request: UpdateDeviceSettingsRequest,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    user = _authenticate_user(authorization)
+    _ensure_profile(supabase, user)
+    device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
+    command = _create_device_command(
+        supabase=supabase,
+        device_id=device["id"],
+        device_uid=device_uid,
+        user_id=user["id"],
+        action="set_settings",
+        payload=request.settings,
+    )
+    return CreateCommandResponse(id=command["id"], status=command["status"])
+
+
 @app.post("/api/devices/{device_uid}/commands", response_model=CreateCommandResponse)
 def create_device_command(
     device_uid: str,
@@ -731,38 +867,54 @@ def create_device_command(
     user = _authenticate_user(authorization)
     _ensure_profile(supabase, user)
     device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
 
-    membership_response = (
-        supabase.table("device_memberships")
-        .select("role")
+    action, payload = _normalize_command_request(request)
+    command = _create_device_command(
+        supabase=supabase,
+        device_id=device["id"],
+        device_uid=device_uid,
+        user_id=user["id"],
+        action=action,
+        payload=payload,
+    )
+    return CreateCommandResponse(id=command["id"], status=command["status"])
+
+
+@app.get("/api/devices/{device_uid}/commands/{command_id}", response_model=CommandStatusResponse)
+def get_device_command_status(
+    device_uid: str,
+    command_id: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    user = _authenticate_user(authorization)
+    _ensure_profile(supabase, user)
+    device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
+
+    response = (
+        supabase.table("device_commands")
+        .select("id, action, status, payload, result, error, created_at, sent_at, acknowledged_at")
+        .eq("id", command_id)
         .eq("device_id", device["id"])
-        .eq("user_id", user["id"])
-        .in_("role", ["owner", "admin"])
         .limit(1)
         .execute()
     )
-    if not _single_or_none(membership_response):
-        raise HTTPException(status_code=403, detail="You do not have permission to control this device")
-
-    action, payload = _normalize_command_request(request)
-    command_response = (
-        supabase.table("device_commands")
-        .insert(
-            {
-                "device_id": device["id"],
-                "requested_by": user["id"],
-                "action": action,
-                "payload": payload,
-                "status": "pending",
-            }
-        )
-        .execute()
-    )
-    command = _single_or_none(command_response)
+    command = _single_or_none(response)
     if not command:
-        raise HTTPException(status_code=500, detail="Failed to create command")
-    _notify_device(device_uid, {"type": "commands_available", "command_id": command["id"]})
-    return CreateCommandResponse(id=command["id"], status=command["status"])
+        raise HTTPException(status_code=404, detail="Command not found")
+    return CommandStatusResponse(
+        id=command["id"],
+        action=command["action"],
+        status=command["status"],
+        payload=command.get("payload") or {},
+        result=command.get("result"),
+        error=command.get("error"),
+        created_at=command.get("created_at"),
+        sent_at=command.get("sent_at"),
+        acknowledged_at=command.get("acknowledged_at"),
+    )
 
 
 @app.post("/api/devices/{device_uid}/heartbeat")
@@ -790,6 +942,71 @@ def device_heartbeat(
         on_conflict="device_id",
     ).execute()
     return {"ok": True}
+
+
+@app.post("/api/devices/{device_uid}/preview")
+async def upload_device_preview(
+    device_uid: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    device = _authenticate_device(device_uid, authorization, supabase)
+    content_type = str(request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type not in _allowed_preview_content_types:
+        raise HTTPException(status_code=415, detail="Preview must be image/png or image/jpeg")
+
+    content_length = str(request.headers.get("content-length") or "").strip()
+    if content_length:
+        try:
+            if int(content_length) > _max_preview_bytes:
+                raise HTTPException(status_code=413, detail="Preview image is too large")
+        except ValueError:
+            pass
+
+    content = await request.body()
+    if not content:
+        raise HTTPException(status_code=400, detail="Preview image is empty")
+    if len(content) > _max_preview_bytes:
+        raise HTTPException(status_code=413, detail="Preview image is too large")
+
+    now = datetime.now(UTC)
+    frame = DevicePreviewFrame(
+        content=content,
+        content_type=content_type,
+        updated_at=now.isoformat(),
+        received_at=now,
+    )
+    with _device_preview_lock:
+        _device_preview_frames[device["id"]] = frame
+        _prune_device_preview_frames(now)
+    return {"ok": True, "updated_at": frame.updated_at}
+
+
+@app.get("/api/devices/{device_uid}/preview")
+def get_device_preview(
+    device_uid: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    user = _authenticate_user(authorization)
+    _ensure_profile(supabase, user)
+    device = _fetch_device_by_uid(supabase, device_uid)
+    _ensure_user_can_control_device(supabase, user["id"], device["id"])
+
+    with _device_preview_lock:
+        frame = _device_preview_frames.get(device["id"])
+    if frame is None:
+        raise HTTPException(status_code=404, detail="Preview is not available yet")
+
+    return Response(
+        content=frame.content,
+        media_type=frame.content_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-MetroClock-Preview-Updated-At": frame.updated_at,
+        },
+    )
 
 
 @app.get("/api/devices/{device_uid}/commands", response_model=CommandListResponse)

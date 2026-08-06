@@ -968,6 +968,7 @@ def _cloud_status_payload() -> dict:
         "pairing_code_set": bool(cfg.get("METROCLOCK_CLOUD_PAIRING_CODE")),
         "heartbeat_seconds": cfg.get("METROCLOCK_CLOUD_HEARTBEAT_SECONDS"),
         "command_poll_seconds": cfg.get("METROCLOCK_CLOUD_COMMAND_POLL_SECONDS"),
+        "preview_seconds": cfg.get("METROCLOCK_CLOUD_PREVIEW_SECONDS"),
     }
 
 

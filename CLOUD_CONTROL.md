@@ -29,6 +29,7 @@ Cloud control is disabled unless both `METROCLOCK_CLOUD_ENABLED` and
 - `METROCLOCK_CLOUD_PAIRING_CODE`: short-lived code created in the user account
 - `METROCLOCK_CLOUD_HEARTBEAT_SECONDS`: status report cadence, default `30`
 - `METROCLOCK_CLOUD_COMMAND_POLL_SECONDS`: command poll cadence, default `5`
+- `METROCLOCK_CLOUD_PREVIEW_SECONDS`: remote preview upload cadence, default `2`
 
 ## Pairing Flow
 
@@ -126,6 +127,15 @@ Response:
 
 Returns devices visible to the signed-in user, plus latest status.
 
+### `GET /api/devices/{device_uid}/preview`
+
+Returns the latest preview frame uploaded by the Pi for users who own/admin the
+device. The MVP stores this latest frame in the cloud API process memory, so it
+is a remote snapshot rather than a live stream and will be empty until the Pi
+uploads again after an API restart.
+
+Response: `image/png` or `image/jpeg`.
+
 ### `POST /api/devices/{device_uid}/commands`
 
 Creates a pending command for a device the signed-in user owns/admins.
@@ -140,6 +150,53 @@ Request:
   }
 }
 ```
+
+### `GET /api/devices/{device_uid}/settings`
+
+Returns the latest settings/status payload reported by the Pi heartbeat. Secret
+values are masked by the Pi before they reach the cloud API.
+
+Response:
+
+```json
+{
+  "settings": {
+    "DISPLAY_MODE": "clock",
+    "WEATHER_ZIP": "20001"
+  },
+  "reported_at": "2026-08-05T19:30:00+00:00"
+}
+```
+
+### `PATCH /api/devices/{device_uid}/settings`
+
+Queues a `set_settings` command for a device the signed-in user owns/admins.
+The iOS app can poll the returned command id until it is acknowledged.
+
+Request:
+
+```json
+{
+  "settings": {
+    "STOCKS_SYMBOLS": "AAPL,MSFT,SPY",
+    "STOCKS_VIEW_MODE": "ticker"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "id": "command-id",
+  "status": "pending"
+}
+```
+
+### `GET /api/devices/{device_uid}/commands/{command_id}`
+
+Returns command status for app-created commands so clients can show success or
+surface the Pi's failure message.
 
 ## Backend Endpoints Expected By The Pi
 
@@ -174,6 +231,18 @@ Authorization: Bearer <device_token>
 Body: current status/settings payload. This mirrors the local `/api/status`
 shape and includes `device_id`, `app_version`, `api_version`, `display_mode`,
 `wifi_setup`, `weather_preview`, `ambient_scene`, and editable settings.
+
+### `POST /api/devices/{device_id}/preview`
+
+Headers:
+
+```http
+Authorization: Bearer <device_token>
+Content-Type: image/png
+```
+
+Body: latest rendered preview frame. The cloud API keeps only the most recent
+frame per device for app-facing remote preview.
 
 ### `GET /api/devices/{device_id}/commands`
 
