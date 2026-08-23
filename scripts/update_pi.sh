@@ -7,6 +7,7 @@ VENV_DIR="${METROCLOCK_VENV_DIR:-$REPO_DIR/.venv}"
 STATE_DIR="${METROCLOCK_STATE_DIR:-/etc/metroclock}"
 HEALTH_URL="${METROCLOCK_HEALTH_URL:-http://127.0.0.1/api/status}"
 HEALTH_TIMEOUT_SECONDS="${METROCLOCK_HEALTH_TIMEOUT_SECONDS:-30}"
+BOOTSTRAP_PERSIST_DIR="${METROCLOCK_UPDATE_BOOTSTRAP_DIR:-/etc/metroclock/update-bootstrap}"
 
 TARGET_REF=""
 ROLLBACK=0
@@ -79,6 +80,23 @@ done
 
 cd "$REPO_DIR"
 
+ensure_existing_pi_environment() {
+  if [ ! -x "$VENV_DIR/bin/python" ]; then
+    echo "Missing production Python environment: $VENV_DIR/bin/python" >&2
+    echo "Run scripts/setup_pi.sh first. update_pi.sh only updates an already prepared Pi." >&2
+    exit 1
+  fi
+
+  if ! "$VENV_DIR/bin/python" - <<'PY' >/dev/null 2>&1
+from rgbmatrix import RGBMatrix, RGBMatrixOptions
+PY
+  then
+    echo "Existing Python environment is missing rgbmatrix." >&2
+    echo "Run scripts/setup_pi.sh first so the LED matrix bindings are built into the venv." >&2
+    exit 1
+  fi
+}
+
 if [ "$ROLLBACK" -eq 1 ]; then
   if [ -n "$TARGET_REF" ]; then
     echo "--rollback cannot be combined with --ref" >&2
@@ -107,6 +125,10 @@ if [ -n "$(git status --porcelain)" ] && [ "${METROCLOCK_UPDATE_ALLOW_DIRTY:-0}"
   exit 1
 fi
 
+if [ "$SKIP_DEPS" -eq 0 ] || [ "$SKIP_SERVICE_INSTALL" -eq 0 ] || [ "$NO_RESTART" -eq 0 ]; then
+  ensure_existing_pi_environment
+fi
+
 BEFORE_SHA="$(git rev-parse --verify HEAD)"
 BEFORE_DESCRIBE="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
 BOOTSTRAP_DIR="$(mktemp -d /tmp/metroclock-update.XXXXXX)"
@@ -133,6 +155,15 @@ helper_script() {
   return 1
 }
 
+persist_bootstrap_helper() {
+  local helper="$1"
+  local source_path
+  source_path="$(helper_script "$helper")"
+  sudo mkdir -p "$BOOTSTRAP_PERSIST_DIR/scripts"
+  sudo install -m 755 "$source_path" "$BOOTSTRAP_PERSIST_DIR/scripts/$helper"
+  printf '%s\n' "$BOOTSTRAP_PERSIST_DIR/scripts/$helper"
+}
+
 echo "Current version: $BEFORE_DESCRIBE ($BEFORE_SHA)"
 echo "Fetching origin..."
 git fetch --tags origin
@@ -150,10 +181,6 @@ AFTER_DESCRIBE="$(git describe --tags --always --dirty 2>/dev/null || git rev-pa
 echo "Updated to: $AFTER_DESCRIBE ($AFTER_SHA)"
 
 if [ "$SKIP_DEPS" -eq 0 ]; then
-  if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating Python virtual environment at $VENV_DIR..."
-    python3 -m venv "$VENV_DIR"
-  fi
   # shellcheck disable=SC1091
   source "$VENV_DIR/bin/activate"
   echo "Installing Python requirements..."
@@ -167,8 +194,8 @@ fi
 
 if [ "$SKIP_NETWORK_RECOVERY_INSTALL" -eq 0 ]; then
   RECOVERY_SCRIPT="$REPO_DIR/scripts/network_recovery.sh"
-  if [ ! -x "$RECOVERY_SCRIPT" ] && [ -x "$BOOTSTRAP_DIR/scripts/network_recovery.sh" ]; then
-    RECOVERY_SCRIPT="$BOOTSTRAP_DIR/scripts/network_recovery.sh"
+  if [ ! -x "$RECOVERY_SCRIPT" ]; then
+    RECOVERY_SCRIPT="$(persist_bootstrap_helper network_recovery.sh)"
   fi
   METROCLOCK_REPO_DIR="$REPO_DIR" METROCLOCK_RECOVERY_SCRIPT="$RECOVERY_SCRIPT" "$(helper_script install_network_recovery.sh)"
 fi

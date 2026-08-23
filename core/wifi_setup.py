@@ -307,6 +307,7 @@ class WifiSetupManager:
             )
         hostapd_lines.append("")
         self._write_file(HOSTAPD_CONF, "\n".join(hostapd_lines))
+        os.chmod(HOSTAPD_CONF, 0o600)
         hotspot_prefix = self.hotspot_ip.rsplit(".", 1)[0]
         self._write_file(
             DNSMASQ_CONF,
