@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import ipaddress
 import json
 import os
@@ -18,6 +20,7 @@ import config_manager
 WPA_SUPPLICANT_CONF = "/etc/wpa_supplicant/wpa_supplicant.conf"
 HOSTAPD_CONF = "/etc/hostapd/hostapd.conf"
 DNSMASQ_CONF = "/etc/dnsmasq.d/metroclock-setup.conf"
+RECOVERY_LOCK_PATH = "/run/metroclock/wifi-recovery.lock"
 
 
 @dataclass
@@ -65,6 +68,8 @@ class WifiSetupManager:
         self.interface = str(getattr(config, "WIFI_INTERFACE", "wlan0") or "wlan0")
         self.hotspot_ssid = str(getattr(config, "WIFI_SETUP_HOTSPOT_SSID", "MetroClock-Setup") or "MetroClock-Setup")
         self.hotspot_ip = str(getattr(config, "WIFI_SETUP_HOTSPOT_IP", "192.168.4.1") or "192.168.4.1")
+        self.hotspot_password = str(getattr(config, "WIFI_SETUP_HOTSPOT_PASSWORD", "metroclock") or "")
+        self.recovery_lock_path = str(os.environ.get("METROCLOCK_WIFI_RECOVERY_LOCK_PATH", RECOVERY_LOCK_PATH) or RECOVERY_LOCK_PATH)
         try:
             self.connect_timeout = max(5, int(getattr(config, "WIFI_CONNECT_TIMEOUT_SECONDS", 45)))
         except Exception:
@@ -160,7 +165,7 @@ class WifiSetupManager:
 
     def _connect_to_network(self, ssid: str, password: str):
         try:
-            with self._transition_lock:
+            with self._wifi_recovery_lock(), self._transition_lock:
                 self._write_wpa_supplicant_network(ssid, password)
                 config_manager.write_config({"SETUP_MODE": False})
             if not self._try_saved_wifi(
@@ -174,7 +179,7 @@ class WifiSetupManager:
             self._start_hotspot(f"WiFi connect failed: {exc}")
 
     def _try_saved_wifi(self, reason: str, restart_client: bool, stop_hotspot: bool, fallback_ssid: str = "") -> bool:
-        with self._transition_lock:
+        with self._wifi_recovery_lock(), self._transition_lock:
             self._set_status(
                 active=False,
                 connected=False,
@@ -206,11 +211,12 @@ class WifiSetupManager:
         return self._stop_event.wait(max(1, int(timeout_seconds)))
 
     def _start_hotspot(self, reason: str):
-        with self._transition_lock:
+        with self._wifi_recovery_lock(), self._transition_lock:
             try:
                 self._ensure_hotspot_config()
-                self._run_command(["systemctl", "stop", "wpa_supplicant"], timeout=8)
                 self._run_command(["systemctl", "stop", f"wpa_supplicant@{self.interface}"], timeout=8)
+                self._run_command(["wpa_cli", "-i", self.interface, "terminate"], timeout=8)
+                self._run_command(["nmcli", "device", "disconnect", self.interface], timeout=8)
                 self._run_command(["ip", "addr", "flush", "dev", self.interface], timeout=8, check=True)
                 self._run_command(["ip", "addr", "add", f"{self.hotspot_ip}/24", "dev", self.interface], timeout=8, check=True)
                 self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8, check=True)
@@ -266,10 +272,10 @@ class WifiSetupManager:
     def _restart_wifi_client(self):
         self._run_command(["ip", "addr", "flush", "dev", self.interface], timeout=8)
         self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8)
-        self._run_command(["systemctl", "restart", "wpa_supplicant"], timeout=12)
         self._run_command(["systemctl", "restart", f"wpa_supplicant@{self.interface}"], timeout=12)
-        self._run_command(["systemctl", "restart", "dhcpcd"], timeout=12)
         self._run_command(["wpa_cli", "-i", self.interface, "reconfigure"], timeout=8)
+        self._run_command(["dhcpcd", "-n", self.interface], timeout=8)
+        self._run_command(["nmcli", "device", "connect", self.interface], timeout=8)
 
     def _ensure_hotspot_config(self):
         self._require_command("hostapd")
@@ -277,30 +283,39 @@ class WifiSetupManager:
         self._require_command("ip")
         os.makedirs(os.path.dirname(HOSTAPD_CONF), exist_ok=True)
         os.makedirs(os.path.dirname(DNSMASQ_CONF), exist_ok=True)
-        self._write_file(
-            HOSTAPD_CONF,
-            "\n".join(
+        hostapd_lines = [
+            f"interface={self.interface}",
+            "driver=nl80211",
+            f"ssid={self.hotspot_ssid}",
+            "hw_mode=g",
+            "channel=7",
+            "wmm_enabled=0",
+            "macaddr_acl=0",
+            "auth_algs=1",
+            "ignore_broadcast_ssid=0",
+        ]
+        if self.hotspot_password:
+            if len(self.hotspot_password) < 8 or len(self.hotspot_password) > 63:
+                raise RuntimeError("WIFI_SETUP_HOTSPOT_PASSWORD must be 8-63 characters")
+            hostapd_lines.extend(
                 [
-                    f"interface={self.interface}",
-                    "driver=nl80211",
-                    f"ssid={self.hotspot_ssid}",
-                    "hw_mode=g",
-                    "channel=7",
-                    "wmm_enabled=0",
-                    "macaddr_acl=0",
-                    "auth_algs=1",
-                    "ignore_broadcast_ssid=0",
-                    "",
+                    "wpa=2",
+                    f"wpa_passphrase={self.hotspot_password}",
+                    "wpa_key_mgmt=WPA-PSK",
+                    "rsn_pairwise=CCMP",
                 ]
-            ),
-        )
+            )
+        hostapd_lines.append("")
+        self._write_file(HOSTAPD_CONF, "\n".join(hostapd_lines))
+        os.chmod(HOSTAPD_CONF, 0o600)
+        hotspot_prefix = self.hotspot_ip.rsplit(".", 1)[0]
         self._write_file(
             DNSMASQ_CONF,
             "\n".join(
                 [
                     f"interface={self.interface}",
                     "bind-dynamic",
-                    "dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h",
+                    f"dhcp-range={hotspot_prefix}.2,{hotspot_prefix}.20,255.255.255.0,24h",
                     f"address=/#/{self.hotspot_ip}",
                     "",
                 ]
@@ -472,6 +487,16 @@ class WifiSetupManager:
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(tmp_path, path)
+
+    @contextlib.contextmanager
+    def _wifi_recovery_lock(self):
+        os.makedirs(os.path.dirname(self.recovery_lock_path), exist_ok=True)
+        with open(self.recovery_lock_path, "w", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def _set_status(self, **updates):
         with self._lock:

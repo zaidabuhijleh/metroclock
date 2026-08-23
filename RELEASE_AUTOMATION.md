@@ -1,38 +1,33 @@
 # Release Automation
 
-This repo uses **release-please** with **Conventional Commits**.
+The current GitHub workflow is `.github/workflows/release-please.yml`, but the
+job is a custom **version-tag** release job. It computes the next tag from repo
+variables or manual workflow inputs.
 
 ## What happens automatically
 
 1. A push to `main` runs `.github/workflows/release-please.yml`.
-2. release-please scans commits since the last release tag.
-3. It opens or updates a **Release PR** with:
-   - `CHANGELOG.md` updates
-   - `version.txt` bump
-   - `.release-please-manifest.json` version bump
-4. When that Release PR is merged, release-please creates:
-   - a git tag (`vX.Y.Z`)
-   - a GitHub Release
+2. The workflow reads `MASTER_BUILD_NUMBER` and `IS_RELEASE`.
+3. It finds the next revision for that major/minor line.
+4. It creates a git tag:
+   - stable: `vX.Y.Z`
+   - alpha: `vX.Y.Z-alpha`
+5. It creates a GitHub Release for that tag.
 
-## Commit format to use
+## Required repo variables
 
-- `feat: ...` -> minor bump
-- `fix: ...` -> patch bump
-- `feat!: ...` or `BREAKING CHANGE:` in body -> major bump
+- `MASTER_BUILD_NUMBER`: base version like `1.0` or `1.0.X`
+- `IS_RELEASE`: `true` for stable tags, `false` for alpha tags
 
-Examples:
+The workflow can also be run manually with `workflow_dispatch` inputs.
 
-- `feat: add iOS device pairing endpoint`
-- `fix: persist ambient scene across restart`
-- `feat!: change auth header format`
+## Production device updates
 
-## First-time bootstrap notes
-
-- Current manifest baseline is set in `.release-please-manifest.json`.
-- If you need to force the next version manually, use an empty commit:
+After a tag is created, update a Pi with:
 
 ```bash
-git commit --allow-empty -m "chore: release 0.2.0" -m "Release-As: 0.2.0"
-git push origin main
+cd /home/zaid/metroclock
+./scripts/update_pi.sh --ref v1.0.3-alpha
 ```
 
+See `PRODUCTION_UPDATES.md` for the full device update and rollback flow.

@@ -9,6 +9,7 @@ from PIL import Image
 
 import config
 import web_server
+from core.boot_splash import render_boot_splash
 from core.display import Display
 from core.modes import DEFAULT_MODE_CATALOG, ModeCatalog
 from core.status_frame import render_status_frame
@@ -115,6 +116,15 @@ class DisplayManager:
         self.present(frame, brightness)
         return frame
 
+    def boot_splash_frame(self):
+        return render_boot_splash(self._hardware.width, self._hardware.height)
+
+    def present_boot_splash(self, brightness: int, mode: str = "setup"):
+        self.ensure_mode(mode)
+        frame = self.boot_splash_frame()
+        self.present(frame, brightness)
+        return frame
+
 
 class WidgetRenderer:
     """Wraps a widget with a uniform render lifecycle."""
@@ -190,6 +200,8 @@ class MetroClockApp:
         cloud_agent=None,
         loop_delay: float = 0.02,
         error_delay: float = 0.25,
+        boot_splash_started_at: Optional[float] = None,
+        minimum_boot_splash_seconds: float = 2.0,
     ):
         self._state_provider = state_provider
         self._widgets = widgets
@@ -198,6 +210,8 @@ class MetroClockApp:
         self._cloud_agent = cloud_agent
         self._loop_delay = loop_delay
         self._error_delay = error_delay
+        self._boot_splash_started_at = boot_splash_started_at
+        self._minimum_boot_splash_seconds = minimum_boot_splash_seconds
         self._last_mode = None
         self._last_perf_log = 0.0
         self._last_error_frame_at = 0.0
@@ -216,10 +230,13 @@ class MetroClockApp:
             brightness=config.MATRIX_BRIGHTNESS,
         )
         display = DisplayManager(hardware=hardware)
+        boot_splash_started_at = None
         try:
-            display.present_status(("BOOTING", "METROCLOCK", "STARTING"), hardware.brightness)
+            frame = display.present_boot_splash(hardware.brightness)
+            web_server.set_latest_frame(frame)
+            boot_splash_started_at = time.monotonic()
         except Exception as exc:
-            print(f"Startup status frame failed: {exc}", flush=True)
+            print(f"Startup splash frame failed: {exc}", flush=True)
         widgets = WidgetRegistry(width=config.MATRIX_WIDTH, height=config.MATRIX_HEIGHT)
         try:
             from core.wifi_setup import WifiSetupManager
@@ -241,6 +258,7 @@ class MetroClockApp:
             display=display,
             wifi_setup_manager=wifi_setup_manager,
             cloud_agent=cloud_agent,
+            boot_splash_started_at=boot_splash_started_at,
         )
 
     def run_forever(self):
@@ -250,6 +268,7 @@ class MetroClockApp:
         web_server.start_server()
         if self._cloud_agent is not None:
             self._cloud_agent.start()
+        self._hold_boot_splash_if_needed()
         print("Dashboard Started. Press Ctrl+C to exit.", flush=True)
 
         try:
@@ -257,6 +276,13 @@ class MetroClockApp:
                 self._tick()
         except KeyboardInterrupt:
             print("\nExiting...")
+
+    def _hold_boot_splash_if_needed(self):
+        if self._boot_splash_started_at is None:
+            return
+        remaining = self._minimum_boot_splash_seconds - (time.monotonic() - self._boot_splash_started_at)
+        if remaining > 0:
+            time.sleep(remaining)
 
     def _tick(self):
         mode = "unknown"

@@ -620,6 +620,7 @@ def _mask_config(cfg: dict) -> dict:
         "AVIATIONSTACK_API_KEY",
         "METROCLOCK_CLOUD_DEVICE_TOKEN",
         "METROCLOCK_CLOUD_PAIRING_CODE",
+        "WIFI_SETUP_HOTSPOT_PASSWORD",
     }
     result = {}
     for key, value in cfg.items():

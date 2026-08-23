@@ -1,12 +1,13 @@
 [Unit]
 Description=MetroClock LED Display
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/home/zaid/metroclock
-ExecStart=/usr/bin/python3 /home/zaid/metroclock/main.py
+ExecStart=/home/zaid/metroclock/.venv/bin/python /home/zaid/metroclock/main.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
