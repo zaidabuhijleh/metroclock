@@ -109,6 +109,29 @@ fi
 
 BEFORE_SHA="$(git rev-parse --verify HEAD)"
 BEFORE_DESCRIBE="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
+BOOTSTRAP_DIR="$(mktemp -d /tmp/metroclock-update.XXXXXX)"
+trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
+mkdir -p "$BOOTSTRAP_DIR/scripts"
+for helper in install_service.sh install_network_recovery.sh network_recovery.sh; do
+  if [ -f "$REPO_DIR/scripts/$helper" ]; then
+    cp "$REPO_DIR/scripts/$helper" "$BOOTSTRAP_DIR/scripts/$helper"
+    chmod +x "$BOOTSTRAP_DIR/scripts/$helper"
+  fi
+done
+
+helper_script() {
+  local helper="$1"
+  if [ -x "$REPO_DIR/scripts/$helper" ]; then
+    printf '%s\n' "$REPO_DIR/scripts/$helper"
+    return 0
+  fi
+  if [ -x "$BOOTSTRAP_DIR/scripts/$helper" ]; then
+    printf '%s\n' "$BOOTSTRAP_DIR/scripts/$helper"
+    return 0
+  fi
+  echo "Missing update helper: $helper" >&2
+  return 1
+}
 
 echo "Current version: $BEFORE_DESCRIBE ($BEFORE_SHA)"
 echo "Fetching origin..."
@@ -139,11 +162,15 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
 fi
 
 if [ "$SKIP_SERVICE_INSTALL" -eq 0 ]; then
-  "$REPO_DIR/scripts/install_service.sh"
+  METROCLOCK_REPO_DIR="$REPO_DIR" "$(helper_script install_service.sh)"
 fi
 
 if [ "$SKIP_NETWORK_RECOVERY_INSTALL" -eq 0 ]; then
-  "$REPO_DIR/scripts/install_network_recovery.sh"
+  RECOVERY_SCRIPT="$REPO_DIR/scripts/network_recovery.sh"
+  if [ ! -x "$RECOVERY_SCRIPT" ] && [ -x "$BOOTSTRAP_DIR/scripts/network_recovery.sh" ]; then
+    RECOVERY_SCRIPT="$BOOTSTRAP_DIR/scripts/network_recovery.sh"
+  fi
+  METROCLOCK_REPO_DIR="$REPO_DIR" METROCLOCK_RECOVERY_SCRIPT="$RECOVERY_SCRIPT" "$(helper_script install_network_recovery.sh)"
 fi
 
 sudo mkdir -p "$STATE_DIR"
@@ -161,7 +188,7 @@ sudo systemctl restart "$SERVICE_NAME"
 
 echo "Waiting for health check: $HEALTH_URL"
 deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
-until curl -fsS "$HEALTH_URL" >/tmp/metroclock-health.json; do
+until curl -fsS --max-time 2 "$HEALTH_URL" >/tmp/metroclock-health.json; do
   if [ "$SECONDS" -ge "$deadline" ]; then
     echo "Health check failed after ${HEALTH_TIMEOUT_SECONDS}s." >&2
     echo "Recent ${SERVICE_NAME} logs:" >&2

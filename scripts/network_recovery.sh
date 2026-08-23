@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INTERFACE="${METROCLOCK_WIFI_INTERFACE:-wlan0}"
-HOTSPOT_SSID="${METROCLOCK_WIFI_HOTSPOT_SSID:-MetroClock-Setup}"
-HOTSPOT_IP="${METROCLOCK_WIFI_HOTSPOT_IP:-192.168.4.1}"
-HOTSPOT_CIDR="${METROCLOCK_WIFI_HOTSPOT_CIDR:-${HOTSPOT_IP}/24}"
+CONFIG_PATH="${METROCLOCK_CONFIG_PATH:-/etc/metroclock/config.json}"
+SECRETS_PATH="${METROCLOCK_SECRETS_PATH:-/etc/metroclock/secrets.env}"
+if [ -f "$SECRETS_PATH" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SECRETS_PATH"
+  set +a
+fi
+
+INTERFACE="wlan0"
+HOTSPOT_SSID="MetroClock-Setup"
+HOTSPOT_IP="192.168.4.1"
+HOTSPOT_PASSWORD="metroclock"
 CONNECT_WAIT_SECONDS="${METROCLOCK_WIFI_RECOVERY_WAIT_SECONDS:-60}"
 HOSTAPD_CONF="${METROCLOCK_HOSTAPD_CONF:-/etc/hostapd/hostapd.conf}"
 DNSMASQ_CONF="${METROCLOCK_DNSMASQ_CONF:-/etc/dnsmasq.d/metroclock-setup.conf}"
 STATE_DIR="${METROCLOCK_STATE_DIR:-/etc/metroclock}"
+APP_SERVICE_NAME="${METROCLOCK_SERVICE_NAME:-metroclock}"
+APP_HEALTH_URL="${METROCLOCK_RECOVERY_APP_HEALTH_URL:-http://127.0.0.1/api/status}"
+RECOVERY_LOCK_PATH="${METROCLOCK_WIFI_RECOVERY_LOCK_PATH:-/run/metroclock/wifi-recovery.lock}"
+DEFER_TO_HEALTHY_APP="${METROCLOCK_NETWORK_RECOVERY_DEFER_TO_APP:-1}"
+LOCK_HELD=0
 
 log() {
   printf '[metroclock-network-recovery] %s\n' "$*"
@@ -18,8 +32,58 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
+load_runtime_config() {
+  have python3 || return 0
+  [ -f "$CONFIG_PATH" ] || return 0
+  python3 - "$CONFIG_PATH" <<'PY'
+import json
+import shlex
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    data = {}
+
+mapping = {
+    "WIFI_INTERFACE": "INTERFACE",
+    "WIFI_SETUP_HOTSPOT_SSID": "HOTSPOT_SSID",
+    "WIFI_SETUP_HOTSPOT_IP": "HOTSPOT_IP",
+    "WIFI_SETUP_HOTSPOT_PASSWORD": "HOTSPOT_PASSWORD",
+}
+for config_key, shell_name in mapping.items():
+    value = data.get(config_key)
+    if value is None or value == "":
+        continue
+    print(f"{shell_name}={shlex.quote(str(value))}")
+PY
+}
+
+apply_environment_overrides() {
+  INTERFACE="${METROCLOCK_WIFI_INTERFACE:-${WIFI_INTERFACE:-$INTERFACE}}"
+  HOTSPOT_SSID="${METROCLOCK_WIFI_SETUP_HOTSPOT_SSID:-${METROCLOCK_WIFI_HOTSPOT_SSID:-${WIFI_SETUP_HOTSPOT_SSID:-$HOTSPOT_SSID}}}"
+  HOTSPOT_IP="${METROCLOCK_WIFI_SETUP_HOTSPOT_IP:-${METROCLOCK_WIFI_HOTSPOT_IP:-${WIFI_SETUP_HOTSPOT_IP:-$HOTSPOT_IP}}}"
+  HOTSPOT_PASSWORD="${METROCLOCK_WIFI_SETUP_HOTSPOT_PASSWORD:-${WIFI_SETUP_HOTSPOT_PASSWORD:-$HOTSPOT_PASSWORD}}"
+  HOTSPOT_CIDR="${METROCLOCK_WIFI_SETUP_HOTSPOT_CIDR:-${METROCLOCK_WIFI_HOTSPOT_CIDR:-${HOTSPOT_IP}/24}}"
+  HOTSPOT_DHCP_RANGE="${METROCLOCK_WIFI_SETUP_DHCP_RANGE:-${HOTSPOT_IP%.*}.2,${HOTSPOT_IP%.*}.20,255.255.255.0,24h}"
+}
+
 run_optional() {
   "$@" >/dev/null 2>&1 || true
+}
+
+acquire_wifi_lock() {
+  [ "$LOCK_HELD" -eq 0 ] || return 0
+  have flock || { log "flock is missing; continuing without recovery lock"; return 0; }
+  mkdir -p "$(dirname "$RECOVERY_LOCK_PATH")"
+  exec 9>"$RECOVERY_LOCK_PATH"
+  if ! flock -n 9; then
+    log "another WiFi controller is active; skipping"
+    exit 0
+  fi
+  LOCK_HELD=1
 }
 
 require_root() {
@@ -54,6 +118,14 @@ hotspot_active() {
   have systemctl || return 1
   systemctl is-active --quiet hostapd || return 1
   [ "$(interface_ipv4)" = "$HOTSPOT_IP" ]
+}
+
+app_is_healthy() {
+  [ "$DEFER_TO_HEALTHY_APP" = "1" ] || return 1
+  have systemctl || return 1
+  systemctl is-active --quiet "$APP_SERVICE_NAME" || return 1
+  have curl || return 1
+  curl -fsS --max-time 2 "$APP_HEALTH_URL" >/dev/null 2>&1
 }
 
 is_connected() {
@@ -98,10 +170,23 @@ auth_algs=1
 ignore_broadcast_ssid=0
 EOF
 
+  if [ -n "$HOTSPOT_PASSWORD" ]; then
+    if [ "${#HOTSPOT_PASSWORD}" -lt 8 ] || [ "${#HOTSPOT_PASSWORD}" -gt 63 ]; then
+      log "hotspot password must be 8-63 characters"
+      exit 1
+    fi
+    cat >>"$HOSTAPD_CONF" <<EOF
+wpa=2
+wpa_passphrase=$HOTSPOT_PASSWORD
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+EOF
+  fi
+
   write_file "$DNSMASQ_CONF" 644 <<EOF
 interface=$INTERFACE
 bind-dynamic
-dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
+dhcp-range=$HOTSPOT_DHCP_RANGE
 address=/#/$HOTSPOT_IP
 EOF
 
@@ -123,23 +208,22 @@ stop_hotspot() {
 restart_wifi_client() {
   run_optional ip addr flush dev "$INTERFACE"
   run_optional ip link set "$INTERFACE" up
-  run_optional systemctl restart NetworkManager
-  run_optional systemctl restart wpa_supplicant
   run_optional systemctl restart "wpa_supplicant@${INTERFACE}"
-  run_optional systemctl restart dhcpcd
   run_optional wpa_cli -i "$INTERFACE" reconfigure
+  run_optional dhcpcd -n "$INTERFACE"
+  run_optional nmcli device connect "$INTERFACE"
 }
 
 start_hotspot() {
   require_root "$@"
+  acquire_wifi_lock
   interface_exists || { log "$INTERFACE does not exist"; exit 1; }
   ensure_hotspot_config
 
   log "starting recovery hotspot ${HOTSPOT_SSID} at http://${HOTSPOT_IP}"
-  run_optional systemctl stop NetworkManager
-  run_optional systemctl stop wpa_supplicant
   run_optional systemctl stop "wpa_supplicant@${INTERFACE}"
-  run_optional systemctl stop dhcpcd
+  run_optional wpa_cli -i "$INTERFACE" terminate
+  run_optional nmcli device disconnect "$INTERFACE"
   ip addr flush dev "$INTERFACE"
   ip addr add "$HOTSPOT_CIDR" dev "$INTERFACE"
   ip link set "$INTERFACE" up
@@ -156,6 +240,13 @@ check_or_recover() {
     log "$INTERFACE is missing; cannot recover WiFi"
     exit 0
   fi
+
+  if app_is_healthy; then
+    log "${APP_SERVICE_NAME} is healthy; app WiFi manager remains authoritative"
+    exit 0
+  fi
+
+  acquire_wifi_lock
 
   local deadline
   deadline=$((SECONDS + CONNECT_WAIT_SECONDS))
@@ -192,6 +283,9 @@ status() {
   fi
 }
 
+eval "$(load_runtime_config)"
+apply_environment_overrides
+
 case "${1:-check}" in
   check)
     check_or_recover
@@ -201,6 +295,7 @@ case "${1:-check}" in
     ;;
   stop-hotspot)
     require_root "$@"
+    acquire_wifi_lock
     stop_hotspot
     restart_wifi_client
     ;;

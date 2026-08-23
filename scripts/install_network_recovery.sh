@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="${METROCLOCK_REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 SERVICE_NAME="${METROCLOCK_NETWORK_RECOVERY_SERVICE_NAME:-metroclock-network-recovery}"
 SERVICE_PATH="${METROCLOCK_NETWORK_RECOVERY_SERVICE_PATH:-/etc/systemd/system/${SERVICE_NAME}.service}"
 TIMER_PATH="${METROCLOCK_NETWORK_RECOVERY_TIMER_PATH:-/etc/systemd/system/${SERVICE_NAME}.timer}"
-RECOVERY_SCRIPT="$REPO_DIR/scripts/network_recovery.sh"
+RECOVERY_SCRIPT="${METROCLOCK_RECOVERY_SCRIPT:-$REPO_DIR/scripts/network_recovery.sh}"
 
 if [ ! -x "$RECOVERY_SCRIPT" ]; then
   echo "Missing executable recovery script: $RECOVERY_SCRIPT" >&2

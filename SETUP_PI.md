@@ -110,6 +110,8 @@ app. If the Pi cannot join saved Wi-Fi after boot, it starts:
 
 - SSID: `MetroClock-Setup`
 - IP: `192.168.4.1`
+- password: stored in `/etc/metroclock/secrets.env` as
+  `METROCLOCK_WIFI_SETUP_HOTSPOT_PASSWORD` (`metroclock` if unset)
 
 When connected to that hotspot:
 

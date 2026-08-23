@@ -15,6 +15,7 @@ A production MetroClock device should have:
 - runtime config: `/etc/metroclock/config.json`
 - secrets/env file: `/etc/metroclock/secrets.env`
 - stable device id: `/etc/metroclock/device_id`
+- recovery hotspot password in `/etc/metroclock/secrets.env`
 
 Runtime config and secrets live outside the repo so `git pull`, branch changes,
 and tag rollbacks do not wipe user/device state.
@@ -167,6 +168,12 @@ The setup hotspot must not depend on the MetroClock app being healthy.
 `metroclock-network-recovery.timer` runs `scripts/network_recovery.sh check`
 outside the Python process. If saved Wi-Fi is unavailable, it starts
 `MetroClock-Setup` at `192.168.4.1`.
+
+The hotspot is WPA2-protected. The password is stored on the device:
+
+```bash
+sudo grep '^METROCLOCK_WIFI_SETUP_HOTSPOT_PASSWORD=' /etc/metroclock/secrets.env
+```
 
 Manual recovery command on the Pi:
 
