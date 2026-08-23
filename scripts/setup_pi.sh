@@ -5,7 +5,6 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_DIR="$REPO_DIR/.venv"
 RGB_DIR="/home/zaid/rpi-rgb-led-matrix"
 TMP_BUILD_DIR="/home/zaid"
-SERVICE_PATH="/etc/systemd/system/metroclock.service"
 
 echo "[1/8] Installing system dependencies..."
 sudo apt-get update
@@ -55,25 +54,7 @@ print("rgbmatrix ok")
 PY
 
 echo "[7/8] Writing systemd service..."
-sudo tee "$SERVICE_PATH" >/dev/null <<EOF
-[Unit]
-Description=MetroClock LED Display
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=$REPO_DIR
-ExecStart=$VENV_DIR/bin/python $REPO_DIR/main.py
-Restart=always
-RestartSec=5
-Environment=PYTHONUNBUFFERED=1
-Environment=METROCLOCK_CONFIG_PATH=/etc/metroclock/config.json
-EnvironmentFile=-/etc/metroclock/secrets.env
-
-[Install]
-WantedBy=multi-user.target
-EOF
+"$REPO_DIR/scripts/install_service.sh"
 
 echo "[8/8] Enabling and starting service..."
 sudo mkdir -p /etc/metroclock
@@ -85,7 +66,7 @@ sudo systemctl unmask hostapd || true
 sudo systemctl disable --now hostapd || true
 sudo systemctl disable --now dnsmasq || true
 sudo systemctl enable --now avahi-daemon || true
-sudo systemctl daemon-reload
+"$REPO_DIR/scripts/install_network_recovery.sh"
 sudo systemctl enable metroclock
 sudo systemctl restart metroclock
 
