@@ -19,6 +19,7 @@ from widgets.clock import ClockWidget
 from widgets.custom import CustomWidget
 from widgets.flight import FlightWidget
 from widgets.metro import MetroWidget
+from widgets.pairing_status import PairingStatusWidget
 from widgets.pomodoro import PomodoroWidget
 from widgets.setup_status import SetupStatusWidget
 from widgets.sports import SportsWidget
@@ -143,6 +144,7 @@ class WidgetRegistry:
     def __init__(self, width: int, height: int, mode_catalog: ModeCatalog = DEFAULT_MODE_CATALOG):
         self._mode_catalog = mode_catalog
         self.setup = SetupStatusWidget(width, height, web_server.get_wifi_setup_status)
+        self.pairing = PairingStatusWidget(width, height)
         self.metro = MetroWidget(width, height)
         self.weather = WeatherWidget(width, height)
         self.flight = FlightWidget(width, height)
@@ -171,6 +173,7 @@ class WidgetRegistry:
 
         self._renderers: Dict[str, WidgetRenderer] = {
             "setup": WidgetRenderer(self.setup),
+            "pairing": WidgetRenderer(self.pairing),
             "metro": WidgetRenderer(self.metro),
             "weather": WidgetRenderer(self.weather),
             "flight": WidgetRenderer(self.flight),
@@ -290,6 +293,8 @@ class MetroClockApp:
             mode = self._state_provider.get_display_mode()
             if self._wifi_setup_manager is not None and self._wifi_setup_manager.should_show_setup_message():
                 mode = "setup"
+            elif self._should_show_pairing_message():
+                mode = "pairing"
             tick_start = time.perf_counter()
             frame = self._widgets.render_mode(mode)
             if self._is_blank_frame(frame):
@@ -369,6 +374,10 @@ class MetroClockApp:
             return int(web_server.get_brightness())
         except Exception:
             return int(getattr(config, "MATRIX_BRIGHTNESS", 100))
+
+    @staticmethod
+    def _should_show_pairing_message() -> bool:
+        return not str(getattr(config, "METROCLOCK_CLOUD_DEVICE_TOKEN", "") or "").strip()
 
     @staticmethod
     def _is_blank_frame(frame) -> bool:

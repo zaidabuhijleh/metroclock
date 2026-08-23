@@ -19,11 +19,7 @@ if [ ! -f "$SECRETS_PATH" ]; then
   sudo install -m 600 /dev/null "$SECRETS_PATH"
 fi
 if ! sudo grep -q '^METROCLOCK_WIFI_SETUP_HOTSPOT_PASSWORD=' "$SECRETS_PATH"; then
-  HOTSPOT_PASSWORD="$(python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(12).replace("-", "").replace("_", "")[:16])
-PY
-)"
+  HOTSPOT_PASSWORD="${METROCLOCK_DEFAULT_SETUP_HOTSPOT_PASSWORD:-metroclock}"
   printf 'METROCLOCK_WIFI_SETUP_HOTSPOT_PASSWORD=%s\n' "$HOTSPOT_PASSWORD" | sudo tee -a "$SECRETS_PATH" >/dev/null
 fi
 sudo chmod 600 "$SECRETS_PATH"

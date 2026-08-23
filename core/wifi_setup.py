@@ -135,7 +135,9 @@ class WifiSetupManager:
             return
 
         was_in_setup_mode = bool(getattr(config, "SETUP_MODE", False))
-        if not self._try_saved_wifi(
+        if self._should_force_setup_hotspot():
+            self._start_hotspot("Connect with MetroClock app")
+        elif not self._try_saved_wifi(
             "Trying saved WiFi networks",
             restart_client=was_in_setup_mode,
             stop_hotspot=was_in_setup_mode,
@@ -148,6 +150,10 @@ class WifiSetupManager:
         while not self._stop_event.is_set():
             status = self.status()
             if status.get("active") or status.get("last_error"):
+                if status.get("active") and self._should_force_setup_hotspot():
+                    if self._wait_for_stop(self.monitor_interval):
+                        return
+                    continue
                 if self._wait_for_stop(self.retry_interval):
                     return
                 if not self._try_saved_wifi("Retrying saved WiFi", restart_client=True, stop_hotspot=True):
@@ -440,6 +446,11 @@ class WifiSetupManager:
 
     def _interface_exists(self) -> bool:
         return os.path.exists(f"/sys/class/net/{self.interface}")
+
+    def _should_force_setup_hotspot(self) -> bool:
+        if not bool(getattr(config, "WIFI_SETUP_FORCE_HOTSPOT_UNPAIRED", True)):
+            return False
+        return not str(getattr(config, "METROCLOCK_CLOUD_DEVICE_TOKEN", "") or "").strip()
 
     def _require_command(self, command: str):
         if self._resolve_command(command) is None:

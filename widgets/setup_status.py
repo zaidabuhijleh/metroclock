@@ -24,7 +24,6 @@ class SetupStatusWidget(Widget):
         draw = ImageDraw.Draw(self.canvas)
 
         ssid = str(status.get("hotspot_ssid") or "MetroClock-Setup")
-        ip = str(status.get("hotspot_ip") or "192.168.4.1")
         reason = str(status.get("reason") or "WiFi setup")
         last_error = str(status.get("last_error") or "")
         active = bool(status.get("active"))
@@ -39,9 +38,10 @@ class SetupStatusWidget(Widget):
             ]
         else:
             pages = [
-                ("WIFI LOST", "SETUP MODE", reason.upper()[:16]),
+                ("CONNECT", "METROCLOCK", "APP"),
                 ("JOIN WIFI", ssid[:16], ""),
-                ("OPEN", ip[:16], "WEB SETUP"),
+                ("SEND HOME", "WIFI IN", "APP"),
+                ("SETUP MODE", reason.upper()[:16], ""),
             ]
 
         page = pages[int(time.time() // 3) % len(pages)]

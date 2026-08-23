@@ -49,6 +49,7 @@ DEFAULT_MODE_CATALOG = ModeCatalog(
         DisplayMode("pomodoro", "pomodoro", 5),
         DisplayMode("clock", "clock", 5),
         DisplayMode("clock_widget", "custom", 5),
+        DisplayMode("pairing", "pairing", 3),
         DisplayMode("setup", "setup", 5),
     )
 )
