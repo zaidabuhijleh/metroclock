@@ -220,9 +220,10 @@ class WifiSetupManager:
         with self._wifi_recovery_lock(), self._transition_lock:
             try:
                 self._ensure_hotspot_config()
+                self._run_command(["nmcli", "device", "disconnect", self.interface], timeout=8)
+                self._run_command(["nmcli", "device", "set", self.interface, "managed", "no"], timeout=8)
                 self._run_command(["systemctl", "stop", f"wpa_supplicant@{self.interface}"], timeout=8)
                 self._run_command(["wpa_cli", "-i", self.interface, "terminate"], timeout=8)
-                self._run_command(["nmcli", "device", "disconnect", self.interface], timeout=8)
                 self._run_command(["ip", "addr", "flush", "dev", self.interface], timeout=8, check=True)
                 self._run_command(["ip", "addr", "add", f"{self.hotspot_ip}/24", "dev", self.interface], timeout=8, check=True)
                 self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8, check=True)
@@ -276,6 +277,7 @@ class WifiSetupManager:
         self._run_command(["systemctl", "stop", "dnsmasq"], timeout=8)
 
     def _restart_wifi_client(self):
+        self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
         self._run_command(["ip", "addr", "flush", "dev", self.interface], timeout=8)
         self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8)
         self._run_command(["systemctl", "restart", f"wpa_supplicant@{self.interface}"], timeout=12)
