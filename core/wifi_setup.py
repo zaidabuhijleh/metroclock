@@ -103,6 +103,9 @@ class WifiSetupManager:
             return self._status.as_dict()
 
     def should_show_setup_message(self) -> bool:
+        config_manager.reload_config()
+        if self._has_device_token():
+            return False
         status = self.status()
         if status.get("active") or status.get("last_error"):
             return True
@@ -153,6 +156,10 @@ class WifiSetupManager:
                 if status.get("active") and self._should_force_setup_hotspot():
                     if self._wait_for_stop(self.monitor_interval):
                         return
+                    continue
+                if status.get("active") and self._has_device_token():
+                    if not self._try_saved_wifi("Paired; leaving setup WiFi", restart_client=True, stop_hotspot=True):
+                        self._start_hotspot("Could not join saved WiFi")
                     continue
                 if self._wait_for_stop(self.retry_interval):
                     return
@@ -450,9 +457,14 @@ class WifiSetupManager:
         return os.path.exists(f"/sys/class/net/{self.interface}")
 
     def _should_force_setup_hotspot(self) -> bool:
+        config_manager.reload_config()
         if not bool(getattr(config, "WIFI_SETUP_FORCE_HOTSPOT_UNPAIRED", True)):
             return False
-        return not str(getattr(config, "METROCLOCK_CLOUD_DEVICE_TOKEN", "") or "").strip()
+        return not self._has_device_token()
+
+    @staticmethod
+    def _has_device_token() -> bool:
+        return bool(str(getattr(config, "METROCLOCK_CLOUD_DEVICE_TOKEN", "") or "").strip())
 
     def _require_command(self, command: str):
         if self._resolve_command(command) is None:

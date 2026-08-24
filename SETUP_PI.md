@@ -102,6 +102,11 @@ cd /home/zaid/metroclock
 
 For the full release/update checklist, see `PRODUCTION_UPDATES.md`.
 
+## 7) Production Base Image
+
+To turn a clean prepared SD card into the reusable image for friend/test units,
+follow `PRODUCTION_IMAGE.md`.
+
 ## Recovery Hotspot
 
 Setup Wi-Fi is no longer only an app feature. `scripts/setup_pi.sh` installs

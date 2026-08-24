@@ -8,6 +8,7 @@ from typing import Dict, Mapping, Optional, Protocol
 from PIL import Image
 
 import config
+import config_manager
 import web_server
 from core.boot_splash import render_boot_splash
 from core.display import Display
@@ -377,6 +378,7 @@ class MetroClockApp:
 
     @staticmethod
     def _should_show_pairing_message() -> bool:
+        config_manager.reload_config()
         return not str(getattr(config, "METROCLOCK_CLOUD_DEVICE_TOKEN", "") or "").strip()
 
     @staticmethod
