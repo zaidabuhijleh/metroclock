@@ -11,9 +11,9 @@ Color = Tuple[int, int, int]
 
 
 DEFAULT_STATUS_COLORS: Sequence[Color] = (
-    (255, 80, 60),
-    (255, 210, 80),
-    (120, 220, 255),
+    (255, 255, 255),
+    (255, 255, 255),
+    (255, 255, 255),
 )
 
 
