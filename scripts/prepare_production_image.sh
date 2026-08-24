@@ -102,6 +102,8 @@ except Exception:
 data.update(
     {
         "DISPLAY_MODE": "clock",
+        "CLOCK_SHOW_AMPM": False,
+        "CLOCK_SHOW_DATE": False,
         "SETUP_MODE": False,
         "WIFI_SETUP_ENABLED": True,
         "WIFI_SETUP_FORCE_HOTSPOT_UNPAIRED": True,
