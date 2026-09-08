@@ -2,6 +2,10 @@ import json
 import os
 import re
 
+import process_cache
+
+_FONT_FAMILIES_CACHE_KEY = "font_families"
+
 
 # --- HARDWARE ---
 MATRIX_WIDTH = 64
@@ -38,7 +42,6 @@ SPLEEN_FONT_SIZE_BY_CLOCK_SIZE = {
 }
 SPLEEN_FONT_SIZE_ORDER = ("5x8", "6x12", "8x16", "12x24")
 CLOCK_FONT_STYLE = "font_spleen"
-_FONT_FAMILIES_CACHE = None
 
 # --- WMATA (DC Metro) ---
 METRO_SYSTEM = "wmata"  # "wmata", "nyc", or "ttc"
@@ -360,22 +363,34 @@ def _bdf_metadata(path):
                     metadata["height"] = int(parts[2])
                 elif line.startswith("PIXEL_SIZE ") and len(parts) >= 2:
                     metadata["font_size"] = int(parts[1])
+                elif line.startswith("CHARS "):
+                    # Everything above CHARS is header/properties; the rest of
+                    # the file is glyph bitmaps, which is ~99% of its bytes and
+                    # holds nothing we read. Reading it all cost seconds on a Pi.
+                    break
     except Exception:
         return {}
     return metadata
 
 
+def reset_font_cache():
+    """Drop the discovered-font cache. Only needed by tooling that measures it."""
+    process_cache.clear(_FONT_FAMILIES_CACHE_KEY)
+
+
 def _discover_font_families():
-    global _FONT_FAMILIES_CACHE
-    if _FONT_FAMILIES_CACHE is not None:
-        return _FONT_FAMILIES_CACHE
+    # Cached in process_cache, not in a module global: this module gets
+    # reloaded constantly, and a module-level cache would be reset every time,
+    # making every clock-face cache miss re-scan the whole font tree.
+    cached = process_cache.get(_FONT_FAMILIES_CACHE_KEY)
+    if cached is not None:
+        return cached
 
     root = _font_root()
     try:
         family_names = sorted(os.listdir(root), key=str.lower)
     except Exception:
-        _FONT_FAMILIES_CACHE = []
-        return _FONT_FAMILIES_CACHE
+        return process_cache.set(_FONT_FAMILIES_CACHE_KEY, [])
 
     families = []
     for family_name in family_names:
@@ -420,8 +435,7 @@ def _discover_font_families():
                 "type": "font_family",
                 "sizes": sizes,
             })
-    _FONT_FAMILIES_CACHE = families
-    return _FONT_FAMILIES_CACHE
+    return process_cache.set(_FONT_FAMILIES_CACHE_KEY, families)
 
 
 def get_spleen_font_face():

@@ -48,6 +48,7 @@ except ImportError:
     sys.modules["rgbmatrix"] = stub
 
 import config
+import process_cache
 import config_manager
 
 LOOP_FPS = 50  # what core/app.py's 0.02s sleep targets
@@ -83,27 +84,41 @@ def section(title: str):
 
 
 def bench_config():
-    section("config (core/app.py reloads this 2-3x per rendered frame)")
-    reload_ms = bench(config_manager.reload_config, 40)
-    print(f"  reload_config()            {reload_ms:8.2f} ms")
+    section("config (callers ask for a reload 2-3x per rendered frame)")
+    forced_ms = bench(lambda: config_manager.reload_config(force=True), 40)
+    throttled_ms = bench(config_manager.reload_config, 200)
+    interval = getattr(config_manager, "RELOAD_MIN_INTERVAL_SECONDS", 0.0)
+
+    print(f"  reload_config(force=True)  {forced_ms:8.2f} ms   (true cost of one reload)")
+    print(f"  reload_config()            {throttled_ms:8.2f} ms   (coalesced)")
     print(f"  read_config()              {bench(config_manager.read_config, 40):8.2f} ms")
-    print(f"  -> at {LOOP_FPS}fps x2.5 calls: {reload_ms * LOOP_FPS * 2.5:7.0f} ms of CPU per second")
+
+    unthrottled = forced_ms * LOOP_FPS * 2.5
+    if interval > 0:
+        effective = forced_ms / interval  # at most one real reload per interval
+        print(f"  throttle interval          {interval:8.2f} s")
+        print(f"  -> {unthrottled:.0f} ms/sec unthrottled  ->  {effective:.0f} ms/sec with throttle")
+    else:
+        print(f"  -> at {LOOP_FPS}fps x2.5 calls: {unthrottled:7.0f} ms of CPU per second")
 
 
 def bench_fonts():
-    section("font discovery (its cache is destroyed by every reload_config)")
-    config._FONT_FAMILIES_CACHE = None
+    section("font discovery (cold scan of the font tree)")
+    config.reset_font_cache()
     started = time.perf_counter()
     families = config._discover_font_families()
     cold_ms = (time.perf_counter() - started) * 1000.0
     files = sum(len(family.get("sizes") or []) for family in families)
     print(f"  _discover_font_families()  {cold_ms:8.2f} ms  ({len(families)} families, {files} font files)")
     print(f"  warm (cached)              {bench(config._discover_font_families, 20):8.2f} ms")
-    print("  -> paid on every clock-face cache miss, i.e. once a minute in clock mode")
+    # The cache now lives in process_cache, so a reload no longer clears it.
+    config_manager.reload_config(force=True)
+    survived = process_cache.get("font_families") is not None
+    print(f"  survives reload_config()   {'yes' if survived else 'NO — cache is being reset'}")
 
 
 def bench_scenes():
-    section("ambient scenes (AmbientWidget.draw re-renders every loop tick)")
+    section("ambient scenes (cost of one render_frame, before memoization)")
     from scenes import SCENES
 
     procedural = [scene for scene in SCENES if hasattr(scene, "render_frame")]
