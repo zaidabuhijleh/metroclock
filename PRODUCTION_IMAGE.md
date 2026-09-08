@@ -62,10 +62,29 @@ cd /home/zaid/metroclock
 ```
 
 The script stops services, clears device/user state, removes saved Wi-Fi,
-removes SSH host keys, clears logs, installs a first-boot identity service, and
-powers off the Pi.
+removes SSH host keys, clears logs, installs a first-boot identity service,
+verifies nothing sensitive survived, and powers off the Pi.
 
 Wait for the Pi activity light to settle before removing the SD card.
+
+### Run it last, and never boot the card again before capture
+
+Booting the prepared card re-creates exactly what the script removed. Two things
+happen on a normal boot:
+
+- Wi-Fi provisioning on the boot partition (`network-config`, written by
+  Raspberry Pi Imager) is replayed by cloud-init, recreating the NetworkManager
+  profile within seconds — so the card rejoins your home network.
+- If you then test onboarding through the app, the Wi-Fi setup code writes
+  credentials back to disk.
+
+Either one puts your Wi-Fi password back into the image. If you boot the card
+for any reason after running the script, run the script again before capturing.
+
+The final step verifies this and **exits non-zero** if it finds a boot-partition
+`network-config`, a Wi-Fi block in `wpa_supplicant.conf`, a NetworkManager or
+netplan wireless profile, a device id, a cloud token, or SSH host keys. If it
+fails, do not capture the card.
 
 ## Capture The SD Image On macOS
 

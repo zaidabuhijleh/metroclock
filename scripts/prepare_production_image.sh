@@ -6,6 +6,9 @@ CONFIG_PATH="${METROCLOCK_CONFIG_PATH:-/etc/metroclock/config.json}"
 SECRETS_PATH="${METROCLOCK_SECRETS_PATH:-/etc/metroclock/secrets.env}"
 DEVICE_ID_PATH="${METROCLOCK_DEVICE_ID_PATH:-/etc/metroclock/device_id}"
 WPA_SUPPLICANT_CONF="${METROCLOCK_WPA_SUPPLICANT_CONF:-/etc/wpa_supplicant/wpa_supplicant.conf}"
+# Raspberry Pi Imager writes Wi-Fi credentials here, and cloud-init replays them
+# on first boot — which silently undoes the Wi-Fi scrub below.
+BOOT_DIRS="${METROCLOCK_BOOT_DIRS:-/boot/firmware /boot}"
 HOSTNAME="${METROCLOCK_IMAGE_HOSTNAME:-metroclock}"
 HOTSPOT_PASSWORD="${METROCLOCK_DEFAULT_SETUP_HOTSPOT_PASSWORD:-metroclock}"
 SHUTDOWN=0
@@ -67,14 +70,14 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 1
 fi
 
-echo "[1/9] Stopping MetroClock services..."
+echo "[1/10] Stopping MetroClock services..."
 sudo systemctl stop metroclock 2>/dev/null || true
 sudo systemctl stop metroclock-network-recovery.timer 2>/dev/null || true
 sudo systemctl stop metroclock-network-recovery.service 2>/dev/null || true
 sudo systemctl stop hostapd 2>/dev/null || true
 sudo systemctl stop dnsmasq 2>/dev/null || true
 
-echo "[2/9] Refreshing installed services..."
+echo "[2/10] Refreshing installed services..."
 "$REPO_DIR/scripts/install_service.sh"
 "$REPO_DIR/scripts/install_network_recovery.sh"
 sudo systemctl stop metroclock-network-recovery.timer 2>/dev/null || true
@@ -82,7 +85,7 @@ sudo systemctl stop metroclock-network-recovery.service 2>/dev/null || true
 sudo systemctl enable metroclock
 sudo systemctl enable avahi-daemon 2>/dev/null || true
 
-echo "[3/9] Writing clean runtime config..."
+echo "[3/10] Writing clean runtime config..."
 sudo mkdir -p "$(dirname "$CONFIG_PATH")" "$(dirname "$SECRETS_PATH")"
 sudo python3 - "$CONFIG_PATH" <<'PY'
 import json
@@ -133,12 +136,12 @@ os.replace(tmp_path, path)
 PY
 sudo chmod 600 "$CONFIG_PATH"
 
-echo "[4/9] Writing production secrets defaults..."
+echo "[4/10] Writing production secrets defaults..."
 sudo install -m 600 /dev/null "$SECRETS_PATH"
 printf 'METROCLOCK_WIFI_SETUP_HOTSPOT_PASSWORD=%s\n' "$HOTSPOT_PASSWORD" | sudo tee "$SECRETS_PATH" >/dev/null
 sudo chmod 600 "$SECRETS_PATH"
 
-echo "[5/9] Clearing saved Wi-Fi credentials..."
+echo "[5/10] Clearing saved Wi-Fi credentials..."
 sudo tee "$WPA_SUPPLICANT_CONF" >/dev/null <<'EOF'
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
 update_config=1
@@ -154,19 +157,42 @@ if command -v nmcli >/dev/null 2>&1; then
 fi
 sudo find /etc/NetworkManager/system-connections -type f -name '*.nmconnection' -delete 2>/dev/null || true
 
-echo "[6/9] Clearing unit-specific identity..."
+# netplan renders NM wifi profiles to /etc/netplan/90-NM-<uuid>.yaml, which holds
+# the SSID and PSK. Deleting the NM profile usually removes it, but not always,
+# and the find above never touches it.
+for netplan_file in /etc/netplan/*.yaml; do
+  [ -f "$netplan_file" ] || continue
+  if sudo grep -qs 'access-points' "$netplan_file"; then
+    sudo rm -f "$netplan_file"
+  fi
+done
+
+# Boot-partition provisioning. Without this the credentials come back on the
+# next boot, which is exactly how a "scrubbed" image kept rejoining a home
+# network and masked the fact that app onboarding never ran.
+for boot_dir in $BOOT_DIRS; do
+  [ -d "$boot_dir" ] || continue
+  sudo rm -f "$boot_dir/network-config" 2>/dev/null || true
+done
+
+# cloud-init caches the datasource, including the network config it was given.
+sudo rm -f /var/lib/cloud/instances/*/network-config* 2>/dev/null || true
+sudo rm -f /var/lib/cloud/instance/network-config* 2>/dev/null || true
+sudo rm -f /var/lib/cloud/seed/nocloud*/network-config 2>/dev/null || true
+
+echo "[6/10] Clearing unit-specific identity..."
 sudo rm -f "$DEVICE_ID_PATH"
 sudo truncate -s 0 /etc/machine-id 2>/dev/null || true
 sudo rm -f /var/lib/dbus/machine-id 2>/dev/null || true
 sudo rm -f /etc/ssh/ssh_host_* 2>/dev/null || true
 
-echo "[7/9] Setting hostname..."
+echo "[7/10] Setting hostname..."
 printf '%s\n' "$HOSTNAME" | sudo tee /etc/hostname >/dev/null
 if [ -f /etc/hosts ]; then
   sudo sed -i "s/127\\.0\\.1\\.1.*/127.0.1.1\t${HOSTNAME}/" /etc/hosts
 fi
 
-echo "[8/9] Cleaning logs, caches, and shell history..."
+echo "[8/10] Cleaning logs, caches, and shell history..."
 sudo journalctl --rotate >/dev/null 2>&1 || true
 sudo journalctl --vacuum-time=1s >/dev/null 2>&1 || true
 sudo rm -rf /var/log/*.gz /var/log/*.[0-9] /var/log/journal/* 2>/dev/null || true
@@ -174,7 +200,7 @@ sudo rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
 rm -f "$HOME/.bash_history" "$HOME/.zsh_history" 2>/dev/null || true
 sudo rm -f /root/.bash_history /root/.zsh_history 2>/dev/null || true
 
-echo "[9/9] Enabling first-boot services..."
+echo "[9/10] Enabling first-boot services..."
 sudo tee /etc/systemd/system/metroclock-first-boot.service >/dev/null <<EOF
 [Unit]
 Description=Regenerate MetroClock image identity on first boot
@@ -194,6 +220,57 @@ sudo systemctl enable metroclock-first-boot.service
 sudo systemctl enable metroclock
 sudo systemctl enable metroclock-network-recovery.timer
 sudo systemctl enable ssh 2>/dev/null || sudo systemctl enable sshd 2>/dev/null || true
+
+echo "[10/10] Verifying no credentials or identity survived..."
+LEAKS=0
+report_leak() {
+  LEAKS=$((LEAKS + 1))
+  echo "  LEAK: $1" >&2
+}
+
+for boot_dir in $BOOT_DIRS; do
+  [ -d "$boot_dir" ] || continue
+  if [ -f "$boot_dir/network-config" ]; then
+    report_leak "$boot_dir/network-config still present (Wi-Fi credentials)"
+  fi
+  if [ -f "$boot_dir/user-data" ] && sudo grep -qiE 'wifi|wpa|psk|ssid' "$boot_dir/user-data"; then
+    report_leak "$boot_dir/user-data mentions Wi-Fi; remove those keys by hand"
+  fi
+done
+
+if sudo grep -qs 'network={' "$WPA_SUPPLICANT_CONF"; then
+  report_leak "$WPA_SUPPLICANT_CONF still contains a network block"
+fi
+if [ -f "$WPA_SUPPLICANT_CONF" ]; then
+  wpa_mode="$(stat -c '%a' "$WPA_SUPPLICANT_CONF")"
+  if [ "$wpa_mode" != "600" ]; then
+    report_leak "$WPA_SUPPLICANT_CONF is mode $wpa_mode, expected 600"
+  fi
+fi
+
+if sudo find /etc/NetworkManager/system-connections -type f -name '*.nmconnection' 2>/dev/null | grep -q .; then
+  report_leak "NetworkManager connection profiles still present"
+fi
+if sudo grep -lqs 'access-points' /etc/netplan/*.yaml 2>/dev/null; then
+  report_leak "a netplan file still defines wireless access-points"
+fi
+if [ -s "$DEVICE_ID_PATH" ]; then
+  report_leak "$DEVICE_ID_PATH still present (unit identity)"
+fi
+if sudo grep -qs 'METROCLOCK_CLOUD_DEVICE_TOKEN"[[:space:]]*:[[:space:]]*"[^"]' "$CONFIG_PATH"; then
+  report_leak "$CONFIG_PATH still holds a cloud device token"
+fi
+if sudo find /etc/ssh -maxdepth 1 -name 'ssh_host_*' 2>/dev/null | grep -q .; then
+  report_leak "SSH host keys still present"
+fi
+
+if [ "$LEAKS" -gt 0 ]; then
+  echo >&2
+  echo "Image prep FAILED verification with $LEAKS problem(s)." >&2
+  echo "Do NOT capture this card. Fix the items above and re-run this script." >&2
+  exit 1
+fi
+echo "  clean"
 
 sync
 

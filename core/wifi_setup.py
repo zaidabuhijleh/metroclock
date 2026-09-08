@@ -179,17 +179,72 @@ class WifiSetupManager:
     def _connect_to_network(self, ssid: str, password: str):
         try:
             with self._wifi_recovery_lock(), self._transition_lock:
-                self._write_wpa_supplicant_network(ssid, password)
+                # wpa_supplicant.conf is only read when wpa_supplicant owns the
+                # radio. Under NetworkManager it is dead weight that also parks
+                # the PSK in plaintext, so skip it entirely there.
+                if not self._use_network_manager():
+                    self._write_wpa_supplicant_network(ssid, password)
                 config_manager.write_config({"SETUP_MODE": False})
-            if not self._try_saved_wifi(
-                f"Connecting to {ssid}",
-                restart_client=True,
-                stop_hotspot=True,
-                fallback_ssid=ssid,
-            ):
-                self._start_hotspot("Could not join WiFi")
+
+            # NOTE: the recovery flock must be released before _join_network or
+            # _start_hotspot, which take it themselves. flock from a second fd
+            # in the same process would deadlock.
+            joined, detail = self._join_network(ssid, password)
+            if not joined:
+                self._start_hotspot(detail or f"Could not join {ssid}")
         except Exception as exc:
             self._start_hotspot(f"WiFi connect failed: {exc}")
+
+    def _join_network(self, ssid: str, password: str):
+        """Join one specific network and confirm we landed on *that* network.
+
+        Returns ``(ok, detail)``. The confirmation matters: the previous code
+        only asked "do I have an IP?", so when the join silently failed and the
+        radio stayed on a previously configured network, it reported success.
+        """
+        with self._wifi_recovery_lock(), self._transition_lock:
+            self._set_status(
+                active=False,
+                connected=False,
+                checking=True,
+                reason=f"Connecting to {ssid}",
+                ssid=ssid,
+                ip="",
+                last_error="",
+            )
+            self._stop_hotspot()
+
+            if self._use_network_manager():
+                error = self._activate_network_manager_profile(ssid, password)
+                if error:
+                    self._set_status(checking=False, last_error=error)
+                    return False, f"Could not join {ssid}"
+            else:
+                self._restart_wifi_client()
+
+            if not self._wait_for_connection(self.connect_timeout):
+                self._set_status(
+                    active=False,
+                    connected=False,
+                    checking=False,
+                    reason=f"Connecting to {ssid}",
+                    last_error=f"Timed out joining {ssid}",
+                )
+                return False, f"Could not join {ssid}"
+
+            actual = self._current_ssid()
+            if actual and actual != ssid:
+                self._set_status(
+                    active=False,
+                    connected=False,
+                    checking=False,
+                    reason=f"Connecting to {ssid}",
+                    last_error=f"Joined {actual}, not {ssid}",
+                )
+                return False, f"Wrong network: {actual}"
+
+            self._mark_connected(fallback_ssid=ssid)
+            return True, ""
 
     def _try_saved_wifi(self, reason: str, restart_client: bool, stop_hotspot: bool, fallback_ssid: str = "") -> bool:
         with self._wifi_recovery_lock(), self._transition_lock:
@@ -283,7 +338,83 @@ class WifiSetupManager:
         self._run_command(["systemctl", "stop", "hostapd"], timeout=8)
         self._run_command(["systemctl", "stop", "dnsmasq"], timeout=8)
 
+    def _use_network_manager(self) -> bool:
+        """True when NetworkManager owns the radio (Raspberry Pi OS bookworm+)."""
+        if self._resolve_command("nmcli") is None:
+            return False
+        state = self._run_command(
+            ["systemctl", "is-active", "NetworkManager"], timeout=4, capture=True
+        ).strip()
+        return state == "active"
+
+    def _activate_network_manager_profile(self, ssid: str, password: str) -> str:
+        """Create and activate an NM profile for ``ssid``.
+
+        NetworkManager only joins networks it has a profile for, so this is the
+        step that actually connects. Returns "" on success or a short error.
+        """
+        # The hotspot marks the interface unmanaged and turns the radio over to
+        # hostapd; hand it back before asking NM to do anything.
+        self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
+        self._run_command(["nmcli", "radio", "wifi", "on"], timeout=8)
+
+        # A stale profile for this SSID (old password, different security) would
+        # be reused and fail, so start clean.
+        self._delete_network_manager_profiles_for(ssid)
+
+        # NM can only associate with an SSID present in its scan list, and the
+        # list is stale after hostapd has been holding the radio.
+        self._run_command(
+            ["nmcli", "device", "wifi", "rescan", "ifname", self.interface], timeout=20
+        )
+
+        args = ["nmcli", "--wait", str(self.connect_timeout), "device", "wifi", "connect", ssid]
+        if password:
+            args += ["password", password]
+        args += ["ifname", self.interface]
+
+        completed = self._run_command_result(args, timeout=self.connect_timeout + 15)
+        if completed is None:
+            # nmcli is known present here, so this is the command timing out.
+            return f"Timed out joining {ssid}"[:120]
+        if completed.returncode != 0:
+            # Never echo args here: they carry the PSK, and this string is
+            # surfaced through /api/status and the logs.
+            lines = [
+                line.strip()
+                for line in ((completed.stderr or "") + "\n" + (completed.stdout or "")).splitlines()
+                if line.strip()
+            ]
+            return (lines[-1] if lines else "nmcli connect failed")[:120]
+        return ""
+
+    def _delete_network_manager_profiles_for(self, ssid: str):
+        listing = self._run_command(
+            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], timeout=8, capture=True
+        )
+        for line in listing.splitlines():
+            # Profile names may contain ':', so split off the type from the right.
+            name, _, conn_type = line.rpartition(":")
+            if not name or conn_type != "802-11-wireless":
+                continue
+            configured = self._run_command(
+                ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", name],
+                timeout=8,
+                capture=True,
+            ).strip()
+            if configured == ssid:
+                self._run_command(["nmcli", "connection", "delete", name], timeout=8)
+
     def _restart_wifi_client(self):
+        if self._use_network_manager():
+            # NM runs its own wpa_supplicant over D-Bus. Restarting the
+            # wpa_supplicant@ unit or poking wpa_cli fights it, so just return
+            # the radio and let NM reconnect to a profile it already knows.
+            self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
+            self._run_command(["nmcli", "radio", "wifi", "on"], timeout=8)
+            self._run_command(["nmcli", "device", "connect", self.interface], timeout=20)
+            return
+
         self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
         self._run_command(["ip", "addr", "flush", "dev", self.interface], timeout=8)
         self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8)
@@ -433,8 +564,24 @@ class WifiSetupManager:
         }
 
     def _current_ssid(self) -> str:
-        result = self._run_command(["iwgetid", self.interface, "-r"], timeout=4, capture=True)
-        return result.strip()
+        # iwgetid reads the kernel wireless extensions and is authoritative
+        # whenever it exists, including under NetworkManager.
+        if self._resolve_command("iwgetid") is not None:
+            return self._run_command(
+                ["iwgetid", self.interface, "-r"], timeout=4, capture=True
+            ).strip()
+        # wireless-tools is not installed on every image; ask NM instead. Only
+        # reached when iwgetid is absent, so polling does not pay for it.
+        listing = self._run_command(
+            ["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi", "list", "ifname", self.interface],
+            timeout=8,
+            capture=True,
+        )
+        for line in listing.splitlines():
+            active, _, ssid = line.partition(":")
+            if active.strip() == "yes":
+                return ssid.strip()
+        return ""
 
     def _interface_ipv4(self) -> str:
         result = self._run_command(["ip", "-4", "-o", "addr", "show", "dev", self.interface], timeout=4, capture=True)
@@ -469,6 +616,27 @@ class WifiSetupManager:
     def _require_command(self, command: str):
         if self._resolve_command(command) is None:
             raise RuntimeError(f"Missing required command: {command}")
+
+    def _run_command_result(self, args, timeout=8):
+        """Run a command and hand back the CompletedProcess, or None if missing.
+
+        Callers that need the exit code and stderr without _run_command's
+        exception message, which embeds argv — and argv can carry a PSK.
+        """
+        command = self._resolve_command(args[0])
+        if command is None:
+            return None
+        try:
+            return subprocess.run(
+                [command] + list(args[1:]),
+                check=False,
+                timeout=timeout,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except subprocess.TimeoutExpired:
+            return None
 
     def _run_command(self, args, timeout=8, capture=False, check=False):
         command = self._resolve_command(args[0])
