@@ -22,8 +22,14 @@ class MetroClockCloudAgent:
 
     # A rejected pairing code or a revoked device token is a persistent failure.
     # Without backoff the agent loop retried it at the loop rate (~1 Hz) forever.
+    #
+    # The ceiling is deliberately low. Onboarding hands the clock its cloud
+    # config while it is still hosting the setup hotspot, so the first pairing
+    # attempts always fail for lack of internet — the backoff is already growing
+    # before a success is even possible. Pairing tokens expire in ~600s, so a
+    # 300s ceiling could burn half that window waiting to retry.
     PAIRING_BACKOFF_MIN_SECONDS = 5
-    PAIRING_BACKOFF_MAX_SECONDS = 300
+    PAIRING_BACKOFF_MAX_SECONDS = 60
     EVENT_BACKOFF_MIN_SECONDS = 5
     EVENT_BACKOFF_MAX_SECONDS = 300
 

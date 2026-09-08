@@ -1,4 +1,5 @@
 import re
+import threading
 import time
 from datetime import datetime
 
@@ -92,15 +93,25 @@ class SportsWidget(Widget):
         except Exception:
             self.font_small = ImageFont.load_default()
 
+        # Background fetch plumbing — same shape as the metro, stocks and
+        # weather widgets. ESPN calls have an 8s timeout and used to run on the
+        # render thread.
+        self._failure_backoff_seconds = 15
+        self._max_failure_backoff_seconds = 300
+        self._fetch_signature = None
+        self._fetch_wake = threading.Event()
+        self._session = requests.Session()
+        self._worker = threading.Thread(target=self._fetch_worker, name="sports-fetch", daemon=True)
+        self._worker.start()
+
     # ------------------------------------------------------------------ update
 
     def update(self):
+        """Lightweight: no HTTP here. The worker owns fetching."""
         now = time.time()
         config_manager.reload_config()
 
-        test_date = self._get_test_date()
         league_key = self._get_league_key()
-        fetch_key = f"{league_key}:{test_date or self._today_key()}"
         if league_key != self.last_league_key:
             self.all_games = []
             self.games = []
@@ -109,17 +120,46 @@ class SportsWidget(Widget):
             self.possession_cache = {}
             self.last_league_key = league_key
 
-        poll_interval = self._current_fetch_interval()
-        if fetch_key != self.last_fetch_key or now - self.last_fetch >= poll_interval:
-            self._fetch_games(test_date)
-            self.last_fetch = now
-            self.last_fetch_key = fetch_key
+        # League or test-date change means the cached slate is for the wrong
+        # query; wake the worker instead of waiting out the poll interval.
+        signature = (league_key, self._get_test_date() or self._today_key())
+        if signature != self._fetch_signature:
+            self._fetch_signature = signature
+            self._fetch_wake.set()
 
         self._apply_view_filter()
 
         if len(self.games) > 1 and now - self.last_rotate >= self.rotate_interval:
             self.current_game_index = (self.current_game_index + 1) % len(self.games)
             self.last_rotate = now
+
+    def _fetch_worker(self):
+        """Daemon loop — keeps the 8s ESPN call off the render thread.
+
+        Fetching inline cost ~233ms per frame on a Pi against a 20ms budget, and
+        a slow or hung request stalled the whole display.
+        """
+        failure_delay = self._failure_backoff_seconds
+        while True:
+            succeeded = False
+            try:
+                test_date = self._get_test_date()
+                fetch_key = f"{self._get_league_key()}:{test_date or self._today_key()}"
+                succeeded = self._fetch_games(test_date)
+                if succeeded:
+                    self.last_fetch = time.time()
+                    self.last_fetch_key = fetch_key
+            except Exception as exc:
+                print(f"Sports worker error: {exc}", flush=True)
+
+            if succeeded:
+                failure_delay = self._failure_backoff_seconds
+                wait_seconds = self._current_fetch_interval()
+            else:
+                wait_seconds = failure_delay
+                failure_delay = min(self._max_failure_backoff_seconds, failure_delay * 2)
+            self._fetch_wake.wait(timeout=wait_seconds)
+            self._fetch_wake.clear()
 
     def _current_fetch_interval(self):
         # ESPN scoreboard returns the whole slate in one response,
@@ -405,18 +445,18 @@ class SportsWidget(Widget):
 
     # ----------------------------------------------------------------- fetching
 
-    def _fetch_games(self, test_date=""):
+    def _fetch_games(self, test_date="") -> bool:
         league = self._get_league()
         date_key = test_date or self._today_key()
         url = f"{league['url']}?dates={date_key}"
         try:
-            response = requests.get(url, timeout=8)
+            response = self._session.get(url, timeout=8)
             if response.status_code != 200:
-                return
+                return False
             payload = response.json()
         except Exception as exc:
-            print(f"Sports API error: {exc}")
-            return
+            print(f"Sports API error: {exc}", flush=True)
+            return False
 
         parsed = []
         for event in payload.get("events", []):
@@ -425,7 +465,9 @@ class SportsWidget(Widget):
                 parsed.append(game)
 
         parsed.sort(key=self._sort_key)
+        # Whole-list rebind so the render thread never sees a partial slate.
         self.all_games = parsed
+        return True
 
     def _parse_event(self, event):
         competitions = event.get("competitions") or []

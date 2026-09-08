@@ -208,3 +208,6 @@ __marimo__/
 config.py
 run.sh
 preview.py
+
+# macOS Finder metadata
+.DS_Store

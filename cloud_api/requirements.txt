@@ -1,5 +1,8 @@
-fastapi
-uvicorn[standard]
-supabase
-pydantic
-requests
+# Pinned deliberately: render.yaml uses autoDeployTrigger=commit, so an
+# unpinned upstream release would reach production on the next push with no
+# change of ours. These versions are the ones the API was last tested against.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+supabase==2.31.0
+pydantic==2.13.5
+requests==2.34.2

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -45,6 +47,23 @@ _device_event_queues: dict[str, list[_DeviceEventListener]] = {}
 _device_event_lock = threading.Lock()
 _device_preview_lock = threading.Lock()
 _device_preview_frames: dict[str, "DevicePreviewFrame"] = {}
+# Per-request work that used to hit Supabase on every single call. All three are
+# in-process, so they share the single-worker assumption documented for SSE in
+# CLOUD_CONTROL.md; with more workers they simply cache less, never incorrectly.
+_auth_cache_lock = threading.Lock()
+# token sha256 -> (monotonic expiry, user). Tokens are never stored in the clear.
+_user_token_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_user_token_ttl_seconds = 60
+_max_cached_user_tokens = 1000
+# user id -> monotonic time before which the profile upsert can be skipped.
+_profile_upsert_cache: dict[str, float] = {}
+_profile_upsert_ttl_seconds = 3600
+# device token id -> monotonic time before which last_used_at need not be rewritten.
+_device_token_touch_cache: dict[str, float] = {}
+_device_token_touch_interval_seconds = 300
+# Reused so Supabase auth checks do not pay a TLS handshake per request.
+_supabase_auth_session = requests.Session()
+
 _max_preview_bytes = 256 * 1024
 _max_preview_devices = 500
 _preview_frame_ttl = timedelta(hours=1)
@@ -177,13 +196,50 @@ def _bearer_token(authorization: str | None) -> str:
     return token
 
 
+def _token_cache_key(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _cached_user(token_key: str) -> dict[str, Any] | None:
+    now = time.monotonic()
+    with _auth_cache_lock:
+        entry = _user_token_cache.get(token_key)
+        if entry is None:
+            return None
+        expires_at, user = entry
+        if expires_at <= now:
+            _user_token_cache.pop(token_key, None)
+            return None
+        return user
+
+
+def _cache_user(token_key: str, user: dict[str, Any]):
+    now = time.monotonic()
+    with _auth_cache_lock:
+        if len(_user_token_cache) >= _max_cached_user_tokens:
+            for expired in [key for key, (exp, _) in _user_token_cache.items() if exp <= now]:
+                _user_token_cache.pop(expired, None)
+            if len(_user_token_cache) >= _max_cached_user_tokens:
+                _user_token_cache.pop(next(iter(_user_token_cache)), None)
+        _user_token_cache[token_key] = (now + _user_token_ttl_seconds, user)
+
+
 def _authenticate_user(authorization: str | None) -> dict[str, Any]:
     token = _bearer_token(authorization)
+    # Every authenticated endpoint called this, so a 2s preview poll meant a
+    # round trip to Supabase every 2s just to learn the same user id. Cached for
+    # a minute: a revoked token therefore stays usable for up to that long,
+    # which is well inside the lifetime of the access token itself.
+    token_key = _token_cache_key(token)
+    cached = _cached_user(token_key)
+    if cached is not None:
+        return cached
+
     current_settings = get_settings()
     if not current_settings.supabase_url or not current_settings.supabase_publishable_key:
         raise HTTPException(status_code=500, detail="Supabase user auth environment is not configured")
 
-    response = requests.get(
+    response = _supabase_auth_session.get(
         f"{current_settings.supabase_url.rstrip('/')}/auth/v1/user",
         headers={
             "apikey": current_settings.supabase_publishable_key,
@@ -197,19 +253,36 @@ def _authenticate_user(authorization: str | None) -> dict[str, Any]:
     user = response.json()
     if not user.get("id"):
         raise HTTPException(status_code=401, detail="Invalid user token")
+    _cache_user(token_key, user)
     return user
 
 
 def _ensure_profile(supabase: Client, user: dict[str, Any]):
+    # Called by every user-facing endpoint, so this was a database write on each
+    # preview poll. The row only needs to exist; re-asserting it per request buys
+    # nothing.
+    user_id = str(user.get("id") or "")
+    if not user_id:
+        return
+    now = time.monotonic()
+    with _auth_cache_lock:
+        skip_until = _profile_upsert_cache.get(user_id)
+        if skip_until is not None and skip_until > now:
+            return
+
     metadata = user.get("user_metadata") if isinstance(user.get("user_metadata"), dict) else {}
     display_name = metadata.get("display_name") or metadata.get("name")
     supabase.table("profiles").upsert(
         {
-            "id": user["id"],
+            "id": user_id,
             "display_name": display_name,
         },
         on_conflict="id",
     ).execute()
+
+    # Only remember it after the write actually succeeded.
+    with _auth_cache_lock:
+        _profile_upsert_cache[user_id] = time.monotonic() + _profile_upsert_ttl_seconds
 
 
 def _normalize_command_request(request: CreateCommandRequest) -> tuple[str, dict[str, Any]]:
@@ -301,8 +374,30 @@ def _authenticate_device(
     if device["id"] != token_row["device_id"]:
         raise HTTPException(status_code=403, detail="Token does not belong to this device")
 
-    supabase.table("device_tokens").update({"last_used_at": _now_iso()}).eq("id", token_row["id"]).execute()
+    _touch_device_token(supabase, str(token_row["id"]))
     return device
+
+
+def _touch_device_token(supabase: Client, token_id: str):
+    """Record that a device token was used, at most once per interval.
+
+    Devices poll commands every 5s and upload a preview every 2s, so writing this
+    on every request made it the busiest write in the system — for a field
+    nothing reads in real time.
+    """
+    now = time.monotonic()
+    with _auth_cache_lock:
+        skip_until = _device_token_touch_cache.get(token_id)
+        if skip_until is not None and skip_until > now:
+            return
+        _device_token_touch_cache[token_id] = now + _device_token_touch_interval_seconds
+
+    try:
+        supabase.table("device_tokens").update({"last_used_at": _now_iso()}).eq("id", token_id).execute()
+    except Exception:
+        # Telemetry only — never fail an authenticated device request over it.
+        with _auth_cache_lock:
+            _device_token_touch_cache.pop(token_id, None)
 
 
 @app.get("/health")
