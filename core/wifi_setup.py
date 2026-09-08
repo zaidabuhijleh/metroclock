@@ -321,8 +321,7 @@ class WifiSetupManager:
                 ]
             )
         hostapd_lines.append("")
-        self._write_file(HOSTAPD_CONF, "\n".join(hostapd_lines))
-        os.chmod(HOSTAPD_CONF, 0o600)
+        self._write_file(HOSTAPD_CONF, "\n".join(hostapd_lines), mode=0o600)
         hotspot_prefix = self.hotspot_ip.rsplit(".", 1)[0]
         self._write_file(
             DNSMASQ_CONF,
@@ -366,7 +365,8 @@ class WifiSetupManager:
         else:
             lines.append("    key_mgmt=NONE")
         lines.extend(["    priority=10", "}", ""])
-        self._write_file(WPA_SUPPLICANT_CONF, cleaned + "\n\n" + "\n".join(lines))
+        # 0600 before the content lands: this file holds the network PSK in plaintext.
+        self._write_file(WPA_SUPPLICANT_CONF, cleaned + "\n\n" + "\n".join(lines), mode=0o600)
 
     def _remove_network_for_ssid(self, content: str, ssid: str) -> str:
         blocks = []
@@ -507,10 +507,13 @@ class WifiSetupManager:
                 return candidate
         return None
 
-    def _write_file(self, path: str, content: str):
+    def _write_file(self, path: str, content: str, mode: int | None = None):
         tmp_path = path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
+        if mode is not None:
+            # Tighten before the rename so the secret is never briefly world-readable.
+            os.chmod(tmp_path, mode)
         os.replace(tmp_path, path)
 
     @contextlib.contextmanager

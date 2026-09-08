@@ -32,15 +32,14 @@ class RuntimeStateProvider(Protocol):
     def get_display_mode(self) -> str:
         ...
 
-    def get_brightness(self) -> int:
-        ...
-
 
 @dataclass(frozen=True)
 class DisplayHardwareProfile:
     width: int
     height: int
     slowdown: int
+    # Panel brightness is a build-time hardware characteristic, not a user
+    # setting: it is applied once when the matrix is constructed.
     brightness: int
 
 
@@ -102,29 +101,28 @@ class DisplayManager:
         self._active_pwm_bits = target_pwm_bits
         print(f"Display mode={mode}, pwm_bits={target_pwm_bits}", flush=True)
 
-    def present(self, image, brightness: int):
+    def present(self, image):
         if self._display is None:
             raise RuntimeError("Display has not been initialized")
-        self._display.set_brightness(brightness)
         self._display.draw_image(image)
         self._display.push()
 
     def status_frame(self, lines):
         return render_status_frame(self._hardware.width, self._hardware.height, lines)
 
-    def present_status(self, lines, brightness: int, mode: str = "setup"):
+    def present_status(self, lines, mode: str = "setup"):
         self.ensure_mode(mode)
         frame = self.status_frame(lines)
-        self.present(frame, brightness)
+        self.present(frame)
         return frame
 
     def boot_splash_frame(self):
         return render_boot_splash(self._hardware.width, self._hardware.height)
 
-    def present_boot_splash(self, brightness: int, mode: str = "setup"):
+    def present_boot_splash(self, mode: str = "setup"):
         self.ensure_mode(mode)
         frame = self.boot_splash_frame()
-        self.present(frame, brightness)
+        self.present(frame)
         return frame
 
 
@@ -236,7 +234,7 @@ class MetroClockApp:
         display = DisplayManager(hardware=hardware)
         boot_splash_started_at = None
         try:
-            frame = display.present_boot_splash(hardware.brightness)
+            frame = display.present_boot_splash()
             web_server.set_latest_frame(frame)
             boot_splash_started_at = time.monotonic()
         except Exception as exc:
@@ -304,8 +302,7 @@ class MetroClockApp:
             rendered_at = time.perf_counter()
             self._display.ensure_mode(mode)
             ensured_at = time.perf_counter()
-            brightness = self._state_provider.get_brightness()
-            self._present_frame(mode, frame, brightness)
+            self._present_frame(mode, frame)
             presented_at = time.perf_counter()
             web_server.set_latest_frame(frame)
             self._log_perf_if_needed(mode, tick_start, ensured_at, rendered_at, presented_at)
@@ -316,14 +313,14 @@ class MetroClockApp:
             self._present_error_frame(mode, exc)
             time.sleep(self._error_delay)
 
-    def _present_frame(self, mode: str, frame, brightness: int):
+    def _present_frame(self, mode: str, frame):
         previous_frame = self._last_presented_frame
         mode_changed = self._displayed_mode is not None and mode != self._displayed_mode
         should_crossfade = mode_changed and mode not in self._crossfade_excluded_modes
         if should_crossfade and self._can_crossfade(previous_frame, frame):
-            self._crossfade(previous_frame, frame, brightness)
+            self._crossfade(previous_frame, frame)
         else:
-            self._display.present(frame, brightness)
+            self._display.present(frame)
 
         try:
             self._last_presented_frame = frame.copy()
@@ -339,7 +336,7 @@ class MetroClockApp:
             and previous_frame.size == next_frame.size
         )
 
-    def _crossfade(self, previous_frame, next_frame, brightness: int):
+    def _crossfade(self, previous_frame, next_frame):
         previous = previous_frame.convert("RGB")
         next_image = next_frame.convert("RGB")
         steps = 5
@@ -348,7 +345,7 @@ class MetroClockApp:
         for step in range(1, steps + 1):
             alpha = step / steps
             blended = Image.blend(previous, next_image, alpha)
-            self._display.present(blended, brightness)
+            self._display.present(blended)
             if step < steps:
                 time.sleep(delay)
 
@@ -361,20 +358,12 @@ class MetroClockApp:
         try:
             frame = self._display.present_status(
                 ("RENDER ERR", str(mode or "UNKNOWN"), str(exc) or type(exc).__name__),
-                self._fallback_brightness(),
             )
             web_server.set_latest_frame(frame)
             self._last_error_frame_at = now
             self._last_error_signature = signature
         except Exception as status_exc:
             print(f"Error status frame failed: {status_exc}", flush=True)
-
-    @staticmethod
-    def _fallback_brightness() -> int:
-        try:
-            return int(web_server.get_brightness())
-        except Exception:
-            return int(getattr(config, "MATRIX_BRIGHTNESS", 100))
 
     @staticmethod
     def _should_show_pairing_message() -> bool:

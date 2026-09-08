@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
-import queue
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from postgrest.exceptions import APIError
@@ -36,7 +37,11 @@ from app.supabase_client import get_supabase
 
 app = FastAPI(title="MetroClock Cloud API")
 settings = get_settings()
-_device_event_queues: dict[str, list[queue.Queue[dict[str, Any]]]] = {}
+# Each listener is (its event loop, its queue). Events are produced by request
+# handlers running in the threadpool, so delivery has to hop back to the loop
+# that owns the stream.
+_DeviceEventListener = tuple[asyncio.AbstractEventLoop, asyncio.Queue]
+_device_event_queues: dict[str, list[_DeviceEventListener]] = {}
 _device_event_lock = threading.Lock()
 _device_preview_lock = threading.Lock()
 _device_preview_frames: dict[str, "DevicePreviewFrame"] = {}
@@ -68,34 +73,50 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _register_device_listener(device_uid: str) -> queue.Queue[dict[str, Any]]:
-    event_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=20)
+def _register_device_listener(
+    device_uid: str,
+    loop: asyncio.AbstractEventLoop,
+) -> asyncio.Queue[dict[str, Any]]:
+    event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=20)
     with _device_event_lock:
-        _device_event_queues.setdefault(device_uid, []).append(event_queue)
+        _device_event_queues.setdefault(device_uid, []).append((loop, event_queue))
     return event_queue
 
 
-def _unregister_device_listener(device_uid: str, event_queue: queue.Queue[dict[str, Any]]):
+def _unregister_device_listener(device_uid: str, event_queue: asyncio.Queue[dict[str, Any]]):
     with _device_event_lock:
-        queues = _device_event_queues.get(device_uid, [])
-        if event_queue in queues:
-            queues.remove(event_queue)
-        if not queues:
+        listeners = [
+            listener
+            for listener in _device_event_queues.get(device_uid, [])
+            if listener[1] is not event_queue
+        ]
+        if listeners:
+            _device_event_queues[device_uid] = listeners
+        else:
             _device_event_queues.pop(device_uid, None)
+
+
+def _offer_event(event_queue: asyncio.Queue[dict[str, Any]], event: dict[str, Any]):
+    """Enqueue on the stream's own loop, dropping the oldest event when full."""
+    try:
+        event_queue.put_nowait(event)
+    except asyncio.QueueFull:
+        try:
+            event_queue.get_nowait()
+            event_queue.put_nowait(event)
+        except Exception:
+            pass
 
 
 def _notify_device(device_uid: str, event: dict[str, Any]):
     with _device_event_lock:
-        queues = list(_device_event_queues.get(device_uid, []))
-    for event_queue in queues:
+        listeners = list(_device_event_queues.get(device_uid, []))
+    for loop, event_queue in listeners:
         try:
-            event_queue.put_nowait(event)
-        except queue.Full:
-            try:
-                event_queue.get_nowait()
-                event_queue.put_nowait(event)
-            except Exception:
-                pass
+            loop.call_soon_threadsafe(_offer_event, event_queue, event)
+        except RuntimeError:
+            # That listener's loop is already closed; its stream cleans itself up.
+            pass
 
 
 def _sse_message(event_name: str, data: dict[str, Any]) -> str:
@@ -951,7 +972,10 @@ async def upload_device_preview(
     authorization: str | None = Header(default=None),
     supabase: Client = Depends(get_supabase),
 ):
-    device = _authenticate_device(device_uid, authorization, supabase)
+    # _authenticate_device does blocking Supabase I/O. In an async endpoint that
+    # runs directly on the event loop and stalls every other request, so it has
+    # to go to the threadpool like the sync endpoints get for free.
+    device = await run_in_threadpool(_authenticate_device, device_uid, authorization, supabase)
     content_type = str(request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
     if content_type not in _allowed_preview_content_types:
         raise HTTPException(status_code=415, detail="Preview must be image/png or image/jpeg")
@@ -1033,23 +1057,27 @@ def list_device_commands(
 
 
 @app.get("/api/devices/{device_uid}/events")
-def stream_device_events(
+async def stream_device_events(
     device_uid: str,
     authorization: str | None = Header(default=None),
     supabase: Client = Depends(get_supabase),
 ):
-    _authenticate_device(device_uid, authorization, supabase)
-    event_queue = _register_device_listener(device_uid)
+    # Async so a long-lived stream costs an idle coroutine rather than a
+    # threadpool worker — a sync generator here blocked one of the ~40 anyio
+    # tokens per connected device and starved every other endpoint.
+    await run_in_threadpool(_authenticate_device, device_uid, authorization, supabase)
+    event_queue = _register_device_listener(device_uid, asyncio.get_running_loop())
 
-    def event_stream():
+    async def event_stream():
         try:
             yield _sse_message("ready", {"ok": True, "device_uid": device_uid})
             while True:
                 try:
-                    event = event_queue.get(timeout=20)
-                    yield _sse_message(str(event.get("type") or "message"), event)
-                except queue.Empty:
+                    event = await asyncio.wait_for(event_queue.get(), timeout=20)
+                except (asyncio.TimeoutError, TimeoutError):
                     yield ": keepalive\n\n"
+                    continue
+                yield _sse_message(str(event.get("type") or "message"), event)
         finally:
             _unregister_device_listener(device_uid, event_queue)
 

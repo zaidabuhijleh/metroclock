@@ -20,6 +20,13 @@ from core.modes import DEFAULT_MODE_CATALOG
 class MetroClockCloudAgent:
     """Outbound-only bridge between the Pi and a MetroClock cloud backend."""
 
+    # A rejected pairing code or a revoked device token is a persistent failure.
+    # Without backoff the agent loop retried it at the loop rate (~1 Hz) forever.
+    PAIRING_BACKOFF_MIN_SECONDS = 5
+    PAIRING_BACKOFF_MAX_SECONDS = 300
+    EVENT_BACKOFF_MIN_SECONDS = 5
+    EVENT_BACKOFF_MAX_SECONDS = 300
+
     def __init__(self):
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -31,6 +38,10 @@ class MetroClockCloudAgent:
         self._last_preview_upload_success_at = 0.0
         self._last_preview_signature: str | None = None
         self._last_error_log_at = 0.0
+        self._pairing_retry_at = 0.0
+        self._pairing_backoff_seconds = self.PAIRING_BACKOFF_MIN_SECONDS
+        self._pairing_backoff_code: str | None = None
+        self._event_backoff_seconds = self.EVENT_BACKOFF_MIN_SECONDS
 
     def start(self):
         if self._thread is not None and self._thread.is_alive():
@@ -52,7 +63,7 @@ class MetroClockCloudAgent:
                     continue
 
                 if self._pairing_code() and not self._device_token():
-                    self._attempt_pairing()
+                    self._attempt_pairing_if_due()
 
                 if self._device_token():
                     self._heartbeat_if_due()
@@ -68,12 +79,18 @@ class MetroClockCloudAgent:
             try:
                 config_manager.reload_config()
                 if not self._enabled() or not self._device_token():
-                    self._stop.wait(5)
+                    self._stop.wait(self.EVENT_BACKOFF_MIN_SECONDS)
                     continue
                 self._listen_for_events()
+                # A clean stream close is a normal reconnect, not a failure.
+                self._stop.wait(self.EVENT_BACKOFF_MIN_SECONDS)
             except Exception as exc:
                 self._log_error(f"Cloud events error: {exc}")
-                self._stop.wait(5)
+                self._stop.wait(self._event_backoff_seconds)
+                self._event_backoff_seconds = min(
+                    self.EVENT_BACKOFF_MAX_SECONDS,
+                    self._event_backoff_seconds * 2,
+                )
 
     @staticmethod
     def _enabled() -> bool:
@@ -123,6 +140,32 @@ class MetroClockCloudAgent:
     def _url(self, path: str) -> str:
         return urljoin(self._base_url(), path.lstrip("/"))
 
+    def _attempt_pairing_if_due(self):
+        """Pair, but never faster than the current backoff.
+
+        A code the backend rejects is a persistent failure, so retrying it at the
+        agent loop rate just hammers the API until the user re-runs setup.
+        """
+        pairing_code = self._pairing_code()
+        if pairing_code != self._pairing_backoff_code:
+            # A new code means the user just re-ran setup — pair immediately.
+            self._pairing_backoff_code = pairing_code
+            self._pairing_retry_at = 0.0
+            self._pairing_backoff_seconds = self.PAIRING_BACKOFF_MIN_SECONDS
+
+        now = time.time()
+        if now < self._pairing_retry_at:
+            return
+        try:
+            self._attempt_pairing()
+        except Exception:
+            self._pairing_retry_at = time.time() + self._pairing_backoff_seconds
+            self._pairing_backoff_seconds = min(
+                self.PAIRING_BACKOFF_MAX_SECONDS,
+                self._pairing_backoff_seconds * 2,
+            )
+            raise
+
     def _attempt_pairing(self):
         payload = {
             "device_id": web_server._get_device_id(),
@@ -145,6 +188,8 @@ class MetroClockCloudAgent:
             "METROCLOCK_CLOUD_PAIRING_CODE": "",
         })
         config_manager.reload_config()
+        self._pairing_retry_at = 0.0
+        self._pairing_backoff_seconds = self.PAIRING_BACKOFF_MIN_SECONDS
         print("MetroClock cloud pairing complete.", flush=True)
 
     def _heartbeat_if_due(self):
@@ -229,6 +274,8 @@ class MetroClockCloudAgent:
             timeout=(10, 90),
         )
         response.raise_for_status()
+        # The connection is up, so whatever failures preceded it are cleared.
+        self._event_backoff_seconds = self.EVENT_BACKOFF_MIN_SECONDS
         print("MetroClock cloud realtime connected.", flush=True)
         event_name = None
         data_lines = []
@@ -293,8 +340,6 @@ class MetroClockCloudAgent:
     def _apply_runtime_updates(changed: Dict[str, Any]):
         if "DISPLAY_MODE" in changed:
             web_server.set_display_mode(changed["DISPLAY_MODE"])
-        if "MATRIX_BRIGHTNESS" in changed:
-            web_server.set_brightness(changed["MATRIX_BRIGHTNESS"])
         if "AMBIENT_SCENE" in changed:
             web_server.set_ambient_scene(changed["AMBIENT_SCENE"])
 
@@ -317,7 +362,6 @@ class MetroClockCloudAgent:
             "hostname": socket.gethostname(),
             "ip": web_server._get_ip(),
             "display_mode": web_server.get_display_mode(),
-            "brightness": web_server.get_brightness(),
             "cloud_preview_seconds": MetroClockCloudAgent._preview_seconds(),
             "wifi_setup": web_server.get_wifi_setup_status(),
             "weather_preview": web_server.get_weather_preview(),

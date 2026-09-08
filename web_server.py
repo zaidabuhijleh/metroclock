@@ -62,9 +62,6 @@ class RuntimeState:
         self._pomodoro_lock = threading.Lock()
         self._pomodoro_state = None
 
-        self._brightness_lock = threading.Lock()
-        self._brightness = None
-
         self._metro_status_lock = threading.Lock()
         self._metro_last_success_ts = None
 
@@ -161,16 +158,6 @@ class RuntimeState:
     def set_display_mode(self, mode: str):
         with self._mode_lock:
             self._display_mode = mode
-
-    def get_brightness(self):
-        with self._brightness_lock:
-            if self._brightness is None:
-                self._brightness = getattr(config, "MATRIX_BRIGHTNESS", 30)
-            return self._brightness
-
-    def set_brightness(self, brightness):
-        with self._brightness_lock:
-            self._brightness = max(1, min(100, int(brightness)))
 
     def get_metro_last_success_ts(self):
         with self._metro_status_lock:
@@ -546,14 +533,6 @@ def _wifi_interface():
     return interface or str(getattr(config, "WIFI_INTERFACE", "wlan0") or "wlan0")
 
 
-def get_brightness():
-    return _runtime_state.get_brightness()
-
-
-def set_brightness(brightness):
-    _runtime_state.set_brightness(brightness)
-
-
 def get_metro_last_success_ts():
     return _runtime_state.get_metro_last_success_ts()
 
@@ -823,8 +802,6 @@ def api_settings_post():
         changed = config_manager.write_config(data)
         if "DISPLAY_MODE" in changed:
             set_display_mode(changed["DISPLAY_MODE"])
-        if "MATRIX_BRIGHTNESS" in changed:
-            set_brightness(changed["MATRIX_BRIGHTNESS"])
         if "AMBIENT_SCENE" in changed:
             set_ambient_scene(changed["AMBIENT_SCENE"])
         return jsonify({"ok": True, "changed": list(changed.keys())})

@@ -1,9 +1,11 @@
+import threading
 import time
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+import config_manager
 import web_server
 import widgets.icons as icons
 from core.widget import Widget
@@ -12,14 +14,27 @@ from core.widget import Widget
 class WeatherWidget(Widget):
     def __init__(self, width, height):
         super().__init__(width, height)
-        self.last_fetch = 0
         self.data = None
         self.forecast_data = None
-        self.update_interval = 600
         self.anim_frame = 0
         self.last_anim = time.time()
         self.label_scroll_speed = 20
         self.label_left_padding = 3
+
+        # Background fetch plumbing — keeps HTTP off the render thread so a slow
+        # or failing OpenWeather call never stalls the matrix. Mirrors the metro
+        # and stocks widgets.
+        self.update_interval = 600  # current conditions
+        self.forecast_interval = 1800  # forecast moves slowly; pull it less often
+        self._failure_backoff_seconds = 30
+        self._max_failure_backoff_seconds = 300
+        self._last_forecast_fetch = 0.0
+        self._last_config_reload = 0.0
+        self._last_error_log_at = 0.0
+        self._config_signature = None
+        self._fetch_wake = threading.Event()
+        # One session → keep-alive instead of a fresh TLS handshake per call.
+        self._session = requests.Session()
 
         self.color_bg_top = (2, 6, 16)
         self.color_bg_bottom = (5, 13, 29)
@@ -38,42 +53,98 @@ class WeatherWidget(Widget):
         except Exception:
             self.label_font = ImageFont.load_default()
 
+        self._worker = threading.Thread(target=self._fetch_worker, name="weather-fetch", daemon=True)
+        self._worker.start()
+
     def update(self):
+        """Lightweight: advance the icon animation, nudge the worker on config changes."""
         now = time.time()
         if now - self.last_anim > 0.45:
             self.anim_frame += 1
             self.last_anim = now
 
-        if now - self.last_fetch < self.update_interval:
-            return
+        with config_manager.CONFIG_LOCK:
+            if now - self._last_config_reload >= 1.0:
+                config_manager.reload_config()
+                self._last_config_reload = now
+            signature = self._current_config_signature()
 
-        location_params = self._location_params()
-        common_params = {
-            **location_params,
-            "appid": config.OPENWEATHER_API_KEY,
-            "units": config.WEATHER_UNITS,
+        if signature != self._config_signature:
+            self._config_signature = signature
+            self._last_forecast_fetch = 0.0  # location/units changed; forecast is stale
+            self._fetch_wake.set()  # refetch immediately for the new config
+
+    def _fetch_worker(self):
+        """Daemon loop — refresh on an interval, back off after failures.
+
+        The old inline fetch only advanced its clock on HTTP 200, so a bad API
+        key retried two blocking requests on every rendered frame.
+        """
+        failure_delay = self._failure_backoff_seconds
+        while True:
+            if self._fetch_once():
+                failure_delay = self._failure_backoff_seconds
+                wait_seconds = self.update_interval
+            else:
+                wait_seconds = failure_delay
+                failure_delay = min(self._max_failure_backoff_seconds, failure_delay * 2)
+            self._fetch_wake.wait(timeout=wait_seconds)
+            self._fetch_wake.clear()
+
+    def _fetch_once(self) -> bool:
+        api_key = str(getattr(config, "OPENWEATHER_API_KEY", "") or "").strip()
+        if not api_key:
+            return False  # nothing to fetch; don't burn retries on a guaranteed 401
+
+        params = {
+            **self._location_params(),
+            "appid": api_key,
+            "units": self._units(),
         }
+
+        if not self._fetch_into("weather", params, "data"):
+            return False
+
+        now = time.time()
+        if now - self._last_forecast_fetch >= self.forecast_interval:
+            if self._fetch_into("forecast", params, "forecast_data"):
+                self._last_forecast_fetch = now
+        return True
+
+    def _fetch_into(self, endpoint: str, params: dict, attribute: str) -> bool:
         try:
-            resp = requests.get(
-                "https://api.openweathermap.org/data/2.5/weather",
-                params=common_params,
-                timeout=5,
+            resp = self._session.get(
+                f"https://api.openweathermap.org/data/2.5/{endpoint}",
+                params=params,
+                timeout=8,
             )
-            if resp.status_code == 200:
-                self.data = resp.json()
-                self.last_fetch = now
-        except Exception:
-            pass
-        try:
-            resp = requests.get(
-                "https://api.openweathermap.org/data/2.5/forecast",
-                params=common_params,
-                timeout=5,
-            )
-            if resp.status_code == 200:
-                self.forecast_data = resp.json()
-        except Exception:
-            pass
+            resp.raise_for_status()
+            # Whole-object rebind: the render thread always sees a complete payload.
+            setattr(self, attribute, resp.json())
+            return True
+        except Exception as exc:
+            self._log_error(f"Weather {endpoint} fetch error: {exc}")
+            return False
+
+    def _log_error(self, message: str):
+        now = time.time()
+        if now - self._last_error_log_at < 60:
+            return
+        self._last_error_log_at = now
+        print(message, flush=True)
+
+    @staticmethod
+    def _units() -> str:
+        return str(getattr(config, "WEATHER_UNITS", "metric") or "metric").strip().lower()
+
+    def _current_config_signature(self):
+        return (
+            str(getattr(config, "OPENWEATHER_API_KEY", "") or "").strip(),
+            str(getattr(config, "OPENWEATHER_CITY_ID", "") or "").strip(),
+            str(getattr(config, "WEATHER_ZIP", "") or "").strip(),
+            str(getattr(config, "WEATHER_COUNTRY", "US") or "US").strip().upper(),
+            self._units(),
+        )
 
     def _location_params(self):
         zip_code = str(getattr(config, "WEATHER_ZIP", "") or "").strip()

@@ -24,14 +24,14 @@ class FlightWidget(Widget):
 
         try:
             self.font = ImageFont.truetype(config.FONT_PATH_TALL, config.FONT_SIZE_TALL)
-        except:
+        except Exception:
             self.font = ImageFont.load_default()
 
     def _parse_api_time(self, time_str):
         if not time_str: return None
         try:
             return datetime.fromisoformat(time_str.replace('Z', '+00:00')).timestamp()
-        except: return None
+        except Exception: return None
 
     def update(self):
         now = time.time()
@@ -41,10 +41,9 @@ class FlightWidget(Widget):
     def _fetch_flight_data(self):
         try:
             params = {'access_key': config.AVIATIONSTACK_API_KEY, 'flight_iata': config.FLIGHT_NUMBER}
-            resp = requests.get("http://api.aviationstack.com/v1/flights", params=params, timeout=10)
+            resp = requests.get("https://api.aviationstack.com/v1/flights", params=params, timeout=10)
             if resp.status_code == 200:
                 res_json = resp.json()
-                print("JSON: "+ res_json)
                 if res_json.get('data') and len(res_json['data']) > 0:
                     self.data = res_json['data'][0]
                     self.status_text = None
@@ -55,7 +54,8 @@ class FlightWidget(Widget):
             else:
                 self.status_text = f"ERR {resp.status_code}"
                 self.next_fetch_time = time.time() + 300
-        except:
+        except Exception as exc:
+            print(f"Flight API error: {exc}", flush=True)
             self.status_text = "CONN ERR"
             self.next_fetch_time = time.time() + 300
 
