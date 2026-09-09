@@ -136,15 +136,15 @@ class RuntimeState:
             except Exception:
                 pass
 
-            for filename in ("version.txt", "VERSION"):
-                try:
-                    with open(os.path.join(app_dir, filename), "r", encoding="utf-8") as f:
-                        file_ver = f.read().strip()
-                    if file_ver:
-                        self._app_version = file_ver
-                        return self._app_version
-                except Exception:
-                    pass
+            # version.txt is what release-please ("simple" strategy) maintains.
+            try:
+                with open(os.path.join(app_dir, "version.txt"), "r", encoding="utf-8") as f:
+                    file_ver = f.read().strip()
+                if file_ver:
+                    self._app_version = file_ver
+                    return self._app_version
+            except Exception:
+                pass
 
             self._app_version = "dev"
             return self._app_version
@@ -681,42 +681,6 @@ def preview_pngstream():
                 + b"Content-Type: image/png\r\n"
                 + f"Content-Length: {len(png)}\r\n\r\n".encode()
                 + png
-                + b"\r\n"
-            )
-            time.sleep(target_interval)
-
-    return Response(
-        generate(),
-        mimetype=f"multipart/x-mixed-replace; boundary={boundary}",
-        headers={"Cache-Control": "no-store", "Connection": "close"},
-    )
-
-
-@app.route("/preview.mjpg")
-def preview_mjpg():
-    boundary = "frame"
-    target_fps = 30
-    target_interval = 1.0 / target_fps
-    jpeg_quality = 85
-
-    def generate():
-        while True:
-            frame = get_latest_frame()
-            if frame is None:
-                time.sleep(target_interval)
-                continue
-            buf = io.BytesIO()
-            try:
-                frame.convert("RGB").save(buf, format="JPEG", quality=jpeg_quality)
-            except Exception:
-                time.sleep(target_interval)
-                continue
-            jpeg = buf.getvalue()
-            yield (
-                b"--" + boundary.encode() + b"\r\n"
-                + b"Content-Type: image/jpeg\r\n"
-                + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
-                + jpeg
                 + b"\r\n"
             )
             time.sleep(target_interval)

@@ -222,6 +222,7 @@ class MetroClockApp:
         self._last_presented_frame = None
         self._displayed_mode = None
         self._crossfade_excluded_modes = {"metro", "stocks"}
+        self._next_frame_at = None
 
     @classmethod
     def build_default(cls) -> "MetroClockApp":
@@ -306,12 +307,34 @@ class MetroClockApp:
             presented_at = time.perf_counter()
             web_server.set_latest_frame(frame)
             self._log_perf_if_needed(mode, tick_start, ensured_at, rendered_at, presented_at)
-            time.sleep(self._loop_delay)
+            self._sleep_until_next_frame()
         except Exception as exc:
             print(f"Render loop error ({mode}): {exc}", flush=True)
             traceback.print_exc()
             self._present_error_frame(mode, exc)
+            self._next_frame_at = None  # resync after an error pause
             time.sleep(self._error_delay)
+
+    def _sleep_until_next_frame(self):
+        """Sleep to a deadline rather than for a fixed amount.
+
+        A flat sleep made the frame period `work + delay`, so the frame rate
+        tracked whatever the widget had just done — 49fps in clock mode, 45 in
+        clock_widget, less under load from other threads. Scrolling advances a
+        fixed number of pixels per frame (see core/scroll.py), so text visibly
+        moved at different speeds in different modes.
+        """
+        now = time.monotonic()
+        target = (self._next_frame_at if self._next_frame_at is not None else now) + self._loop_delay
+        remaining = target - now
+        if remaining > 0:
+            time.sleep(remaining)
+            self._next_frame_at = target
+        else:
+            # Overran the budget — a crossfade, or an expensive ambient frame.
+            # Resync instead of accumulating debt and then running flat out to
+            # repay it, which would make motion lurch.
+            self._next_frame_at = now
 
     def _present_frame(self, mode: str, frame):
         previous_frame = self._last_presented_frame

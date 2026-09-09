@@ -48,6 +48,14 @@ class MetroClockCloudAgent:
         self._pairing_backoff_seconds = self.PAIRING_BACKOFF_MIN_SECONDS
         self._pairing_backoff_code: str | None = None
         self._event_backoff_seconds = self.EVENT_BACKOFF_MIN_SECONDS
+        # Keep-alive instead of a fresh TLS handshake per call. The preview
+        # upload alone runs every 2s for the life of the device.
+        #
+        # Two sessions, not one: the polling thread and the SSE thread run
+        # concurrently, the event stream holds its connection open for minutes,
+        # and requests.Session is not documented as thread-safe.
+        self._session = requests.Session()
+        self._event_session = requests.Session()
 
     def start(self):
         if self._thread is not None and self._thread.is_alive():
@@ -178,7 +186,7 @@ class MetroClockCloudAgent:
             "pairing_code": self._pairing_code(),
             "status": self._status_payload(),
         }
-        response = requests.post(
+        response = self._session.post(
             self._url("/api/devices/pair"),
             json=payload,
             headers=self._headers(),
@@ -203,7 +211,7 @@ class MetroClockCloudAgent:
         if now - self._last_heartbeat_at < self._heartbeat_seconds():
             return
         self._last_heartbeat_at = now
-        response = requests.post(
+        response = self._session.post(
             self._url(f"/api/devices/{web_server._get_device_id()}/heartbeat"),
             json=self._status_payload(),
             headers=self._headers(),
@@ -221,7 +229,7 @@ class MetroClockCloudAgent:
     def _poll_commands_now(self):
         with self._command_poll_lock:
             self._last_command_poll_at = time.time()
-            response = requests.get(
+            response = self._session.get(
                 self._url(f"/api/devices/{web_server._get_device_id()}/commands"),
                 headers=self._headers(),
                 timeout=10,
@@ -243,15 +251,15 @@ class MetroClockCloudAgent:
         if frame is None:
             return
 
-        buf = io.BytesIO()
+        # Hash the raw pixels, not the encoded bytes: the old order paid for a
+        # PNG encode every 2s even when the frame had not changed at all.
         try:
-            frame.convert("RGB").save(buf, format="PNG")
+            rgb = frame.convert("RGB")
+            signature = hashlib.blake2s(rgb.tobytes(), digest_size=8).hexdigest()
         except Exception as exc:
-            self._log_error(f"Cloud preview encode error: {exc}")
+            self._log_error(f"Cloud preview hash error: {exc}")
             return
 
-        content = buf.getvalue()
-        signature = hashlib.blake2s(content, digest_size=8).hexdigest()
         keepalive_seconds = max(60, interval * 30)
         if (
             signature == self._last_preview_signature
@@ -259,8 +267,16 @@ class MetroClockCloudAgent:
         ):
             return
 
+        buf = io.BytesIO()
         try:
-            response = requests.post(
+            rgb.save(buf, format="PNG")
+        except Exception as exc:
+            self._log_error(f"Cloud preview encode error: {exc}")
+            return
+        content = buf.getvalue()
+
+        try:
+            response = self._session.post(
                 self._url(f"/api/devices/{web_server._get_device_id()}/preview"),
                 data=content,
                 headers={**self._headers(), "Content-Type": "image/png"},
@@ -273,7 +289,7 @@ class MetroClockCloudAgent:
             self._log_error(f"Cloud preview upload error: {exc}")
 
     def _listen_for_events(self):
-        response = requests.get(
+        response = self._event_session.get(
             self._url(f"/api/devices/{web_server._get_device_id()}/events"),
             headers=self._headers(),
             stream=True,
@@ -350,7 +366,7 @@ class MetroClockCloudAgent:
             web_server.set_ambient_scene(changed["AMBIENT_SCENE"])
 
     def _ack_command(self, command_id: str, result: Dict[str, Any]):
-        response = requests.post(
+        response = self._session.post(
             self._url(f"/api/devices/{web_server._get_device_id()}/commands/{command_id}/ack"),
             json=result,
             headers=self._headers(),

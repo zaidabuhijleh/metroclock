@@ -64,7 +64,13 @@ _device_token_touch_interval_seconds = 300
 # Reused so Supabase auth checks do not pay a TLS handshake per request.
 _supabase_auth_session = requests.Session()
 
-_max_preview_bytes = 256 * 1024
+# A 64x32 panel encodes to roughly 0.1-3 KB of PNG, so 32 KB is ~10x headroom.
+# The old 256 KB cap let a buggy or hostile device pin 500 x 256 KB = 128 MB of
+# process memory on a 512 MB instance.
+_max_preview_bytes = 32 * 1024
+# Frames live in this process, like the SSE listener registry above: with more
+# than one worker an upload lands in one process and the read may hit another,
+# which returns 404. The API assumes a single worker.
 _max_preview_devices = 500
 _preview_frame_ttl = timedelta(hours=1)
 _allowed_preview_content_types = {"image/png", "image/jpeg"}
