@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 import config
 import config_manager
 import web_server
+from core import cloud_data
 import widgets.icons as icons
 from core.widget import Widget
 
@@ -31,6 +32,7 @@ class WeatherWidget(Widget):
         self._last_forecast_fetch = 0.0
         self._last_config_reload = 0.0
         self._last_error_log_at = 0.0
+        self._last_fetch_error = ""
         self._config_signature = None
         self._fetch_wake = threading.Event()
         # One session → keep-alive instead of a fresh TLS handshake per call.
@@ -92,26 +94,48 @@ class WeatherWidget(Widget):
             self._fetch_wake.clear()
 
     def _fetch_once(self) -> bool:
+        # A locally configured key wins, so developer units and anyone who
+        # supplies their own key keep calling OpenWeather directly. Otherwise go
+        # through the cloud proxy, which holds the key: a clock in the field has
+        # no credentials of its own.
         api_key = str(getattr(config, "OPENWEATHER_API_KEY", "") or "").strip()
-        if not api_key:
-            return False  # nothing to fetch; don't burn retries on a guaranteed 401
+        if api_key:
+            params = {**self._location_params(), "appid": api_key, "units": self._units()}
+            fetch = lambda endpoint, attribute: self._fetch_direct(endpoint, params, attribute)
+        elif cloud_data.is_available():
+            fetch = self._fetch_via_cloud
+        else:
+            self._last_fetch_error = "not paired"
+            return False
 
-        params = {
-            **self._location_params(),
-            "appid": api_key,
-            "units": self._units(),
-        }
-
-        if not self._fetch_into("weather", params, "data"):
+        if not fetch("weather", "data"):
             return False
 
         now = time.time()
         if now - self._last_forecast_fetch >= self.forecast_interval:
-            if self._fetch_into("forecast", params, "forecast_data"):
+            if fetch("forecast", "forecast_data"):
                 self._last_forecast_fetch = now
         return True
 
-    def _fetch_into(self, endpoint: str, params: dict, attribute: str) -> bool:
+    def _fetch_via_cloud(self, endpoint: str, attribute: str) -> bool:
+        zip_code = str(getattr(config, "WEATHER_ZIP", "") or "").strip()
+        params = {"units": self._units()}
+        if zip_code:
+            params["zip"] = zip_code
+            params["country"] = str(getattr(config, "WEATHER_COUNTRY", "US") or "US").strip().upper()
+        else:
+            params["city_id"] = str(getattr(config, "OPENWEATHER_CITY_ID", "") or "").strip()
+        try:
+            payload = cloud_data.get(endpoint, params)
+        except cloud_data.CloudDataError as exc:
+            self._last_fetch_error = exc.reason
+            self._log_error(f"Weather {endpoint} via cloud failed: {exc.reason}")
+            return False
+        setattr(self, attribute, payload)
+        self._last_fetch_error = ""
+        return True
+
+    def _fetch_direct(self, endpoint: str, params: dict, attribute: str) -> bool:
         try:
             resp = self._session.get(
                 f"https://api.openweathermap.org/data/2.5/{endpoint}",
@@ -121,8 +145,12 @@ class WeatherWidget(Widget):
             resp.raise_for_status()
             # Whole-object rebind: the render thread always sees a complete payload.
             setattr(self, attribute, resp.json())
+            self._last_fetch_error = ""
             return True
         except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            # Shown on a 64px panel, so keep it to a few characters.
+            self._last_fetch_error = f"http {status}" if status else "no network"
             self._log_error(f"Weather {endpoint} fetch error: {exc}")
             return False
 
@@ -144,6 +172,35 @@ class WeatherWidget(Widget):
             str(getattr(config, "WEATHER_ZIP", "") or "").strip(),
             str(getattr(config, "WEATHER_COUNTRY", "US") or "US").strip().upper(),
             self._units(),
+            cloud_data.signature(),
+        )
+
+    def _placeholder_reason(self) -> str:
+        if self._last_fetch_error:
+            return self._last_fetch_error
+        if not str(getattr(config, "OPENWEATHER_API_KEY", "") or "").strip() and not cloud_data.is_available():
+            # Not "no api key": a field unit is never meant to have one.
+            return "not paired"
+        return "loading"
+
+    def _draw_placeholder(self, draw):
+        label = "WEATHER"
+        label_width = int(self.temp_font.getlength(label))
+        draw.text(
+            ((self.width - label_width) // 2, 5),
+            label,
+            font=self.temp_font,
+            fill=self.color_temp,
+        )
+        reason = self._placeholder_reason()
+        while reason and int(self.label_font.getlength(reason)) > self.width - 4:
+            reason = reason[:-1]
+        reason_width = int(self.label_font.getlength(reason))
+        draw.text(
+            ((self.width - reason_width) // 2, 19),
+            reason,
+            font=self.label_font,
+            fill=self.color_label,
         )
 
     def _location_params(self):
@@ -477,6 +534,11 @@ class WeatherWidget(Widget):
         weather_data = web_server.preview_weather_data(preview, config.WEATHER_UNITS) if preview else self.data
 
         if not weather_data:
+            # Never return a bare canvas here. color_bg_top is near-black, so a
+            # silent failure looked like a dead panel — and because the fill is
+            # not pure black, the app's blank-frame safety net did not catch it
+            # either. Say why instead.
+            self._draw_placeholder(draw)
             return self.canvas
 
         temp = round(weather_data["main"]["temp"])

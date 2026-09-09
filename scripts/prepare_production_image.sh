@@ -13,6 +13,7 @@ HOSTNAME="${METROCLOCK_IMAGE_HOSTNAME:-metroclock}"
 HOTSPOT_PASSWORD="${METROCLOCK_DEFAULT_SETUP_HOTSPOT_PASSWORD:-metroclock}"
 SHUTDOWN=0
 YES=0
+ALLOW_MISSING_KEYS=0
 
 usage() {
   cat <<USAGE
@@ -31,8 +32,14 @@ This script intentionally removes device/user state:
 - logs and shell history
 
 Options:
-  --yes       Required safety confirmation.
-  --shutdown  Power off at the end so the SD card can be removed and imaged.
+  --yes                  Required safety confirmation.
+  --shutdown             Power off at the end so the card can be imaged.
+  --allow-missing-keys   Proceed even if a shipped API key is unset.
+
+Environment (API keys baked into the image; unset keys ship empty):
+  METROCLOCK_IMAGE_OPENWEATHER_API_KEY
+  METROCLOCK_IMAGE_WMATA_API_KEY
+  METROCLOCK_IMAGE_AVIATIONSTACK_API_KEY
 USAGE
 }
 
@@ -44,6 +51,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --shutdown)
       SHUTDOWN=1
+      shift
+      ;;
+    --allow-missing-keys)
+      ALLOW_MISSING_KEYS=1
       shift
       ;;
     -h|--help)
@@ -70,6 +81,26 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 1
 fi
 
+missing_keys=""
+for pair in   "OPENWEATHER:${METROCLOCK_IMAGE_OPENWEATHER_API_KEY:-}"   "WMATA:${METROCLOCK_IMAGE_WMATA_API_KEY:-}"   "AVIATIONSTACK:${METROCLOCK_IMAGE_AVIATIONSTACK_API_KEY:-}"; do
+  name="${pair%%:*}"
+  value="${pair#*:}"
+  [ -n "$value" ] || missing_keys="$missing_keys $name"
+done
+if [ -n "$missing_keys" ] && [ "$ALLOW_MISSING_KEYS" -ne 1 ]; then
+  echo "No value for:$missing_keys" >&2
+  echo >&2
+  echo "Those widgets would show a placeholder on every unit built from this" >&2
+  echo "image. Checked before anything is modified, because the fix requires" >&2
+  echo "booting the card again -- which re-contaminates it." >&2
+  echo >&2
+  echo "Set METROCLOCK_IMAGE_<NAME>_API_KEY, or pass --allow-missing-keys." >&2
+  exit 2
+fi
+if [ -n "$missing_keys" ]; then
+  echo "Proceeding without:$missing_keys (--allow-missing-keys)"
+fi
+
 echo "[1/10] Stopping MetroClock services..."
 sudo systemctl stop metroclock 2>/dev/null || true
 sudo systemctl stop metroclock-network-recovery.timer 2>/dev/null || true
@@ -86,55 +117,11 @@ sudo systemctl enable metroclock
 sudo systemctl enable avahi-daemon 2>/dev/null || true
 
 echo "[3/10] Writing clean runtime config..."
-sudo mkdir -p "$(dirname "$CONFIG_PATH")" "$(dirname "$SECRETS_PATH")"
-sudo python3 - "$CONFIG_PATH" <<'PY'
-import json
-import os
-import sys
-
-path = sys.argv[1]
-data = {}
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        existing = json.load(f)
-    if isinstance(existing, dict):
-        data.update(existing)
-except Exception:
-    pass
-
-data.update(
-    {
-        "DISPLAY_MODE": "clock",
-        "CLOCK_SHOW_AMPM": False,
-        "CLOCK_SHOW_DATE": False,
-        "SETUP_MODE": False,
-        "WIFI_SETUP_ENABLED": True,
-        "WIFI_SETUP_FORCE_HOTSPOT_UNPAIRED": True,
-        "WIFI_SETUP_HOTSPOT_SSID": "MetroClock-Setup",
-        "WIFI_SETUP_HOTSPOT_IP": "192.168.4.1",
-        "WIFI_SETUP_HOTSPOT_PASSWORD": "metroclock",
-        "METROCLOCK_CLOUD_ENABLED": False,
-        "METROCLOCK_CLOUD_BASE_URL": "",
-        "METROCLOCK_CLOUD_DEVICE_TOKEN": "",
-        "METROCLOCK_CLOUD_PAIRING_CODE": "",
-    }
-)
-
-for key in (
-    "WMATA_API_KEY",
-    "OPENWEATHER_API_KEY",
-    "AVIATIONSTACK_API_KEY",
-):
-    data[key] = ""
-
-os.makedirs(os.path.dirname(path), exist_ok=True)
-tmp_path = path + ".tmp"
-with open(tmp_path, "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=2, sort_keys=True)
-    f.write("\n")
-os.replace(tmp_path, path)
-PY
-sudo chmod 600 "$CONFIG_PATH"
+# Delegated so factory defaults live in exactly one place. This step used to
+# seed from the config already on the build unit, which silently baked the
+# developer's location, station, teams, symbols and colours into every image.
+# METROCLOCK_IMAGE_*_API_KEY is inherited from this process's environment.
+METROCLOCK_CONFIG_PATH="$CONFIG_PATH" "$REPO_DIR/scripts/reset_device_config.sh" --yes
 
 echo "[4/10] Writing production secrets defaults..."
 sudo install -m 600 /dev/null "$SECRETS_PATH"
@@ -257,11 +244,55 @@ fi
 if [ -s "$DEVICE_ID_PATH" ]; then
   report_leak "$DEVICE_ID_PATH still present (unit identity)"
 fi
+
+# Catches the case that motivated all of this: prep is run, the card is booted
+# again to "just check something", a setting gets changed, and that setting
+# ships in the image.
+extra_keys="$(sudo python3 - "$CONFIG_PATH" <<'PY'
+import json, sys
+factory = {
+    "DISPLAY_MODE", "CLOCK_SHOW_AMPM", "CLOCK_SHOW_DATE", "SETUP_MODE",
+    "WIFI_SETUP_ENABLED", "WIFI_SETUP_FORCE_HOTSPOT_UNPAIRED",
+    "WIFI_SETUP_HOTSPOT_SSID", "WIFI_SETUP_HOTSPOT_IP", "WIFI_SETUP_HOTSPOT_PASSWORD",
+    "METROCLOCK_CLOUD_ENABLED", "METROCLOCK_CLOUD_BASE_URL",
+    "METROCLOCK_CLOUD_DEVICE_TOKEN", "METROCLOCK_CLOUD_PAIRING_CODE",
+    "WMATA_API_KEY", "OPENWEATHER_API_KEY", "AVIATIONSTACK_API_KEY",
+}
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+print(",".join(sorted(k for k in data if k not in factory)))
+PY
+)"
+if [ -n "$extra_keys" ]; then
+  report_leak "$CONFIG_PATH holds non-factory settings: $extra_keys"
+fi
 if sudo grep -qs 'METROCLOCK_CLOUD_DEVICE_TOKEN"[[:space:]]*:[[:space:]]*"[^"]' "$CONFIG_PATH"; then
   report_leak "$CONFIG_PATH still holds a cloud device token"
 fi
 if sudo find /etc/ssh -maxdepth 1 -name 'ssh_host_*' 2>/dev/null | grep -q .; then
   report_leak "SSH host keys still present"
+fi
+
+# Not a leak, but the most common way to capture a dud image: forgetting to
+# pass the shipped API keys, so weather is a placeholder on every unit.
+missing_keys="$(sudo python3 - "$CONFIG_PATH" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+print(",".join(k for k in ("OPENWEATHER_API_KEY", "WMATA_API_KEY", "AVIATIONSTACK_API_KEY")
+                if not str(data.get(k) or "").strip()))
+PY
+)"
+if [ -n "$missing_keys" ]; then
+  echo "  NOTE: shipping with no value for: $missing_keys"
+  echo "        Those widgets will show a placeholder on every unit."
+  echo "        Re-run with METROCLOCK_IMAGE_<NAME> set if that is not intended."
 fi
 
 if [ "$LEAKS" -gt 0 ]; then

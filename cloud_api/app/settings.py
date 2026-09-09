@@ -11,6 +11,10 @@ class Settings:
     supabase_service_role_key: str
     cors_origins: tuple[str, ...]
     debug_dashboard_enabled: bool
+    # Provider keys for the data proxy. They live here so that a device never
+    # holds credentials; see app/upstream.py.
+    openweather_api_key: str
+    aviationstack_api_key: str
 
 
 def _split_csv(value: str) -> tuple[str, ...]:
@@ -31,4 +35,6 @@ def get_settings() -> Settings:
         supabase_service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
         cors_origins=_split_csv(os.environ.get("METROCLOCK_CORS_ORIGINS", "")),
         debug_dashboard_enabled=_env_bool("METROCLOCK_DEBUG_DASHBOARD_ENABLED"),
+        openweather_api_key=os.environ.get("OPENWEATHER_API_KEY", "").strip(),
+        aviationstack_api_key=os.environ.get("AVIATIONSTACK_API_KEY", "").strip(),
     )

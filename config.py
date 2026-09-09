@@ -102,7 +102,6 @@ STOCKS_SYMBOLS = "AAPL,TSLA,NVDA,SPY"
 STOCKS_VIEW_MODE = "ticker"
 STOCKS_FOCUS_TIMEFRAME = "1D"
 STOCKS_FOCUS_ROTATE_SECONDS = 8  # seconds per stock in focus view
-STOCKS_TICKER_SPEED = 25  # legacy/unused — see SCROLL_SPEED
 
 # --- SCROLL ---
 # Global scroll speed for all marquee/ticker text. Restricted to values that
@@ -257,7 +256,6 @@ RUNTIME_EDITABLE_FIELDS = {
     "STOCKS_VIEW_MODE",
     "STOCKS_FOCUS_TIMEFRAME",
     "STOCKS_FOCUS_ROTATE_SECONDS",
-    "STOCKS_TICKER_SPEED",
     "SCROLL_SPEED",
     "SCROLL_SPEED_STOCKS",
     "SCROLL_SPEED_METRO",

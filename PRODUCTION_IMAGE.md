@@ -58,8 +58,39 @@ Run this only when the source SD card is ready to become the reusable base:
 
 ```bash
 cd /home/zaid/metroclock
-./scripts/prepare_production_image.sh --yes --shutdown
+METROCLOCK_IMAGE_OPENWEATHER_API_KEY='...' ./scripts/prepare_production_image.sh --yes --shutdown
 ```
+
+### Shipped API keys
+
+Keys are read from the environment at prep time and written into the runtime
+config, so they are never committed to the repository:
+
+| Variable | Enables |
+|---|---|
+| `METROCLOCK_IMAGE_OPENWEATHER_API_KEY` | weather |
+| `METROCLOCK_IMAGE_WMATA_API_KEY` | WMATA metro |
+| `METROCLOCK_IMAGE_AVIATIONSTACK_API_KEY` | flight tracking |
+
+Any key left unset ships empty, and that widget shows a placeholder saying why
+instead of a blank panel. The script prints which keys were set and warns before
+shutdown if any are missing.
+
+They go into `config.json` rather than `secrets.env` deliberately: environment
+variables win over the runtime config, so putting a key in the environment would
+silently override a user who sets their own key in the app.
+
+Three things to know about shipping a key:
+
+- **Use a dedicated key, not your personal one.** It can then be rotated without
+  breaking your own units, and usage is attributable.
+- **It is extractable.** Anyone with an SD card can read it. That is inherent to
+  shipping a key; the mitigation is a dedicated key you are willing to rotate.
+- **Rotation does not need a re-flash.** Paired units can be pushed a new key
+  through the cloud `set_settings` command.
+
+At current poll intervals each clock makes about 8 OpenWeather calls an hour
+(~5,800/month), so the free tier's 1M calls/month covers roughly 170 units.
 
 The script stops services, clears device/user state, removes saved Wi-Fi,
 removes SSH host keys, clears logs, installs a first-boot identity service,

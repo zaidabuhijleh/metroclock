@@ -19,3 +19,9 @@ services:
         sync: false
       - key: METROCLOCK_DEBUG_DASHBOARD_ENABLED
         value: "false"
+      # Provider keys for the /api/devices/{uid}/data proxy. Set in the Render
+      # dashboard; they must never be shipped inside a device image.
+      - key: OPENWEATHER_API_KEY
+        sync: false
+      - key: AVIATIONSTACK_API_KEY
+        sync: false

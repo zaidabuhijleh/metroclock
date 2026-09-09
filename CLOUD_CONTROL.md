@@ -17,6 +17,50 @@ listeners and assumes one API process; polling is the correctness fallback if
 the stream reconnects, the process restarts, or the API later runs more than
 one worker.
 
+## Single-worker constraint
+
+Four things live in the API process's memory, so **the service must run as a
+single instance**:
+
+| State | Effect of a second instance |
+|---|---|
+| SSE listener registry | A command created on instance B never notifies a clock streaming from A. Polling still delivers it, so commands are slower, not lost. |
+| Device preview frames | Uploaded to A, read from B returns 404 "Preview is not available yet" - intermittent and confusing. |
+| Data proxy cache and rate limits | Caches less and limits per instance. Costs upstream quota; never wrong. |
+| User auth / profile caches | Caches less. Harmless. |
+
+Only the first two actually misbehave, and both look like flaky bugs rather than
+a configuration choice, so this is easy to lose a day to.
+
+Scaling out is fine once that state moves to something shared - Render offers
+managed Redis, which suits all four. Until then, keep the instance count at one
+regardless of plan.
+
+## Data proxy
+
+Devices hold no provider API keys. Shipping credentials inside an SD card image
+would give every customer working keys, which provider terms prohibit, so a
+clock authenticates with its own device token and the API makes the upstream
+call on its behalf:
+
+- `GET /api/devices/{device_uid}/data/weather` - OpenWeather current conditions
+- `GET /api/devices/{device_uid}/data/forecast` - OpenWeather forecast
+- `GET /api/devices/{device_uid}/data/flight?number=AC57` - flight record
+
+Weather is a passthrough of the provider payload. Flight is normalised to the
+subset of fields the widget reads, so changing flight provider is a change here
+rather than a firmware update on every clock.
+
+Keys come from `OPENWEATHER_API_KEY` and `AVIATIONSTACK_API_KEY` in the service
+environment, set in the Render dashboard. Responses are cached, so upstream
+usage scales with the number of distinct queries rather than the number of
+clocks: fifty clocks tracking one flight cost one upstream request. Per-device
+hourly limits bound what a single misbehaving clock can spend.
+
+A clock that has a local API key configured calls the provider directly and
+ignores the proxy, which keeps developer units and users who bring their own key
+working unchanged.
+
 ## Pi Runtime Settings
 
 These settings are optional and runtime-editable through the existing local API.

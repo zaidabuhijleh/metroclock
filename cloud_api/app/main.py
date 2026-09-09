@@ -35,6 +35,7 @@ from app.schemas import (
 )
 from app.security import generate_device_token, generate_pairing_token, hash_device_token
 from app.supabase_client import get_supabase
+from app import upstream
 
 
 app = FastAPI(title="MetroClock Cloud API")
@@ -1132,6 +1133,118 @@ def get_device_preview(
             "X-MetroClock-Preview-Updated-At": frame.updated_at,
         },
     )
+
+
+# --------------------------------------------------------------------------
+# Data proxy.
+#
+# Devices have no provider API keys: shipping credentials inside an SD card
+# image would hand every customer working keys, which provider terms prohibit.
+# A clock authenticates with its own device token and this service makes the
+# upstream call, so keys stay here and can be rotated without touching a device.
+# --------------------------------------------------------------------------
+
+# Per device, per hour. A clock polls current weather every 10 minutes and the
+# forecast every 30, so these leave generous headroom while still bounding what
+# one misbehaving device can spend of the shared quota.
+_WEATHER_RATE_PER_HOUR = 30
+_FORECAST_RATE_PER_HOUR = 12
+_FLIGHT_RATE_PER_HOUR = 12
+
+_WEATHER_TTL_SECONDS = 300
+_FORECAST_TTL_SECONDS = 900
+_FLIGHT_TTL_SECONDS = 240
+
+
+def _weather_query(
+    zip_code: str | None,
+    country: str | None,
+    city_id: str | None,
+    units: str,
+) -> dict[str, str]:
+    unit = (units or "metric").strip().lower()
+    if unit not in {"metric", "imperial", "standard"}:
+        unit = "metric"
+    query: dict[str, str] = {"units": unit}
+    if zip_code and zip_code.strip():
+        country_code = (country or "US").strip().upper() or "US"
+        query["zip"] = f"{zip_code.strip()},{country_code}"
+    elif city_id and city_id.strip():
+        query["id"] = city_id.strip()
+    else:
+        raise HTTPException(status_code=400, detail="Provide zip or city_id")
+    return query
+
+
+def _proxy_weather(
+    endpoint: str,
+    device: dict[str, Any],
+    query: dict[str, str],
+    limit: int,
+    ttl: float,
+):
+    if not upstream.allow_request(str(device["id"]), endpoint, limit):
+        raise HTTPException(status_code=429, detail="Too many requests for this device")
+    try:
+        return upstream.openweather(
+            endpoint, get_settings().openweather_api_key, query, ttl
+        )
+    except upstream.UpstreamError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@app.get("/api/devices/{device_uid}/data/weather")
+def device_weather(
+    device_uid: str,
+    zip: str | None = None,
+    country: str | None = None,
+    city_id: str | None = None,
+    units: str = "metric",
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    device = _authenticate_device(device_uid, authorization, supabase)
+    query = _weather_query(zip, country, city_id, units)
+    return _proxy_weather("weather", device, query, _WEATHER_RATE_PER_HOUR, _WEATHER_TTL_SECONDS)
+
+
+@app.get("/api/devices/{device_uid}/data/forecast")
+def device_forecast(
+    device_uid: str,
+    zip: str | None = None,
+    country: str | None = None,
+    city_id: str | None = None,
+    units: str = "metric",
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    device = _authenticate_device(device_uid, authorization, supabase)
+    query = _weather_query(zip, country, city_id, units)
+    return _proxy_weather("forecast", device, query, _FORECAST_RATE_PER_HOUR, _FORECAST_TTL_SECONDS)
+
+
+@app.get("/api/devices/{device_uid}/data/flight")
+def device_flight(
+    device_uid: str,
+    number: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    device = _authenticate_device(device_uid, authorization, supabase)
+    flight_number = (number or "").strip().upper()
+    if not flight_number or len(flight_number) > 10 or not flight_number.isalnum():
+        raise HTTPException(status_code=400, detail="Invalid flight number")
+    if not upstream.allow_request(str(device["id"]), "flight", _FLIGHT_RATE_PER_HOUR):
+        raise HTTPException(status_code=429, detail="Too many requests for this device")
+    try:
+        record = upstream.flight_by_number(
+            flight_number, get_settings().aviationstack_api_key, _FLIGHT_TTL_SECONDS
+        )
+    except upstream.UpstreamError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    # "found: false" is a real answer, not an error: the flight may simply not
+    # operate today. The device uses its normal schedule rather than a backoff.
+    return {"found": record is not None, "data": record}
 
 
 @app.get("/api/devices/{device_uid}/commands", response_model=CommandListResponse)
