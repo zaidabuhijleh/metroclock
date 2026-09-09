@@ -83,8 +83,36 @@ Primary device status payload. Includes:
 - `POST /api/weather/preview`
 - `POST /api/ambient/scene`
 - `POST /api/wifi/connect`
+- `POST /api/wifi/switch`
 - `POST /api/restart`
 - `POST /api/reboot`
+- `POST /api/shutdown`
+- `POST /api/factory-reset`
+- `POST /api/display/sleep`
+
+### Wi-Fi
+
+`POST /api/wifi/connect` is the onboarding path: on failure it falls back to the
+setup hotspot, which is right when there is no working network to lose.
+
+`POST /api/wifi/switch` is for a clock that is already on a network. Body
+`{"ssid": "...", "password": "..."}`. On failure it rejoins the previous network
+and only reaches the hotspot if that fails too. Returns the SSID it will fall
+back to. `400` without an ssid, `503` if the Wi-Fi manager is unavailable.
+
+### Power and lifecycle
+
+- `POST /api/restart` restarts the clock service only.
+- `POST /api/reboot` reboots the device.
+- `POST /api/shutdown` powers it off. Only physical access brings it back.
+- `POST /api/factory-reset` requires body `{"confirm": true}`, else `400`. Wipes
+  settings, deregisters from the account, forgets Wi-Fi, takes a new device id,
+  reboots.
+- `POST /api/display/sleep` body `{"asleep": true|false}`. Stops rendering; the
+  device stays reachable.
+
+The last four are scheduled a few seconds out so the response is sent before the
+device goes away. Only one may be pending: a second returns `409`.
 
 If token auth is enabled and token is missing/invalid, responses return:
 

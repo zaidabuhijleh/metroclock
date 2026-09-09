@@ -190,6 +190,14 @@ class ClockWidget(Widget):
         "vertical_split_focus",
         "vertical_split_focus_top",
     )
+    # These caches are keyed on rendered text — stock prices, arrival times,
+    # scores — so every new value adds an entry that is never reused. On a clock
+    # that runs for months without restarting they grow without bound. Scroll
+    # strips are full RGB images, so that one is capped tighter.
+    MAX_RENDERED_CLOCK_FACE_CACHE = 32
+    MAX_TEXT_FONT_FIT_CACHE = 256
+    MAX_SCROLL_STRIP_CACHE = 32
+
     CLOCK_WIDGET_GRID_WIDTH = 6
     CLOCK_WIDGET_GRID_HEIGHT = 3
     VERTICAL_SIDE_WIDTH_UNITS = 3.0
@@ -356,6 +364,18 @@ class ClockWidget(Widget):
         self._widget_font_candidates_cache = tuple(fonts)
         return self._widget_font_candidates_cache
 
+    @staticmethod
+    def _store_bounded(cache, key, value, limit):
+        """Insert into a dict cache with a FIFO cap, evicting the oldest entry.
+
+        Dicts preserve insertion order, so popping the first key drops the
+        least recently inserted entry.
+        """
+        if len(cache) >= limit:
+            cache.pop(next(iter(cache)), None)
+        cache[key] = value
+        return value
+
     def _font_for_box(self, draw, text, max_width, max_height, *, prefer_width_fit=True):
         text = str(text or "")
         max_width = max(1, int(max_width))
@@ -371,8 +391,9 @@ class ClockWidget(Widget):
             left, top, width, height = self._font_text_metrics(draw, text or "0", font)
             if height <= max_height and (not prefer_width_fit or width <= max_width):
                 selected = font
-        self._text_font_fit_cache[cache_key] = selected
-        return selected
+        return self._store_bounded(
+            self._text_font_fit_cache, cache_key, selected, self.MAX_TEXT_FONT_FIT_CACHE
+        )
 
     def _draw_text_box(self, draw, box, text, fill, *, align="center", valign="center", ellipsis="..."):
         x, y, w, h = box
@@ -881,9 +902,12 @@ class ClockWidget(Widget):
             except Exception:
                 d.text((1, 1), self._time_text(False), font=self.font_small, fill=theme.primary)
 
-        if len(self._rendered_clock_face_cache) >= 32:
-            self._rendered_clock_face_cache.pop(next(iter(self._rendered_clock_face_cache)), None)
-        self._rendered_clock_face_cache[cache_key] = img.copy()
+        self._store_bounded(
+            self._rendered_clock_face_cache,
+            cache_key,
+            img.copy(),
+            self.MAX_RENDERED_CLOCK_FACE_CACHE,
+        )
         return img
 
     def _clock_face_render_cache_key(self, w, h, variant, theme):
@@ -1468,7 +1492,9 @@ class ClockWidget(Widget):
             strip = Image.new("RGB", (max(1, text_w), h), self.COLOR_BG)
             strip_draw = ImageDraw.Draw(strip)
             strip_draw.text((-left, y_text), txt, font=font, fill=color)
-            self._scroll_text_render_cache[render_key] = strip
+            self._store_bounded(
+                self._scroll_text_render_cache, render_key, strip, self.MAX_SCROLL_STRIP_CACHE
+            )
 
         cycle = strip.width + gap
         offset = self._scroll_offsets.get(key, 0.0)

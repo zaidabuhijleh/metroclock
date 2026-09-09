@@ -13,6 +13,7 @@ import web_server
 from core.boot_splash import render_boot_splash
 from core.display import Display
 from core.modes import DEFAULT_MODE_CATALOG, ModeCatalog
+from core.power import display_should_sleep
 from core.status_frame import render_status_frame
 from core.widget import Widget
 from widgets.ambient import AmbientWidget
@@ -27,12 +28,13 @@ from widgets.sports import SportsWidget
 from widgets.stocks import StocksWidget
 from widgets.weather import WeatherWidget
 
+# How often a sleeping clock re-checks whether it has been woken. Slow on
+# purpose: this interval is the entire CPU cost of a sleeping display.
+DISPLAY_SLEEP_TICK_SECONDS = 0.25
+
 
 class RuntimeStateProvider(Protocol):
     def get_display_mode(self) -> str:
-        ...
-
-    def get_brightness(self) -> int:
         ...
 
 
@@ -41,6 +43,8 @@ class DisplayHardwareProfile:
     width: int
     height: int
     slowdown: int
+    # Panel brightness is a build-time hardware characteristic, not a user
+    # setting: it is applied once when the matrix is constructed.
     brightness: int
 
 
@@ -102,29 +106,40 @@ class DisplayManager:
         self._active_pwm_bits = target_pwm_bits
         print(f"Display mode={mode}, pwm_bits={target_pwm_bits}", flush=True)
 
-    def present(self, image, brightness: int):
+    def present(self, image):
         if self._display is None:
             raise RuntimeError("Display has not been initialized")
-        self._display.set_brightness(brightness)
         self._display.draw_image(image)
         self._display.push()
+
+    def present_blank(self, mode: str = "clock"):
+        """Push an all-black frame to the panel.
+
+        Display.clear() only clears the offscreen canvas, which this code never
+        swaps in, so the panel would go on showing the last frame. Blanking has
+        to travel the same path as any other frame.
+        """
+        self.ensure_mode(mode)
+        frame = Image.new("RGB", (self._hardware.width, self._hardware.height), (0, 0, 0))
+        self.present(frame)
+        return frame
 
     def status_frame(self, lines):
         return render_status_frame(self._hardware.width, self._hardware.height, lines)
 
-    def present_status(self, lines, brightness: int, mode: str = "setup"):
+    def present_status(self, lines, mode: str = "setup"):
         self.ensure_mode(mode)
         frame = self.status_frame(lines)
-        self.present(frame, brightness)
+        self.present(frame)
         return frame
 
     def boot_splash_frame(self):
         return render_boot_splash(self._hardware.width, self._hardware.height)
 
-    def present_boot_splash(self, brightness: int, mode: str = "setup"):
+    def present_boot_splash(self, mode: str = "setup"):
         self.ensure_mode(mode)
         frame = self.boot_splash_frame()
-        self.present(frame, brightness)
+        self.present(frame)
         return frame
 
 
@@ -224,6 +239,8 @@ class MetroClockApp:
         self._last_presented_frame = None
         self._displayed_mode = None
         self._crossfade_excluded_modes = {"metro", "stocks"}
+        self._next_frame_at = None
+        self._display_asleep = False
 
     @classmethod
     def build_default(cls) -> "MetroClockApp":
@@ -236,7 +253,7 @@ class MetroClockApp:
         display = DisplayManager(hardware=hardware)
         boot_splash_started_at = None
         try:
-            frame = display.present_boot_splash(hardware.brightness)
+            frame = display.present_boot_splash()
             web_server.set_latest_frame(frame)
             boot_splash_started_at = time.monotonic()
         except Exception as exc:
@@ -291,6 +308,11 @@ class MetroClockApp:
     def _tick(self):
         mode = "unknown"
         try:
+            if display_should_sleep():
+                self._tick_display_asleep()
+                return
+            if self._display_asleep:
+                self._wake_display()
             mode = self._state_provider.get_display_mode()
             if self._wifi_setup_manager is not None and self._wifi_setup_manager.should_show_setup_message():
                 mode = "setup"
@@ -304,26 +326,72 @@ class MetroClockApp:
             rendered_at = time.perf_counter()
             self._display.ensure_mode(mode)
             ensured_at = time.perf_counter()
-            brightness = self._state_provider.get_brightness()
-            self._present_frame(mode, frame, brightness)
+            self._present_frame(mode, frame)
             presented_at = time.perf_counter()
             web_server.set_latest_frame(frame)
             self._log_perf_if_needed(mode, tick_start, ensured_at, rendered_at, presented_at)
-            time.sleep(self._loop_delay)
+            self._sleep_until_next_frame()
         except Exception as exc:
             print(f"Render loop error ({mode}): {exc}", flush=True)
             traceback.print_exc()
             self._present_error_frame(mode, exc)
+            self._next_frame_at = None  # resync after an error pause
             time.sleep(self._error_delay)
 
-    def _present_frame(self, mode: str, frame, brightness: int):
+    def _tick_display_asleep(self):
+        """Hold the panel dark without leaving the render loop.
+
+        Only rendering stops. The web server and cloud agent run on their own
+        threads, so a sleeping clock stays reachable and can be woken again -
+        without that, sleep would be indistinguishable from a dead device.
+        Ticking slowly is what actually saves the CPU: a black frame pushed at
+        50fps costs exactly what a bright one does.
+        """
+        if not self._display_asleep:
+            frame = self._display.present_blank()
+            web_server.set_latest_frame(frame)
+            self._display_asleep = True
+            print("Display asleep", flush=True)
+        time.sleep(DISPLAY_SLEEP_TICK_SECONDS)
+
+    def _wake_display(self):
+        self._display_asleep = False
+        # Both are stale after an arbitrarily long sleep: frame pacing would try
+        # to catch up on every missed frame at once, and a crossfade would blend
+        # out of something the user last saw hours ago.
+        self._next_frame_at = None
+        self._last_presented_frame = None
+        print("Display awake", flush=True)
+
+    def _sleep_until_next_frame(self):
+        """Sleep to a deadline rather than for a fixed amount.
+
+        A flat sleep made the frame period `work + delay`, so the frame rate
+        tracked whatever the widget had just done — 49fps in clock mode, 45 in
+        clock_widget, less under load from other threads. Scrolling advances a
+        fixed number of pixels per frame (see core/scroll.py), so text visibly
+        moved at different speeds in different modes.
+        """
+        now = time.monotonic()
+        target = (self._next_frame_at if self._next_frame_at is not None else now) + self._loop_delay
+        remaining = target - now
+        if remaining > 0:
+            time.sleep(remaining)
+            self._next_frame_at = target
+        else:
+            # Overran the budget — a crossfade, or an expensive ambient frame.
+            # Resync instead of accumulating debt and then running flat out to
+            # repay it, which would make motion lurch.
+            self._next_frame_at = now
+
+    def _present_frame(self, mode: str, frame):
         previous_frame = self._last_presented_frame
         mode_changed = self._displayed_mode is not None and mode != self._displayed_mode
         should_crossfade = mode_changed and mode not in self._crossfade_excluded_modes
         if should_crossfade and self._can_crossfade(previous_frame, frame):
-            self._crossfade(previous_frame, frame, brightness)
+            self._crossfade(previous_frame, frame)
         else:
-            self._display.present(frame, brightness)
+            self._display.present(frame)
 
         try:
             self._last_presented_frame = frame.copy()
@@ -339,7 +407,7 @@ class MetroClockApp:
             and previous_frame.size == next_frame.size
         )
 
-    def _crossfade(self, previous_frame, next_frame, brightness: int):
+    def _crossfade(self, previous_frame, next_frame):
         previous = previous_frame.convert("RGB")
         next_image = next_frame.convert("RGB")
         steps = 5
@@ -348,7 +416,7 @@ class MetroClockApp:
         for step in range(1, steps + 1):
             alpha = step / steps
             blended = Image.blend(previous, next_image, alpha)
-            self._display.present(blended, brightness)
+            self._display.present(blended)
             if step < steps:
                 time.sleep(delay)
 
@@ -361,20 +429,12 @@ class MetroClockApp:
         try:
             frame = self._display.present_status(
                 ("RENDER ERR", str(mode or "UNKNOWN"), str(exc) or type(exc).__name__),
-                self._fallback_brightness(),
             )
             web_server.set_latest_frame(frame)
             self._last_error_frame_at = now
             self._last_error_signature = signature
         except Exception as status_exc:
             print(f"Error status frame failed: {status_exc}", flush=True)
-
-    @staticmethod
-    def _fallback_brightness() -> int:
-        try:
-            return int(web_server.get_brightness())
-        except Exception:
-            return int(getattr(config, "MATRIX_BRIGHTNESS", 100))
 
     @staticmethod
     def _should_show_pairing_message() -> bool:

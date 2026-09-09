@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import config
 import config_manager
+from core import power
 from core.modes import DEFAULT_MODE_CATALOG
 from flask import Flask, Response, jsonify, request, send_from_directory
 from scenes import SCENE_KEYS
@@ -39,6 +40,10 @@ WRITE_ENDPOINTS = {
     "/api/cloud/disable",
     "/api/restart",
     "/api/reboot",
+    "/api/shutdown",
+    "/api/factory-reset",
+    "/api/display/sleep",
+    "/api/wifi/switch",
 }
 
 app = Flask(__name__, static_folder="web", static_url_path="")
@@ -61,9 +66,6 @@ class RuntimeState:
 
         self._pomodoro_lock = threading.Lock()
         self._pomodoro_state = None
-
-        self._brightness_lock = threading.Lock()
-        self._brightness = None
 
         self._metro_status_lock = threading.Lock()
         self._metro_last_success_ts = None
@@ -139,15 +141,15 @@ class RuntimeState:
             except Exception:
                 pass
 
-            for filename in ("version.txt", "VERSION"):
-                try:
-                    with open(os.path.join(app_dir, filename), "r", encoding="utf-8") as f:
-                        file_ver = f.read().strip()
-                    if file_ver:
-                        self._app_version = file_ver
-                        return self._app_version
-                except Exception:
-                    pass
+            # version.txt is what release-please ("simple" strategy) maintains.
+            try:
+                with open(os.path.join(app_dir, "version.txt"), "r", encoding="utf-8") as f:
+                    file_ver = f.read().strip()
+                if file_ver:
+                    self._app_version = file_ver
+                    return self._app_version
+            except Exception:
+                pass
 
             self._app_version = "dev"
             return self._app_version
@@ -161,16 +163,6 @@ class RuntimeState:
     def set_display_mode(self, mode: str):
         with self._mode_lock:
             self._display_mode = mode
-
-    def get_brightness(self):
-        with self._brightness_lock:
-            if self._brightness is None:
-                self._brightness = getattr(config, "MATRIX_BRIGHTNESS", 30)
-            return self._brightness
-
-    def set_brightness(self, brightness):
-        with self._brightness_lock:
-            self._brightness = max(1, min(100, int(brightness)))
 
     def get_metro_last_success_ts(self):
         with self._metro_status_lock:
@@ -528,6 +520,10 @@ def set_wifi_setup_manager(manager):
     _wifi_setup_manager = manager
 
 
+def get_wifi_setup_manager():
+    return _wifi_setup_manager
+
+
 def get_wifi_setup_status():
     if _wifi_setup_manager is None:
         return {
@@ -544,14 +540,6 @@ def _wifi_interface():
     status = get_wifi_setup_status()
     interface = str(status.get("interface") or "").strip()
     return interface or str(getattr(config, "WIFI_INTERFACE", "wlan0") or "wlan0")
-
-
-def get_brightness():
-    return _runtime_state.get_brightness()
-
-
-def set_brightness(brightness):
-    _runtime_state.set_brightness(brightness)
 
 
 def get_metro_last_success_ts():
@@ -713,42 +701,6 @@ def preview_pngstream():
     )
 
 
-@app.route("/preview.mjpg")
-def preview_mjpg():
-    boundary = "frame"
-    target_fps = 30
-    target_interval = 1.0 / target_fps
-    jpeg_quality = 85
-
-    def generate():
-        while True:
-            frame = get_latest_frame()
-            if frame is None:
-                time.sleep(target_interval)
-                continue
-            buf = io.BytesIO()
-            try:
-                frame.convert("RGB").save(buf, format="JPEG", quality=jpeg_quality)
-            except Exception:
-                time.sleep(target_interval)
-                continue
-            jpeg = buf.getvalue()
-            yield (
-                b"--" + boundary.encode() + b"\r\n"
-                + b"Content-Type: image/jpeg\r\n"
-                + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
-                + jpeg
-                + b"\r\n"
-            )
-            time.sleep(target_interval)
-
-    return Response(
-        generate(),
-        mimetype=f"multipart/x-mixed-replace; boundary={boundary}",
-        headers={"Cache-Control": "no-store", "Connection": "close"},
-    )
-
-
 @app.route("/api/clock/styles")
 def api_clock_styles():
     return jsonify({
@@ -823,8 +775,6 @@ def api_settings_post():
         changed = config_manager.write_config(data)
         if "DISPLAY_MODE" in changed:
             set_display_mode(changed["DISPLAY_MODE"])
-        if "MATRIX_BRIGHTNESS" in changed:
-            set_brightness(changed["MATRIX_BRIGHTNESS"])
         if "AMBIENT_SCENE" in changed:
             set_ambient_scene(changed["AMBIENT_SCENE"])
         return jsonify({"ok": True, "changed": list(changed.keys())})
@@ -1030,8 +980,43 @@ def api_cloud_disable():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+@app.route("/api/wifi/switch", methods=["POST"])
+def api_wifi_switch():
+    """Move an already-configured clock to a different network.
+
+    Separate from /api/wifi/connect on purpose. Connect is the onboarding path
+    and falls back to the setup hotspot, which is correct when there is no
+    working network to lose. This one keeps the current network as a fallback.
+    """
+    try:
+        manager = get_wifi_setup_manager()
+        if manager is None:
+            return jsonify({"ok": False, "error": "WiFi setup manager unavailable"}), 503
+        payload = request.get_json(silent=True) or {}
+        ssid = str(payload.get("ssid") or "").strip()
+        if not ssid:
+            return jsonify({"ok": False, "error": "ssid required"}), 400
+        return jsonify(manager.switch_network(ssid, str(payload.get("password") or "")))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/display/sleep", methods=["POST"])
+def api_display_sleep():
+    """Put the panel to sleep or wake it. The device stays online either way."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        asleep = payload.get("asleep", True)
+        if isinstance(asleep, str):
+            asleep = asleep.strip().lower() not in {"false", "0", "no", "off"}
+        return jsonify(power.set_display_sleep(bool(asleep)))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 @app.route("/api/restart", methods=["POST"])
 def api_restart():
+    """Restart the clock service only. Kept separate from a full reboot."""
     try:
         subprocess.Popen(["systemctl", "restart", "metroclock"])
         return jsonify({"ok": True})
@@ -1039,11 +1024,50 @@ def api_restart():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+def _schedule_power_action(action: str):
+    """Schedule a power action, mapping a refusal to 409 rather than 200.
+
+    schedule() refuses when another action is already pending; without this the
+    caller would see a success status carrying a failure body.
+    """
+    result = power.schedule(action)
+    return jsonify(result), (200 if result.get("ok") else 409)
+
+
 @app.route("/api/reboot", methods=["POST"])
 def api_reboot():
     try:
-        subprocess.Popen(["reboot"])
-        return jsonify({"ok": True})
+        return _schedule_power_action("reboot")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/shutdown", methods=["POST"])
+def api_shutdown():
+    """Power the device off. Recovering needs physical access to the plug."""
+    try:
+        return _schedule_power_action("shutdown")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/factory-reset", methods=["POST"])
+def api_factory_reset():
+    """Wipe settings, unpair, forget Wi-Fi, and take a new device identity.
+
+    Requires an explicit confirm flag. Every other endpoint here is recoverable
+    by sending the opposite request; this one is not, and it is one curl away
+    from anyone already on the local network.
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        if payload.get("confirm") is not True:
+            return jsonify({
+                "ok": False,
+                "error": "Refusing to factory reset without confirmation",
+                "hint": 'POST {"confirm": true} to proceed. This cannot be undone.',
+            }), 400
+        return _schedule_power_action("factory_reset")
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 

@@ -123,6 +123,106 @@ class WifiSetupManager:
             daemon=True,
         ).start()
 
+    def switch_network(self, ssid: str, password: str = "", delay_seconds: float = 0.0):
+        """Change networks after setup, keeping the current one as a fallback.
+
+        connect_to_network drops to the setup hotspot when a join fails, which
+        is right during onboarding because there is nothing to fall back to.
+        After setup it is wrong: one mistyped password would take a working
+        clock off a good network and strand it on a hotspot that only helps
+        somebody standing next to it.
+
+        ``delay_seconds`` exists for the cloud path, which has to acknowledge
+        the command before the radio drops.
+        """
+        ssid = str(ssid or "").strip()
+        if not ssid:
+            raise ValueError("SSID required")
+
+        previous = self._current_ssid()
+        threading.Thread(
+            target=self._switch_network,
+            args=(ssid, str(password or ""), previous, float(delay_seconds)),
+            name="wifi-switch",
+            daemon=True,
+        ).start()
+        return {"ok": True, "switching_to": ssid, "fallback": previous}
+
+    def _switch_network(self, ssid: str, password: str, previous: str, delay_seconds: float):
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+        # Changing the password of the network the clock is already on is the
+        # dangerous case: _join_network deletes the existing profile before it
+        # tries, so a wrong new password destroys the only working credential
+        # and there is nothing left to fall back to. Keep the old secret first.
+        previous_secret = self._saved_psk_for(ssid) if previous and previous == ssid else ""
+        try:
+            with self._wifi_recovery_lock(), self._transition_lock:
+                if not self._use_network_manager():
+                    self._write_wpa_supplicant_network(ssid, password)
+                config_manager.write_config({"SETUP_MODE": False})
+
+            joined, detail = self._join_network(ssid, password)
+            if joined:
+                return
+
+            if self._fall_back_to(previous, ssid, detail, previous_secret):
+                return
+            self._start_hotspot(detail or f"Could not join {ssid}")
+        except Exception as exc:
+            if self._fall_back_to(previous, ssid, str(exc), previous_secret):
+                return
+            self._start_hotspot(f"WiFi switch failed: {exc}")
+
+    def _fall_back_to(self, previous: str, failed_ssid: str, detail: str,
+                      previous_secret: str = "") -> bool:
+        """Return to the network the clock was on before a failed switch."""
+        if not previous:
+            return False
+
+        if previous == failed_ssid:
+            # Same network, new password, attempt failed. The working profile
+            # was deleted before the attempt, so restoring means rebuilding it
+            # from the secret captured beforehand rather than rejoining a saved
+            # profile that no longer exists.
+            if not previous_secret:
+                return False
+            joined, _ = self._join_network(previous, previous_secret)
+            if not joined:
+                return False
+            self._set_status(last_error=f"{detail}; kept the previous password")
+            print(f"WiFi password change for {failed_ssid} failed, kept the old one", flush=True)
+            return True
+
+        # Discard the failed profile first. Left in place it stays a candidate
+        # for autoconnect and can keep stealing the radio from the good network.
+        self._discard_profile(failed_ssid)
+
+        if not self._try_saved_wifi(
+            f"Rejoining {previous}",
+            restart_client=True,
+            stop_hotspot=True,
+            fallback_ssid=previous,
+        ):
+            return False
+
+        self._set_status(last_error=f"{detail}; stayed on {previous}")
+        print(f"WiFi switch to {failed_ssid} failed, stayed on {previous}", flush=True)
+        return True
+
+    def _discard_profile(self, ssid: str):
+        if self._use_network_manager():
+            self._delete_network_manager_profiles_for(ssid)
+            return
+        try:
+            with open(WPA_SUPPLICANT_CONF, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            return
+        cleaned = self._remove_network_for_ssid(content, ssid).strip() + "\n"
+        self._write_file(WPA_SUPPLICANT_CONF, cleaned, mode=0o600)
+
     def _run(self):
         if not self.enabled:
             self._set_status(enabled=False, checking=False, reason="WiFi setup fallback disabled")
@@ -179,17 +279,72 @@ class WifiSetupManager:
     def _connect_to_network(self, ssid: str, password: str):
         try:
             with self._wifi_recovery_lock(), self._transition_lock:
-                self._write_wpa_supplicant_network(ssid, password)
+                # wpa_supplicant.conf is only read when wpa_supplicant owns the
+                # radio. Under NetworkManager it is dead weight that also parks
+                # the PSK in plaintext, so skip it entirely there.
+                if not self._use_network_manager():
+                    self._write_wpa_supplicant_network(ssid, password)
                 config_manager.write_config({"SETUP_MODE": False})
-            if not self._try_saved_wifi(
-                f"Connecting to {ssid}",
-                restart_client=True,
-                stop_hotspot=True,
-                fallback_ssid=ssid,
-            ):
-                self._start_hotspot("Could not join WiFi")
+
+            # NOTE: the recovery flock must be released before _join_network or
+            # _start_hotspot, which take it themselves. flock from a second fd
+            # in the same process would deadlock.
+            joined, detail = self._join_network(ssid, password)
+            if not joined:
+                self._start_hotspot(detail or f"Could not join {ssid}")
         except Exception as exc:
             self._start_hotspot(f"WiFi connect failed: {exc}")
+
+    def _join_network(self, ssid: str, password: str):
+        """Join one specific network and confirm we landed on *that* network.
+
+        Returns ``(ok, detail)``. The confirmation matters: the previous code
+        only asked "do I have an IP?", so when the join silently failed and the
+        radio stayed on a previously configured network, it reported success.
+        """
+        with self._wifi_recovery_lock(), self._transition_lock:
+            self._set_status(
+                active=False,
+                connected=False,
+                checking=True,
+                reason=f"Connecting to {ssid}",
+                ssid=ssid,
+                ip="",
+                last_error="",
+            )
+            self._stop_hotspot()
+
+            if self._use_network_manager():
+                error = self._activate_network_manager_profile(ssid, password)
+                if error:
+                    self._set_status(checking=False, last_error=error)
+                    return False, f"Could not join {ssid}"
+            else:
+                self._restart_wifi_client()
+
+            if not self._wait_for_connection(self.connect_timeout):
+                self._set_status(
+                    active=False,
+                    connected=False,
+                    checking=False,
+                    reason=f"Connecting to {ssid}",
+                    last_error=f"Timed out joining {ssid}",
+                )
+                return False, f"Could not join {ssid}"
+
+            actual = self._current_ssid()
+            if actual and actual != ssid:
+                self._set_status(
+                    active=False,
+                    connected=False,
+                    checking=False,
+                    reason=f"Connecting to {ssid}",
+                    last_error=f"Joined {actual}, not {ssid}",
+                )
+                return False, f"Wrong network: {actual}"
+
+            self._mark_connected(fallback_ssid=ssid)
+            return True, ""
 
     def _try_saved_wifi(self, reason: str, restart_client: bool, stop_hotspot: bool, fallback_ssid: str = "") -> bool:
         with self._wifi_recovery_lock(), self._transition_lock:
@@ -283,7 +438,124 @@ class WifiSetupManager:
         self._run_command(["systemctl", "stop", "hostapd"], timeout=8)
         self._run_command(["systemctl", "stop", "dnsmasq"], timeout=8)
 
+    def _use_network_manager(self) -> bool:
+        """True when NetworkManager owns the radio (Raspberry Pi OS bookworm+)."""
+        if self._resolve_command("nmcli") is None:
+            return False
+        state = self._run_command(
+            ["systemctl", "is-active", "NetworkManager"], timeout=4, capture=True
+        ).strip()
+        return state == "active"
+
+    def _activate_network_manager_profile(self, ssid: str, password: str) -> str:
+        """Create and activate an NM profile for ``ssid``.
+
+        NetworkManager only joins networks it has a profile for, so this is the
+        step that actually connects. Returns "" on success or a short error.
+        """
+        # The hotspot marks the interface unmanaged and turns the radio over to
+        # hostapd; hand it back before asking NM to do anything.
+        self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
+        self._run_command(["nmcli", "radio", "wifi", "on"], timeout=8)
+
+        # A stale profile for this SSID (old password, different security) would
+        # be reused and fail, so start clean.
+        self._delete_network_manager_profiles_for(ssid)
+
+        # NM can only associate with an SSID present in its scan list, and the
+        # list is stale after hostapd has been holding the radio.
+        self._run_command(
+            ["nmcli", "device", "wifi", "rescan", "ifname", self.interface], timeout=20
+        )
+
+        args = ["nmcli", "--wait", str(self.connect_timeout), "device", "wifi", "connect", ssid]
+        if password:
+            args += ["password", password]
+        args += ["ifname", self.interface]
+
+        completed = self._run_command_result(args, timeout=self.connect_timeout + 15)
+        if completed is None:
+            # nmcli is known present here, so this is the command timing out.
+            return f"Timed out joining {ssid}"[:120]
+        if completed.returncode != 0:
+            # Never echo args here: they carry the PSK, and this string is
+            # surfaced through /api/status and the logs.
+            lines = [
+                line.strip()
+                for line in ((completed.stderr or "") + "\n" + (completed.stdout or "")).splitlines()
+                if line.strip()
+            ]
+            return (lines[-1] if lines else "nmcli connect failed")[:120]
+        return ""
+
+    def _network_manager_profiles_for(self, ssid: str) -> list:
+        """Names of NM profiles configured for ``ssid``."""
+        listing = self._run_command(
+            ["nmcli", "--escape", "no", "-t", "-f", "NAME,TYPE", "connection", "show"],
+            timeout=8,
+            capture=True,
+        )
+        names = []
+        for line in listing.splitlines():
+            # Profile names may contain ':', so split off the type from the right.
+            name, _, conn_type = line.rpartition(":")
+            if not name or conn_type != "802-11-wireless":
+                continue
+            configured = self._run_command(
+                ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", name],
+                timeout=8,
+                capture=True,
+            ).strip()
+            if configured == ssid:
+                names.append(name)
+        return names
+
+    def _delete_network_manager_profiles_for(self, ssid: str):
+        for name in self._network_manager_profiles_for(ssid):
+            self._run_command(["nmcli", "connection", "delete", name], timeout=8)
+
+    def _saved_psk_for(self, ssid: str) -> str:
+        """The stored secret for a saved network, or "" if there is none.
+
+        Only ever used to put back what was already on the device after a failed
+        password change. Never logged or reported through the status API.
+        """
+        if self._use_network_manager():
+            for name in self._network_manager_profiles_for(ssid):
+                secret = self._run_command(
+                    ["nmcli", "-s", "-g", "802-11-wireless-security.psk",
+                     "connection", "show", name],
+                    timeout=8,
+                    capture=True,
+                ).strip()
+                if secret:
+                    return secret
+            return ""
+
+        try:
+            with open(WPA_SUPPLICANT_CONF, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            return ""
+        for match in re.finditer(r"network=\{(.*?)\}", content, re.DOTALL):
+            body = match.group(1)
+            found = re.search(r'ssid="([^"]*)"', body)
+            if not found or found.group(1) != ssid:
+                continue
+            secret = re.search(r'psk="([^"]*)"', body)
+            return secret.group(1) if secret else ""
+        return ""
+
     def _restart_wifi_client(self):
+        if self._use_network_manager():
+            # NM runs its own wpa_supplicant over D-Bus. Restarting the
+            # wpa_supplicant@ unit or poking wpa_cli fights it, so just return
+            # the radio and let NM reconnect to a profile it already knows.
+            self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
+            self._run_command(["nmcli", "radio", "wifi", "on"], timeout=8)
+            self._run_command(["nmcli", "device", "connect", self.interface], timeout=20)
+            return
+
         self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
         self._run_command(["ip", "addr", "flush", "dev", self.interface], timeout=8)
         self._run_command(["ip", "link", "set", self.interface, "up"], timeout=8)
@@ -321,8 +593,7 @@ class WifiSetupManager:
                 ]
             )
         hostapd_lines.append("")
-        self._write_file(HOSTAPD_CONF, "\n".join(hostapd_lines))
-        os.chmod(HOSTAPD_CONF, 0o600)
+        self._write_file(HOSTAPD_CONF, "\n".join(hostapd_lines), mode=0o600)
         hotspot_prefix = self.hotspot_ip.rsplit(".", 1)[0]
         self._write_file(
             DNSMASQ_CONF,
@@ -366,7 +637,8 @@ class WifiSetupManager:
         else:
             lines.append("    key_mgmt=NONE")
         lines.extend(["    priority=10", "}", ""])
-        self._write_file(WPA_SUPPLICANT_CONF, cleaned + "\n\n" + "\n".join(lines))
+        # 0600 before the content lands: this file holds the network PSK in plaintext.
+        self._write_file(WPA_SUPPLICANT_CONF, cleaned + "\n\n" + "\n".join(lines), mode=0o600)
 
     def _remove_network_for_ssid(self, content: str, ssid: str) -> str:
         blocks = []
@@ -433,8 +705,24 @@ class WifiSetupManager:
         }
 
     def _current_ssid(self) -> str:
-        result = self._run_command(["iwgetid", self.interface, "-r"], timeout=4, capture=True)
-        return result.strip()
+        # iwgetid reads the kernel wireless extensions and is authoritative
+        # whenever it exists, including under NetworkManager.
+        if self._resolve_command("iwgetid") is not None:
+            return self._run_command(
+                ["iwgetid", self.interface, "-r"], timeout=4, capture=True
+            ).strip()
+        # wireless-tools is not installed on every image; ask NM instead. Only
+        # reached when iwgetid is absent, so polling does not pay for it.
+        listing = self._run_command(
+            ["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi", "list", "ifname", self.interface],
+            timeout=8,
+            capture=True,
+        )
+        for line in listing.splitlines():
+            active, _, ssid = line.partition(":")
+            if active.strip() == "yes":
+                return ssid.strip()
+        return ""
 
     def _interface_ipv4(self) -> str:
         result = self._run_command(["ip", "-4", "-o", "addr", "show", "dev", self.interface], timeout=4, capture=True)
@@ -469,6 +757,27 @@ class WifiSetupManager:
     def _require_command(self, command: str):
         if self._resolve_command(command) is None:
             raise RuntimeError(f"Missing required command: {command}")
+
+    def _run_command_result(self, args, timeout=8):
+        """Run a command and hand back the CompletedProcess, or None if missing.
+
+        Callers that need the exit code and stderr without _run_command's
+        exception message, which embeds argv — and argv can carry a PSK.
+        """
+        command = self._resolve_command(args[0])
+        if command is None:
+            return None
+        try:
+            return subprocess.run(
+                [command] + list(args[1:]),
+                check=False,
+                timeout=timeout,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except subprocess.TimeoutExpired:
+            return None
 
     def _run_command(self, args, timeout=8, capture=False, check=False):
         command = self._resolve_command(args[0])
@@ -507,10 +816,13 @@ class WifiSetupManager:
                 return candidate
         return None
 
-    def _write_file(self, path: str, content: str):
+    def _write_file(self, path: str, content: str, mode: int | None = None):
         tmp_path = path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
+        if mode is not None:
+            # Tighten before the rename so the secret is never briefly world-readable.
+            os.chmod(tmp_path, mode)
         os.replace(tmp_path, path)
 
     @contextlib.contextmanager

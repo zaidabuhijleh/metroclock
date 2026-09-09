@@ -1,224 +1,477 @@
+import threading
 import time
-import re
 from datetime import datetime
+
 import requests
-from PIL import Image, ImageDraw, ImageFont
-from core.widget import Widget
-from core import scroll
+from PIL import ImageDraw, ImageFont
+
 import config
+import config_manager
 import widgets.icons as icons
+from core import cloud_data
+from core.widget import Widget
+
 
 class FlightWidget(Widget):
+    """Tracks a single flight by IATA number.
+
+    Polling is event driven rather than periodic. AviationStack's free tier
+    allows very few requests per month, so the widget sleeps until the next
+    moment the answer can actually have changed - shortly before departure,
+    shortly before arrival - instead of waking on a fixed interval. Nothing on
+    screen changes mid-flight: the progress bar is interpolated locally from the
+    departure and arrival times.
+    """
+
+    TERMINAL_STATES = {"landed", "cancelled", "diverted", "incident"}
+
+    # Poll schedule, in seconds.
+    POLL_FAR_FROM_DEPARTURE = 6 * 3600
+    POLL_APPROACHING_LEAD = 2 * 3600      # wake this long before departure
+    POLL_NEAR_DEPARTURE = 30 * 60
+    POLL_AWAITING_TAKEOFF = 15 * 60       # departure time passed, still "scheduled"
+    POLL_ARRIVAL_LEAD = 30 * 60           # wake this long before arrival
+    POLL_NEAR_ARRIVAL = 15 * 60
+    POLL_AFTER_LANDING = 3 * 3600         # hold the result, then look for the next leg
+    POLL_NOT_FOUND = 6 * 3600
+    POLL_UNKNOWN = 3600
+
+    FAILURE_BACKOFF_SECONDS = 300
+    MAX_FAILURE_BACKOFF_SECONDS = 6 * 3600
+
+    # Circuit breaker, not a quota manager: an in-process counter cannot track a
+    # monthly allowance across restarts. It exists so that a logic bug can never
+    # burn the month's requests in a loop, which is what the previous version
+    # did - it refetched on every rendered frame whenever data was missing.
+    MAX_REQUESTS_PER_HOUR = 6
+
+    # Layout, four bands: identity + status, the time that matters, the progress
+    # rail, and the endpoints sitting under the ends of the rail they describe.
+    # One font throughout (spleen 5x8). The 4x6 face is unusable here: its N is
+    # two pixels different from its M in a three-column glyph, so EN ROUTE read
+    # as "EM ROUTE" and NOT FOUND as "MOT FOUMD" on the panel. Hierarchy comes
+    # from colour instead of size.
+    ROW_HEAD_Y = 0
+    ROW_TIME_Y = 8
+    RAIL_Y = 20
+    PLANE_TOP_Y = 17
+    ROW_ENDS_Y = 24
+    RAIL_X0 = 2
+    RAIL_X1 = 61
+    PLANE_W = 14
+    PLANE_H = 6
+
+    COLOR_GOLD = (255, 176, 32)
+    COLOR_TEXT = (235, 240, 255)
+    COLOR_DIM = (116, 138, 170)
+    COLOR_RAIL = (44, 52, 68)
+    COLOR_LIVE = (64, 220, 120)
+    COLOR_WARN = (255, 86, 86)
+    COLOR_COOL = (96, 176, 255)
+
     def __init__(self, width, height):
         super().__init__(width, height)
         self.data = None
-        self.status_text = "INITIALIZING"
-        self.next_fetch_time = 0
-        self._status_scroll_frame = 0
-        self._status_scroll_text = None
-        
-        self.COLOR_GOLD = (255, 180, 0)
-        self.COLOR_PURPLE = (180, 80, 255)
-        self.COLOR_WHITE = (255, 255, 255)
-        self.COLOR_GREY = (150, 150, 150)
+        self.status_text = "LOADING"
+        self._request_times = []
+        self._config_signature = None
+        self._last_config_reload = 0.0
+        self._last_log_at = 0.0
+        self._fetch_wake = threading.Event()
+        self._session = requests.Session()
 
         try:
             self.font = ImageFont.truetype(config.FONT_PATH_TALL, config.FONT_SIZE_TALL)
-        except:
+        except Exception:
             self.font = ImageFont.load_default()
+        self._worker = threading.Thread(target=self._fetch_worker, name="flight-fetch", daemon=True)
+        self._worker.start()
 
-    def _parse_api_time(self, time_str):
-        if not time_str: return None
-        try:
-            return datetime.fromisoformat(time_str.replace('Z', '+00:00')).timestamp()
-        except: return None
+    # ------------------------------------------------------------------ update
 
     def update(self):
+        """Lightweight: no HTTP here. Wake the worker when the flight changes."""
         now = time.time()
-        if self.data is None or now >= self.next_fetch_time:
-            self._fetch_flight_data()
+        with config_manager.CONFIG_LOCK:
+            if now - self._last_config_reload >= 1.0:
+                config_manager.reload_config()
+                self._last_config_reload = now
+            signature = self._current_config_signature()
 
-    def _fetch_flight_data(self):
+        if signature != self._config_signature:
+            self._config_signature = signature
+            self.data = None
+            self.status_text = "LOADING"
+            self._fetch_wake.set()
+
+    @staticmethod
+    def _current_config_signature():
+        return (
+            str(getattr(config, "FLIGHT_NUMBER", "") or "").strip().upper(),
+            str(getattr(config, "AVIATIONSTACK_API_KEY", "") or "").strip(),
+            # Without this, a clock that pairs during onboarding would sit on a
+            # placeholder for up to six hours before its next scheduled poll.
+            cloud_data.signature(),
+        )
+
+    # ---------------------------------------------------------------- fetching
+
+    def _fetch_worker(self):
+        failure_delay = self.FAILURE_BACKOFF_SECONDS
+        while True:
+            if self._fetch_once():
+                failure_delay = self.FAILURE_BACKOFF_SECONDS
+                delay = self._next_poll_delay()
+            else:
+                delay = failure_delay
+                failure_delay = min(self.MAX_FAILURE_BACKOFF_SECONDS, failure_delay * 2)
+            self._fetch_wake.wait(timeout=max(60.0, float(delay)))
+            self._fetch_wake.clear()
+
+    def _allow_request(self) -> bool:
+        now = time.time()
+        self._request_times = [t for t in self._request_times if now - t < 3600]
+        if len(self._request_times) >= self.MAX_REQUESTS_PER_HOUR:
+            return False
+        self._request_times.append(now)
+        return True
+
+    def _is_stale(self, request_signature) -> bool:
+        """True when the config moved on while this request was in flight.
+
+        Publishing anyway would put the previous flight back on the panel, and if
+        the follow-up fetch then failed it would stay there for the whole
+        backoff. Returns without treating it as a failure: the wake event is
+        already set, so the worker refetches immediately, and counting this as
+        a failure would inflate the backoff for something that did not fail.
+        """
+        # None means the render thread has not declared what it wants yet, so
+        # the first fetch of the session has nothing to conflict with.
+        if self._config_signature is None or request_signature == self._config_signature:
+            return False
+        self._log("Discarding a fetch whose config changed mid-flight")
+        return True
+
+    def _fetch_once(self) -> bool:
+        # Snapshot of the config this request is for; checked again before
+        # anything is published.
+        request_signature = self._current_config_signature()
+        api_key = str(getattr(config, "AVIATIONSTACK_API_KEY", "") or "").strip()
+        flight_number = str(getattr(config, "FLIGHT_NUMBER", "") or "").strip().upper()
+        if not flight_number:
+            self.status_text = "NO FLIGHT"
+            return False
+        if not self._allow_request():
+            self._log("Flight fetch skipped: hourly request cap reached")
+            return False
+
+        # A locally configured key wins; otherwise use the cloud proxy, which
+        # holds the key. A clock in the field has no credentials of its own.
+        if not api_key:
+            if not cloud_data.is_available():
+                self.status_text = "NOT PAIRED"
+                return False
+            return self._fetch_via_cloud(flight_number, request_signature)
+
         try:
-            params = {'access_key': config.AVIATIONSTACK_API_KEY, 'flight_iata': config.FLIGHT_NUMBER}
-            resp = requests.get("http://api.aviationstack.com/v1/flights", params=params, timeout=10)
-            if resp.status_code == 200:
-                res_json = resp.json()
-                print("JSON: "+ res_json)
-                if res_json.get('data') and len(res_json['data']) > 0:
-                    self.data = res_json['data'][0]
-                    self.status_text = None
-                    self._schedule_next_check()
-                else:
-                    self.status_text = "NOT FOUND"
-                    self.next_fetch_time = time.time() + 600 
-            else:
-                self.status_text = f"ERR {resp.status_code}"
-                self.next_fetch_time = time.time() + 300
-        except:
-            self.status_text = "CONN ERR"
-            self.next_fetch_time = time.time() + 300
+            response = self._session.get(
+                "https://api.aviationstack.com/v1/flights",
+                params={"access_key": api_key, "flight_iata": flight_number},
+                timeout=10,
+            )
+        except Exception as exc:
+            # Never the exception itself: requests puts the full URL, and so
+            # the access_key, into its error strings.
+            self._log(f"Flight API error: {type(exc).__name__}")
+            if self._is_stale(request_signature):
+                return True
+            self.status_text = "NO NETWORK"
+            return False
 
-    def _schedule_next_check(self):
-        status = self.data['flight_status']
+        if self._is_stale(request_signature):
+            return True
+
+        if response.status_code != 200:
+            self._log(f"Flight API status {response.status_code}")
+            self.status_text = f"ERR {response.status_code}"
+            return False
+
+        try:
+            payload = response.json()
+        except Exception:
+            self.status_text = "BAD DATA"
+            return False
+
+        # apilayer answers 200 with an error body for plan and quota problems,
+        # so a 200 is not on its own a success.
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if error:
+            code = str(error.get("code") or "error")
+            self._log(f"Flight API error: {error}")
+            self.status_text = code.replace("_", " ").upper()[:12]
+            return False
+
+        rows = payload.get("data") or []
+        if not rows:
+            # A valid answer: no such flight today. Use the normal schedule
+            # rather than the failure backoff.
+            self.data = None
+            self.status_text = "NOT FOUND"
+            return True
+
+        self.data = rows[0] if isinstance(rows[0], dict) else None
+        self.status_text = None if self.data else "BAD DATA"
+        return True
+
+    def _fetch_via_cloud(self, flight_number: str, request_signature=None) -> bool:
+        """Fetch through the cloud proxy, which returns an already-normalised record.
+
+        The payload is the subset of fields this widget reads, so swapping flight
+        provider is a change in the cloud service and not a firmware update here.
+        """
+        try:
+            payload = cloud_data.get("flight", {"number": flight_number})
+        except cloud_data.CloudDataError as exc:
+            self._log(f"Flight via cloud failed: {exc.reason}")
+            if self._is_stale(request_signature):
+                return True
+            self.status_text = exc.reason.upper()[:12]
+            return False
+
+        if self._is_stale(request_signature):
+            return True
+
+        if not isinstance(payload, dict):
+            self.status_text = "BAD DATA"
+            return False
+        if not payload.get("found"):
+            # A real answer, not a failure: use the normal schedule.
+            self.data = None
+            self.status_text = "NOT FOUND"
+            return True
+
+        record = payload.get("data")
+        self.data = record if isinstance(record, dict) else None
+        self.status_text = None if self.data else "BAD DATA"
+        return True
+
+    def _next_poll_delay(self) -> float:
+        if not self.data:
+            return self.POLL_NOT_FOUND
+
+        status = self._raw_status()
         now = time.time()
-        if status in ['scheduled', 'delayed']:
-            t_str = self.data['departure'].get('estimated') or self.data['departure'].get('scheduled')
-            takeoff_ts = self._parse_api_time(t_str)
-            self.next_fetch_time = (takeoff_ts or now) + 300 
-        elif status == 'active':
-            l_str = self.data['arrival'].get('estimated') or self.data['arrival'].get('scheduled')
-            landing_ts = self._parse_api_time(l_str)
-            self.next_fetch_time = (landing_ts or now) + 300 
-        else:
-            self.next_fetch_time = now + 43200
 
-    def _get_live_progress(self):
-        """Fixed math to prioritize estimated arrival for accurate tracking."""
-        if not self.data: return 0.05
-        status = self.data['flight_status']
-        if status == 'landed': return 1.0
-        if status != 'active': return 0.05
-        
-        # Priority on ESTIMATED for arrival to keep the plane position accurate
-        dep = self._parse_api_time(self.data['departure'].get('scheduled'))
-        arr = self._parse_api_time(self.data['arrival'].get('estimated') or self.data['arrival'].get('scheduled'))
-        
-        if not dep or not arr: return 0.5
-        
+        if status in self.TERMINAL_STATES:
+            return self.POLL_AFTER_LANDING
+
+        if status == "active":
+            arrival = self._leg_timestamp("arrival")
+            if arrival is None:
+                return self.POLL_NEAR_ARRIVAL
+            # Nothing displayed changes while airborne, so sleep until shortly
+            # before arrival, when the ETA can still move.
+            lead = arrival - self.POLL_ARRIVAL_LEAD - now
+            return lead if lead > self.POLL_NEAR_ARRIVAL else self.POLL_NEAR_ARRIVAL
+
+        departure = self._leg_timestamp("departure")
+        if departure is None:
+            return self.POLL_UNKNOWN
+        until_departure = departure - now
+        if until_departure <= 0:
+            return self.POLL_AWAITING_TAKEOFF
+        if until_departure > 12 * 3600:
+            return self.POLL_FAR_FROM_DEPARTURE
+        if until_departure > self.POLL_APPROACHING_LEAD:
+            return until_departure - self.POLL_APPROACHING_LEAD
+        return self.POLL_NEAR_DEPARTURE
+
+    def _log(self, message):
         now = time.time()
-        duration = arr - dep
-        if duration <= 0: return 0.5
-        
-        progress = (now - dep) / duration
-        return max(0.05, min(0.98, progress)) # Clamp at 98% until landed
-
-    def draw_scrolling_status(self, draw, text, x_range, y, color):
-        x_min, x_max = x_range
-        width_limit = x_max - x_min
-        bbox = draw.textbbox((0, 0), text, font=self.font)
-        text_width = bbox[2] - bbox[0]
-        
-        if text_width <= width_limit:
-            draw.text((x_min, y), text, font=self.font, fill=color)
-        else:
-            # Integer-px-per-frame scroll → uniform smooth motion on the matrix.
-            if self._status_scroll_text != text:
-                self._status_scroll_text = text
-                self._status_scroll_frame = 0
-            full_path = text_width + 15
-            scroll_pos = int(self._status_scroll_frame / scroll.frame_stride("flight")) % (full_path + 30)
-            self._status_scroll_frame += 1
-            offset = max(0, scroll_pos - 15)
-            if offset > text_width - width_limit:
-                offset = text_width - width_limit
-
-            temp_txt = Image.new('RGB', (text_width, 16), (0,0,0))
-            temp_draw = ImageDraw.Draw(temp_txt)
-            temp_draw.text((0, 0), text, font=self.font, fill=color)
-            self.canvas.paste(temp_txt.crop((offset, 0, offset + width_limit, 16)), (x_min, y))
-
-    def draw_clean_time(self, draw, eta_str, x, y, color):
-        """Draws time with a custom 1-pixel dot colon."""
-        if ":" not in eta_str:
-            draw.text((x, y), eta_str, font=self.font, fill=color)
+        if now - self._last_log_at < 60:
             return
-        hh, mm = eta_str.split(":")
-        draw.text((x, y), hh, font=self.font, fill=color)
-        bbox_hh = draw.textbbox((0, 0), hh, font=self.font)
-        colon_x = x + (bbox_hh[2] - bbox_hh[0]) + 1
-        draw.point((colon_x, y + 3), fill=color)
-        draw.point((colon_x, y + 7), fill=color)
-        draw.text((colon_x + 2, y), mm, font=self.font, fill=color)
+        self._last_log_at = now
+        print(message, flush=True)
 
-    def draw_split_flight_no(self, draw, flight_no, x, y):
-        """Standardizing vertical alignment to match Metro look."""
-        bbox = draw.textbbox((0, 0), flight_no, font=self.font)
-        if (bbox[2] - bbox[0]) <= 30:
-            draw.text((x, y + 4), flight_no, font=self.font, fill=self.COLOR_GOLD)
-        else:
-            match = re.match(r"([A-Z]+)([0-9]+)", flight_no)
-            if match:
-                letters, numbers = match.groups()
-                draw.text((x, y), letters, font=self.font, fill=self.COLOR_GOLD)
-                draw.text((x, y + 10), numbers, font=self.font, fill=self.COLOR_GOLD)
-            else:
-                draw.text((x, y), flight_no[:3], font=self.font, fill=self.COLOR_GOLD)
-                draw.text((x, y + 10), flight_no[3:], font=self.font, fill=self.COLOR_GOLD)
+    # ------------------------------------------------------------- data access
+
+    @staticmethod
+    def _parse_api_time(value):
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return None
+
+    def _leg(self, leg):
+        section = self.data.get(leg) if isinstance(self.data, dict) else None
+        return section if isinstance(section, dict) else {}
+
+    def _leg_timestamp(self, leg):
+        section = self._leg(leg)
+        return self._parse_api_time(section.get("estimated") or section.get("scheduled"))
+
+    def _leg_local_time(self, leg):
+        """Formatted in the airport's own timezone, which is what a traveller wants."""
+        section = self._leg(leg)
+        raw = section.get("estimated") or section.get("scheduled")
+        if not raw:
+            return "--:--"
+        try:
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).strftime("%H:%M")
+        except Exception:
+            return "--:--"
+
+    def _raw_status(self):
+        if not isinstance(self.data, dict):
+            return ""
+        return str(self.data.get("flight_status") or "").strip().lower()
+
+    def _flight_label(self):
+        flight = self.data.get("flight") if isinstance(self.data, dict) else None
+        if isinstance(flight, dict):
+            label = str(flight.get("iata") or flight.get("icao") or "").strip().upper()
+            if label:
+                return label
+        return str(getattr(config, "FLIGHT_NUMBER", "") or "").strip().upper() or "----"
+
+    def _airport_code(self, leg):
+        section = self._leg(leg)
+        code = str(section.get("iata") or section.get("icao") or "").strip().upper()
+        return code[:4] if code else "---"
+
+    # Full label, plus a short form for when the flight number is long enough
+    # that the full one would collide with it.
+    STATUS_LABELS = {
+        "active": ("EN ROUTE", "ENRT", "COLOR_LIVE"),
+        "landed": ("LANDED", "LAND", "COLOR_LIVE"),
+        "scheduled": ("SCHEDULED", "SCHED", "COLOR_COOL"),
+        "delayed": ("DELAYED", "DELAY", "COLOR_WARN"),
+        "cancelled": ("CANCELLED", "CNCL", "COLOR_WARN"),
+        "diverted": ("DIVERTED", "DVRT", "COLOR_WARN"),
+        "incident": ("INCIDENT", "INCD", "COLOR_WARN"),
+    }
+
+    def _status_display(self):
+        status = self._raw_status()
+        entry = self.STATUS_LABELS.get(status)
+        if entry is None:
+            short = (status.upper() or "UNKNOWN")[:8]
+            return short, short[:5], self.COLOR_DIM
+        full, short, color_name = entry
+        return full, short, getattr(self, color_name)
+
+    def _progress(self):
+        status = self._raw_status()
+        if status in ("landed", "diverted"):
+            return 1.0
+        if status != "active":
+            return 0.0
+        departure = self._leg_timestamp("departure")
+        arrival = self._leg_timestamp("arrival")
+        if not departure or not arrival:
+            return 0.5
+        duration = arrival - departure
+        if duration <= 0:
+            return 0.5
+        return max(0.02, min(0.98, (time.time() - departure) / duration))
+
+    # --------------------------------------------------------------- rendering
+
+    @staticmethod
+    def _text_width(draw, text, font):
+        box = draw.textbbox((0, 0), text, font=font)
+        return box[2] - box[0]
 
     def draw(self):
         draw = ImageDraw.Draw(self.canvas)
         draw.rectangle((0, 0, self.width, self.height), fill=(0, 0, 0))
 
-        if not self.data:
-            draw.text((2, 10), self.status_text, font=self.font, fill=self.COLOR_GREY)
+        if not isinstance(self.data, dict):
+            self._draw_placeholder(draw)
             return self.canvas
 
-        # --- DYNAMIC LAYOUT & STATUS COLORS ---
-        flight_no = self.data['flight']['iata']
-        raw_status = self.data.get('flight_status', '').lower()
-        
-        if raw_status == "active":
-            status_line1, status_line2 = "EN", "ROUTE"
-            status_color = self.COLOR_PURPLE
-            bar_color = (0, 255, 0) 
-        elif raw_status == "delayed":
-            status_line1, status_line2 = "DE-", "LAYED"
-            status_color = (255, 0, 0)
-            bar_color = (255, 0, 0)
-        elif raw_status == "landed":
-            status_line1, status_line2 = "LAND-", "ED"
-            status_color = (0, 255, 0)
-            bar_color = (0, 255, 0)
+        status = self._raw_status()
+        status_full, status_short, status_color = self._status_display()
+        grounded = status in ("cancelled", "incident")
+
+        # Band 1: flight number left, status right. Pick the status form that
+        # actually fits the space the flight number leaves, so a six-character
+        # number and a long status cannot run together.
+        flight_label = self._flight_label()
+        draw.text((1, self.ROW_HEAD_Y), flight_label, font=self.font, fill=self.COLOR_GOLD)
+        # 1px margin each side, 2px minimum gap. Tuned so that a 4-character
+        # flight number still leaves room for the full "EN ROUTE" (40px) rather
+        # than dropping to the abbreviation with a pixel to spare.
+        available = self.width - 4 - self._text_width(draw, flight_label, self.font)
+        status_label = status_full
+        if self._text_width(draw, status_label, self.font) > available:
+            status_label = status_short
+        while status_label and self._text_width(draw, status_label, self.font) > available:
+            status_label = status_label[:-1]
+        if status_label:
+            status_width = self._text_width(draw, status_label, self.font)
+            draw.text(
+                (self.width - 1 - status_width, self.ROW_HEAD_Y + 1),
+                status_label,
+                font=self.font,
+                fill=status_color,
+            )
+
+        # Band 2: the single time that matters for the current state. A flight
+        # that is not going anywhere has no arrival estimate to show.
+        if grounded or status in ("scheduled", "delayed"):
+            label, value = "DEP", self._leg_local_time("departure")
         else:
-            status_line1, status_line2 = raw_status.upper()[:5], ""
-            status_color = self.COLOR_WHITE
-            bar_color = self.COLOR_GREY
+            label, value = "ETA", self._leg_local_time("arrival")
+        draw.text((1, self.ROW_TIME_Y), label, font=self.font, fill=self.COLOR_DIM)
+        label_width = self._text_width(draw, label, self.font)
+        draw.text((1 + label_width + 3, self.ROW_TIME_Y), value, font=self.font, fill=self.COLOR_TEXT)
 
-        match = re.match(r"([A-Z]+)([0-9]+)", flight_no)
-        letters, numbers = match.groups() if match else (flight_no[:2], flight_no[2:])
-        bbox_l = draw.textbbox((0, 0), letters, font=self.font)
-        split_x = (bbox_l[2] - bbox_l[0]) + 6
+        # Band 3: progress rail. The plane travels within the rail so it is
+        # always fully on screen rather than sliding off either end. A cancelled
+        # flight gets a bare rail and no aircraft - there is no journey to show.
+        draw.line((self.RAIL_X0, self.RAIL_Y, self.RAIL_X1, self.RAIL_Y), fill=self.COLOR_RAIL)
+        if not grounded:
+            progress = self._progress()
+            travel = self.RAIL_X1 - self.PLANE_W - self.RAIL_X0
+            plane_x = int(self.RAIL_X0 + progress * travel)
+            if plane_x > self.RAIL_X0:
+                draw.line((self.RAIL_X0, self.RAIL_Y, plane_x, self.RAIL_Y), fill=status_color)
+            pixels, palette = icons.get_frame("SidePlane", 0)
+            for index, color_index in enumerate(pixels):
+                if not color_index:
+                    continue
+                px = plane_x + (index % self.PLANE_W)
+                py = self.PLANE_TOP_Y + (index // self.PLANE_W)
+                if 0 <= px < self.width and 0 <= py < self.height:
+                    draw.point((px, py), fill=palette.get(color_index))
 
-        draw.text((2, 0), letters, font=self.font, fill=self.COLOR_GOLD)
-        draw.text((2, 10), numbers, font=self.font, fill=self.COLOR_GOLD)
-
-        if int(time.time()) % 10 < 5:
-            draw.text((split_x, 0), status_line1, font=self.font, fill=status_color)
-            if status_line2: draw.text((split_x, 10), status_line2, font=self.font, fill=status_color)
-        else:
-            draw.text((split_x, 0), "ETA", font=self.font, fill=status_color)
-            arr_str = self.data['arrival'].get('estimated') or self.data['arrival'].get('scheduled')
-            eta = datetime.fromisoformat(arr_str.replace('Z', '+00:00')).strftime('%H:%M') if arr_str else "--:--"
-            self.draw_clean_time(draw, eta, split_x, 10, status_color)
-
-       # --- PROGRESS BAR (Guaranteed Full-Length Rail) ---
-        bar_y = 26
-        track_start, track_end = 6, 58 
-        progress = self._get_live_progress()
-        plane_x = int(track_start + (progress * (track_end - track_start)))
-
-        # 1. DRAW THE FULL RAIL FIRST: This connects both circles permanently
-        # Using a slightly brighter grey (60, 60, 60) so it's visible but not distracting.
-        draw.line((track_start, bar_y, track_end, bar_y), fill=(60, 60, 60), width=1)
-
-        # 2. DRAW THE GREEN PROGRESS: Only up to the plane's tail area
-        # Stopping 14 pixels before the nose tip ensures no green bleeds into the plane icon.
-        if plane_x > track_start + 14:
-            draw.line((track_start, bar_y, plane_x - 14, bar_y), fill=bar_color, width=1)
-        
-        # 3. DRAW THE CIRCLES: These sit at the absolute ends of the rail
-        # Left Circle (Departure)
-        draw.ellipse((track_start-2, bar_y-2, track_start+2, bar_y+2), fill=bar_color)
-        # Right Circle (Arrival) - This will now be visible at the end of the grey rail
-        draw.ellipse((track_end-2, bar_y-2, track_end+2, bar_y+2), fill=bar_color)
-
-        # 4. DRAW THE PLANE: Overwrites the grey rail underneath
-        plane_pixels, palette = icons.get_frame("SidePlane", 0)
-        for i, color_idx in enumerate(plane_pixels):
-            if color_idx != 0:
-                px = (i % 14) + (plane_x - 14) 
-                py = (i // 14) + (bar_y - 3)
-                if 0 <= px < 64 and 0 <= py < 32:
-                    draw.point((px, py), fill=palette.get(color_idx))
+        # Band 4: endpoints, under the ends of the rail they describe.
+        origin = self._airport_code("departure")
+        destination = self._airport_code("arrival")
+        draw.text((1, self.ROW_ENDS_Y), origin, font=self.font, fill=self.COLOR_DIM)
+        destination_width = self._text_width(draw, destination, self.font)
+        draw.text(
+            (max(1, self.width - 1 - destination_width), self.ROW_ENDS_Y),
+            destination,
+            font=self.font,
+            fill=self.COLOR_DIM,
+        )
         return self.canvas
+
+    def _draw_placeholder(self, draw):
+        title = "FLIGHT"
+        title_width = self._text_width(draw, title, self.font)
+        draw.text(((self.width - title_width) // 2, 6), title, font=self.font, fill=self.COLOR_GOLD)
+        reason = str(self.status_text or "NO DATA")
+        while reason and self._text_width(draw, reason, self.font) > self.width - 2:
+            reason = reason[:-1]
+        reason_width = self._text_width(draw, reason, self.font)
+        draw.text(
+            ((self.width - reason_width) // 2, 19),
+            reason,
+            font=self.font,
+            fill=self.COLOR_DIM,
+        )

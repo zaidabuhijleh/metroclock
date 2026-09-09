@@ -2,13 +2,20 @@ import json
 import os
 import re
 
+import process_cache
+
+_FONT_FAMILIES_CACHE_KEY = "font_families"
+
 
 # --- HARDWARE ---
 MATRIX_WIDTH = 64
 MATRIX_HEIGHT = 32
 MATRIX_SLOWDOWN = 4
-MATRIX_BRIGHTNESS = 100
+MATRIX_BRIGHTNESS = 100  # Panel brightness: applied once at matrix init; not user-editable.
 MATRIX_MAPPING = "adafruit-hat"
+# Panel asleep: the render loop holds the display dark but keeps the web
+# server and cloud agent running, which is what makes it wakeable again.
+DISPLAY_SLEEP = False
 MATRIX_PWM_BITS = 3
 MATRIX_PWM_BITS_METRO = 3
 MATRIX_PWM_BITS_FLIGHT = 3
@@ -38,7 +45,6 @@ SPLEEN_FONT_SIZE_BY_CLOCK_SIZE = {
 }
 SPLEEN_FONT_SIZE_ORDER = ("5x8", "6x12", "8x16", "12x24")
 CLOCK_FONT_STYLE = "font_spleen"
-_FONT_FAMILIES_CACHE = None
 
 # --- WMATA (DC Metro) ---
 METRO_SYSTEM = "wmata"  # "wmata", "nyc", or "ttc"
@@ -99,7 +105,6 @@ STOCKS_SYMBOLS = "AAPL,TSLA,NVDA,SPY"
 STOCKS_VIEW_MODE = "ticker"
 STOCKS_FOCUS_TIMEFRAME = "1D"
 STOCKS_FOCUS_ROTATE_SECONDS = 8  # seconds per stock in focus view
-STOCKS_TICKER_SPEED = 25  # legacy/unused — see SCROLL_SPEED
 
 # --- SCROLL ---
 # Global scroll speed for all marquee/ticker text. Restricted to values that
@@ -204,6 +209,7 @@ METROCLOCK_CLOUD_PREVIEW_SECONDS = 2
 # Runtime/user-editable keys. Defaults live above; persistent overrides live in
 # a local JSON file; environment variables may override both.
 RUNTIME_EDITABLE_FIELDS = {
+    "DISPLAY_SLEEP",
     "METRO_SYSTEM",
     "WMATA_API_KEY",
     "WMATA_STATION_CODE",
@@ -225,7 +231,6 @@ RUNTIME_EDITABLE_FIELDS = {
     "AVIATIONSTACK_API_KEY",
     "FLIGHT_NUMBER",
     "DISPLAY_MODE",
-    "MATRIX_BRIGHTNESS",
     "MATRIX_PWM_BITS_CLOCK_WIDGET",
     "WEB_SERVER_PORT",
     "SETUP_MODE",
@@ -255,7 +260,6 @@ RUNTIME_EDITABLE_FIELDS = {
     "STOCKS_VIEW_MODE",
     "STOCKS_FOCUS_TIMEFRAME",
     "STOCKS_FOCUS_ROTATE_SECONDS",
-    "STOCKS_TICKER_SPEED",
     "SCROLL_SPEED",
     "SCROLL_SPEED_STOCKS",
     "SCROLL_SPEED_METRO",
@@ -361,22 +365,34 @@ def _bdf_metadata(path):
                     metadata["height"] = int(parts[2])
                 elif line.startswith("PIXEL_SIZE ") and len(parts) >= 2:
                     metadata["font_size"] = int(parts[1])
+                elif line.startswith("CHARS "):
+                    # Everything above CHARS is header/properties; the rest of
+                    # the file is glyph bitmaps, which is ~99% of its bytes and
+                    # holds nothing we read. Reading it all cost seconds on a Pi.
+                    break
     except Exception:
         return {}
     return metadata
 
 
+def reset_font_cache():
+    """Drop the discovered-font cache. Only needed by tooling that measures it."""
+    process_cache.clear(_FONT_FAMILIES_CACHE_KEY)
+
+
 def _discover_font_families():
-    global _FONT_FAMILIES_CACHE
-    if _FONT_FAMILIES_CACHE is not None:
-        return _FONT_FAMILIES_CACHE
+    # Cached in process_cache, not in a module global: this module gets
+    # reloaded constantly, and a module-level cache would be reset every time,
+    # making every clock-face cache miss re-scan the whole font tree.
+    cached = process_cache.get(_FONT_FAMILIES_CACHE_KEY)
+    if cached is not None:
+        return cached
 
     root = _font_root()
     try:
         family_names = sorted(os.listdir(root), key=str.lower)
     except Exception:
-        _FONT_FAMILIES_CACHE = []
-        return _FONT_FAMILIES_CACHE
+        return process_cache.set(_FONT_FAMILIES_CACHE_KEY, [])
 
     families = []
     for family_name in family_names:
@@ -421,8 +437,7 @@ def _discover_font_families():
                 "type": "font_family",
                 "sizes": sizes,
             })
-    _FONT_FAMILIES_CACHE = families
-    return _FONT_FAMILIES_CACHE
+    return process_cache.set(_FONT_FAMILIES_CACHE_KEY, families)
 
 
 def get_spleen_font_face():

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
-import queue
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from postgrest.exceptions import APIError
@@ -32,15 +35,43 @@ from app.schemas import (
 )
 from app.security import generate_device_token, generate_pairing_token, hash_device_token
 from app.supabase_client import get_supabase
+from app import upstream
 
 
 app = FastAPI(title="MetroClock Cloud API")
 settings = get_settings()
-_device_event_queues: dict[str, list[queue.Queue[dict[str, Any]]]] = {}
+# Each listener is (its event loop, its queue). Events are produced by request
+# handlers running in the threadpool, so delivery has to hop back to the loop
+# that owns the stream.
+_DeviceEventListener = tuple[asyncio.AbstractEventLoop, asyncio.Queue]
+_device_event_queues: dict[str, list[_DeviceEventListener]] = {}
 _device_event_lock = threading.Lock()
 _device_preview_lock = threading.Lock()
 _device_preview_frames: dict[str, "DevicePreviewFrame"] = {}
-_max_preview_bytes = 256 * 1024
+# Per-request work that used to hit Supabase on every single call. All three are
+# in-process, so they share the single-worker assumption documented for SSE in
+# CLOUD_CONTROL.md; with more workers they simply cache less, never incorrectly.
+_auth_cache_lock = threading.Lock()
+# token sha256 -> (monotonic expiry, user). Tokens are never stored in the clear.
+_user_token_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_user_token_ttl_seconds = 60
+_max_cached_user_tokens = 1000
+# user id -> monotonic time before which the profile upsert can be skipped.
+_profile_upsert_cache: dict[str, float] = {}
+_profile_upsert_ttl_seconds = 3600
+# device token id -> monotonic time before which last_used_at need not be rewritten.
+_device_token_touch_cache: dict[str, float] = {}
+_device_token_touch_interval_seconds = 300
+# Reused so Supabase auth checks do not pay a TLS handshake per request.
+_supabase_auth_session = requests.Session()
+
+# A 64x32 panel encodes to roughly 0.1-3 KB of PNG, so 32 KB is ~10x headroom.
+# The old 256 KB cap let a buggy or hostile device pin 500 x 256 KB = 128 MB of
+# process memory on a 512 MB instance.
+_max_preview_bytes = 32 * 1024
+# Frames live in this process, like the SSE listener registry above: with more
+# than one worker an upload lands in one process and the read may hit another,
+# which returns 404. The API assumes a single worker.
 _max_preview_devices = 500
 _preview_frame_ttl = timedelta(hours=1)
 _allowed_preview_content_types = {"image/png", "image/jpeg"}
@@ -68,34 +99,50 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _register_device_listener(device_uid: str) -> queue.Queue[dict[str, Any]]:
-    event_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=20)
+def _register_device_listener(
+    device_uid: str,
+    loop: asyncio.AbstractEventLoop,
+) -> asyncio.Queue[dict[str, Any]]:
+    event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=20)
     with _device_event_lock:
-        _device_event_queues.setdefault(device_uid, []).append(event_queue)
+        _device_event_queues.setdefault(device_uid, []).append((loop, event_queue))
     return event_queue
 
 
-def _unregister_device_listener(device_uid: str, event_queue: queue.Queue[dict[str, Any]]):
+def _unregister_device_listener(device_uid: str, event_queue: asyncio.Queue[dict[str, Any]]):
     with _device_event_lock:
-        queues = _device_event_queues.get(device_uid, [])
-        if event_queue in queues:
-            queues.remove(event_queue)
-        if not queues:
+        listeners = [
+            listener
+            for listener in _device_event_queues.get(device_uid, [])
+            if listener[1] is not event_queue
+        ]
+        if listeners:
+            _device_event_queues[device_uid] = listeners
+        else:
             _device_event_queues.pop(device_uid, None)
+
+
+def _offer_event(event_queue: asyncio.Queue[dict[str, Any]], event: dict[str, Any]):
+    """Enqueue on the stream's own loop, dropping the oldest event when full."""
+    try:
+        event_queue.put_nowait(event)
+    except asyncio.QueueFull:
+        try:
+            event_queue.get_nowait()
+            event_queue.put_nowait(event)
+        except Exception:
+            pass
 
 
 def _notify_device(device_uid: str, event: dict[str, Any]):
     with _device_event_lock:
-        queues = list(_device_event_queues.get(device_uid, []))
-    for event_queue in queues:
+        listeners = list(_device_event_queues.get(device_uid, []))
+    for loop, event_queue in listeners:
         try:
-            event_queue.put_nowait(event)
-        except queue.Full:
-            try:
-                event_queue.get_nowait()
-                event_queue.put_nowait(event)
-            except Exception:
-                pass
+            loop.call_soon_threadsafe(_offer_event, event_queue, event)
+        except RuntimeError:
+            # That listener's loop is already closed; its stream cleans itself up.
+            pass
 
 
 def _sse_message(event_name: str, data: dict[str, Any]) -> str:
@@ -156,13 +203,50 @@ def _bearer_token(authorization: str | None) -> str:
     return token
 
 
+def _token_cache_key(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _cached_user(token_key: str) -> dict[str, Any] | None:
+    now = time.monotonic()
+    with _auth_cache_lock:
+        entry = _user_token_cache.get(token_key)
+        if entry is None:
+            return None
+        expires_at, user = entry
+        if expires_at <= now:
+            _user_token_cache.pop(token_key, None)
+            return None
+        return user
+
+
+def _cache_user(token_key: str, user: dict[str, Any]):
+    now = time.monotonic()
+    with _auth_cache_lock:
+        if len(_user_token_cache) >= _max_cached_user_tokens:
+            for expired in [key for key, (exp, _) in _user_token_cache.items() if exp <= now]:
+                _user_token_cache.pop(expired, None)
+            if len(_user_token_cache) >= _max_cached_user_tokens:
+                _user_token_cache.pop(next(iter(_user_token_cache)), None)
+        _user_token_cache[token_key] = (now + _user_token_ttl_seconds, user)
+
+
 def _authenticate_user(authorization: str | None) -> dict[str, Any]:
     token = _bearer_token(authorization)
+    # Every authenticated endpoint called this, so a 2s preview poll meant a
+    # round trip to Supabase every 2s just to learn the same user id. Cached for
+    # a minute: a revoked token therefore stays usable for up to that long,
+    # which is well inside the lifetime of the access token itself.
+    token_key = _token_cache_key(token)
+    cached = _cached_user(token_key)
+    if cached is not None:
+        return cached
+
     current_settings = get_settings()
     if not current_settings.supabase_url or not current_settings.supabase_publishable_key:
         raise HTTPException(status_code=500, detail="Supabase user auth environment is not configured")
 
-    response = requests.get(
+    response = _supabase_auth_session.get(
         f"{current_settings.supabase_url.rstrip('/')}/auth/v1/user",
         headers={
             "apikey": current_settings.supabase_publishable_key,
@@ -176,19 +260,56 @@ def _authenticate_user(authorization: str | None) -> dict[str, Any]:
     user = response.json()
     if not user.get("id"):
         raise HTTPException(status_code=401, detail="Invalid user token")
+    _cache_user(token_key, user)
     return user
 
 
 def _ensure_profile(supabase: Client, user: dict[str, Any]):
+    # Called by every user-facing endpoint, so this was a database write on each
+    # preview poll. The row only needs to exist; re-asserting it per request buys
+    # nothing.
+    user_id = str(user.get("id") or "")
+    if not user_id:
+        return
+    now = time.monotonic()
+    with _auth_cache_lock:
+        skip_until = _profile_upsert_cache.get(user_id)
+        if skip_until is not None and skip_until > now:
+            return
+
     metadata = user.get("user_metadata") if isinstance(user.get("user_metadata"), dict) else {}
     display_name = metadata.get("display_name") or metadata.get("name")
     supabase.table("profiles").upsert(
         {
-            "id": user["id"],
+            "id": user_id,
             "display_name": display_name,
         },
         on_conflict="id",
     ).execute()
+
+    # Only remember it after the write actually succeeded.
+    with _auth_cache_lock:
+        _profile_upsert_cache[user_id] = time.monotonic() + _profile_upsert_ttl_seconds
+
+
+# Validated here as well as on the device so an unsupported action fails when
+# the user presses the button, rather than being queued, delivered, rejected,
+# and only then surfaced as a failed command.
+# Actions whose payload carries a secret. The value has done its job the moment
+# the device acknowledges, so it is cleared then rather than left sitting in the
+# commands table.
+SECRET_PAYLOAD_ACTIONS = frozenset({"set_wifi"})
+
+SUPPORTED_COMMAND_ACTIONS = frozenset({
+    "set_mode",
+    "set_settings",
+    "set_display_sleep",
+    "set_wifi",
+    "reboot",
+    "restart",
+    "shutdown",
+    "factory_reset",
+})
 
 
 def _normalize_command_request(request: CreateCommandRequest) -> tuple[str, dict[str, Any]]:
@@ -280,8 +401,30 @@ def _authenticate_device(
     if device["id"] != token_row["device_id"]:
         raise HTTPException(status_code=403, detail="Token does not belong to this device")
 
-    supabase.table("device_tokens").update({"last_used_at": _now_iso()}).eq("id", token_row["id"]).execute()
+    _touch_device_token(supabase, str(token_row["id"]))
     return device
+
+
+def _touch_device_token(supabase: Client, token_id: str):
+    """Record that a device token was used, at most once per interval.
+
+    Devices poll commands every 5s and upload a preview every 2s, so writing this
+    on every request made it the busiest write in the system — for a field
+    nothing reads in real time.
+    """
+    now = time.monotonic()
+    with _auth_cache_lock:
+        skip_until = _device_token_touch_cache.get(token_id)
+        if skip_until is not None and skip_until > now:
+            return
+        _device_token_touch_cache[token_id] = now + _device_token_touch_interval_seconds
+
+    try:
+        supabase.table("device_tokens").update({"last_used_at": _now_iso()}).eq("id", token_id).execute()
+    except Exception:
+        # Telemetry only — never fail an authenticated device request over it.
+        with _auth_cache_lock:
+            _device_token_touch_cache.pop(token_id, None)
 
 
 @app.get("/health")
@@ -870,6 +1013,8 @@ def create_device_command(
     _ensure_user_can_control_device(supabase, user["id"], device["id"])
 
     action, payload = _normalize_command_request(request)
+    if action not in SUPPORTED_COMMAND_ACTIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported action: {action}")
     command = _create_device_command(
         supabase=supabase,
         device_id=device["id"],
@@ -944,6 +1089,43 @@ def device_heartbeat(
     return {"ok": True}
 
 
+@app.post("/api/devices/{device_uid}/deregister")
+def device_deregister(
+    device_uid: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    """Forget a device, at the device's own request during a factory reset.
+
+    Authenticated with the device token rather than a user token: the clock is
+    the one initiating, and the user who pressed the button in the app may not
+    be the account the device is still attached to.
+
+    Children are removed before the device row because they reference it. Any
+    step failing leaves the rest to a retry; the device wipes itself locally
+    regardless, so a partial delete here is an orphaned row rather than a device
+    stuck paired.
+    """
+    device = _authenticate_device(device_uid, authorization, supabase)
+    device_id = device["id"]
+
+    now = _now_iso()
+    supabase.table("device_tokens").update({"revoked_at": now}).eq(
+        "device_id", device_id
+    ).is_("revoked_at", "null").execute()
+
+    for table in ("device_status", "device_commands", "device_memberships"):
+        supabase.table(table).delete().eq("device_id", device_id).execute()
+
+    supabase.table("devices").delete().eq("id", device_id).execute()
+
+    # Drop the in-process preview too, or a stale frame would outlive the device
+    # row until the next restart. Keyed by the internal id, not the uid.
+    with _device_preview_lock:
+        _device_preview_frames.pop(device_id, None)
+    return {"ok": True, "deregistered": device_uid}
+
+
 @app.post("/api/devices/{device_uid}/preview")
 async def upload_device_preview(
     device_uid: str,
@@ -951,7 +1133,10 @@ async def upload_device_preview(
     authorization: str | None = Header(default=None),
     supabase: Client = Depends(get_supabase),
 ):
-    device = _authenticate_device(device_uid, authorization, supabase)
+    # _authenticate_device does blocking Supabase I/O. In an async endpoint that
+    # runs directly on the event loop and stalls every other request, so it has
+    # to go to the threadpool like the sync endpoints get for free.
+    device = await run_in_threadpool(_authenticate_device, device_uid, authorization, supabase)
     content_type = str(request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
     if content_type not in _allowed_preview_content_types:
         raise HTTPException(status_code=415, detail="Preview must be image/png or image/jpeg")
@@ -1009,6 +1194,118 @@ def get_device_preview(
     )
 
 
+# --------------------------------------------------------------------------
+# Data proxy.
+#
+# Devices have no provider API keys: shipping credentials inside an SD card
+# image would hand every customer working keys, which provider terms prohibit.
+# A clock authenticates with its own device token and this service makes the
+# upstream call, so keys stay here and can be rotated without touching a device.
+# --------------------------------------------------------------------------
+
+# Per device, per hour. A clock polls current weather every 10 minutes and the
+# forecast every 30, so these leave generous headroom while still bounding what
+# one misbehaving device can spend of the shared quota.
+_WEATHER_RATE_PER_HOUR = 30
+_FORECAST_RATE_PER_HOUR = 12
+_FLIGHT_RATE_PER_HOUR = 12
+
+_WEATHER_TTL_SECONDS = 300
+_FORECAST_TTL_SECONDS = 900
+_FLIGHT_TTL_SECONDS = 240
+
+
+def _weather_query(
+    zip_code: str | None,
+    country: str | None,
+    city_id: str | None,
+    units: str,
+) -> dict[str, str]:
+    unit = (units or "metric").strip().lower()
+    if unit not in {"metric", "imperial", "standard"}:
+        unit = "metric"
+    query: dict[str, str] = {"units": unit}
+    if zip_code and zip_code.strip():
+        country_code = (country or "US").strip().upper() or "US"
+        query["zip"] = f"{zip_code.strip()},{country_code}"
+    elif city_id and city_id.strip():
+        query["id"] = city_id.strip()
+    else:
+        raise HTTPException(status_code=400, detail="Provide zip or city_id")
+    return query
+
+
+def _proxy_weather(
+    endpoint: str,
+    device: dict[str, Any],
+    query: dict[str, str],
+    limit: int,
+    ttl: float,
+):
+    if not upstream.allow_request(str(device["id"]), endpoint, limit):
+        raise HTTPException(status_code=429, detail="Too many requests for this device")
+    try:
+        return upstream.openweather(
+            endpoint, get_settings().openweather_api_key, query, ttl
+        )
+    except upstream.UpstreamError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@app.get("/api/devices/{device_uid}/data/weather")
+def device_weather(
+    device_uid: str,
+    zip: str | None = None,
+    country: str | None = None,
+    city_id: str | None = None,
+    units: str = "metric",
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    device = _authenticate_device(device_uid, authorization, supabase)
+    query = _weather_query(zip, country, city_id, units)
+    return _proxy_weather("weather", device, query, _WEATHER_RATE_PER_HOUR, _WEATHER_TTL_SECONDS)
+
+
+@app.get("/api/devices/{device_uid}/data/forecast")
+def device_forecast(
+    device_uid: str,
+    zip: str | None = None,
+    country: str | None = None,
+    city_id: str | None = None,
+    units: str = "metric",
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    device = _authenticate_device(device_uid, authorization, supabase)
+    query = _weather_query(zip, country, city_id, units)
+    return _proxy_weather("forecast", device, query, _FORECAST_RATE_PER_HOUR, _FORECAST_TTL_SECONDS)
+
+
+@app.get("/api/devices/{device_uid}/data/flight")
+def device_flight(
+    device_uid: str,
+    number: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    device = _authenticate_device(device_uid, authorization, supabase)
+    flight_number = (number or "").strip().upper()
+    if not flight_number or len(flight_number) > 10 or not flight_number.isalnum():
+        raise HTTPException(status_code=400, detail="Invalid flight number")
+    if not upstream.allow_request(str(device["id"]), "flight", _FLIGHT_RATE_PER_HOUR):
+        raise HTTPException(status_code=429, detail="Too many requests for this device")
+    try:
+        record = upstream.flight_by_number(
+            flight_number, get_settings().aviationstack_api_key, _FLIGHT_TTL_SECONDS
+        )
+    except upstream.UpstreamError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    # "found: false" is a real answer, not an error: the flight may simply not
+    # operate today. The device uses its normal schedule rather than a backoff.
+    return {"found": record is not None, "data": record}
+
+
 @app.get("/api/devices/{device_uid}/commands", response_model=CommandListResponse)
 def list_device_commands(
     device_uid: str,
@@ -1033,23 +1330,27 @@ def list_device_commands(
 
 
 @app.get("/api/devices/{device_uid}/events")
-def stream_device_events(
+async def stream_device_events(
     device_uid: str,
     authorization: str | None = Header(default=None),
     supabase: Client = Depends(get_supabase),
 ):
-    _authenticate_device(device_uid, authorization, supabase)
-    event_queue = _register_device_listener(device_uid)
+    # Async so a long-lived stream costs an idle coroutine rather than a
+    # threadpool worker — a sync generator here blocked one of the ~40 anyio
+    # tokens per connected device and starved every other endpoint.
+    await run_in_threadpool(_authenticate_device, device_uid, authorization, supabase)
+    event_queue = _register_device_listener(device_uid, asyncio.get_running_loop())
 
-    def event_stream():
+    async def event_stream():
         try:
             yield _sse_message("ready", {"ok": True, "device_uid": device_uid})
             while True:
                 try:
-                    event = event_queue.get(timeout=20)
-                    yield _sse_message(str(event.get("type") or "message"), event)
-                except queue.Empty:
+                    event = await asyncio.wait_for(event_queue.get(), timeout=20)
+                except (asyncio.TimeoutError, TimeoutError):
                     yield ": keepalive\n\n"
+                    continue
+                yield _sse_message(str(event.get("type") or "message"), event)
         finally:
             _unregister_device_listener(device_uid, event_queue)
 
@@ -1094,4 +1395,12 @@ def acknowledge_device_command(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not response.data:
         raise HTTPException(status_code=404, detail="Command not found")
+
+    if (response.data[0] or {}).get("action") in SECRET_PAYLOAD_ACTIONS:
+        # A Wi-Fi PSK travelled in this row. Keeping a customer's network
+        # password in the commands table after delivery buys nothing.
+        supabase.table("device_commands").update({"payload": {}}).eq(
+            "id", command_id
+        ).execute()
+
     return {"ok": True}

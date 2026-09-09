@@ -17,6 +17,12 @@ class AmbientWidget(Widget):
         self._last_frame_time = time.time()
         self._scene_start_time = time.time()
         self._pinned_index = None
+        # draw() runs every render tick, but update() only advances the frame
+        # index at the scene's own FPS. render_frame is a pure function of the
+        # tick, so re-rendering an unchanged index produces identical pixels —
+        # cache the last one instead of recomputing it several times per frame.
+        self._cache_key = None
+        self._cache_frame = None
 
     def _resolve_scene_index(self):
         pinned = web_server.get_ambient_scene()
@@ -58,12 +64,22 @@ class AmbientWidget(Widget):
 
     def draw(self):
         scene = self._scene()
+        # Scene identity is part of the key so rotation and app-pinned scene
+        # changes invalidate the cache, not just a moving frame index.
+        cache_key = (scene.__name__, self._frame_index)
+        if cache_key != self._cache_key:
+            self._cache_frame = self._render_scene_frame(scene)
+            self._cache_key = cache_key
+        # Hand out a copy: the cached image is reused across ticks and must not
+        # be mutated by whatever consumes the frame.
+        self.canvas = self._cache_frame.copy()
+        return self.canvas
+
+    def _render_scene_frame(self, scene):
         if hasattr(scene, "render_frame"):
             frame = scene.render_frame(self._frame_index)
         else:
             frame = scene.FRAMES[self._frame_index % len(scene.FRAMES)]
-        if frame.size == (self.width, self.height):
-            self.canvas = frame.copy()
-        else:
-            self.canvas = frame.resize((self.width, self.height), Image.NEAREST)
-        return self.canvas
+        if frame.size != (self.width, self.height):
+            frame = frame.resize((self.width, self.height), Image.NEAREST)
+        return frame
