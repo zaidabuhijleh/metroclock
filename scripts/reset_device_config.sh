@@ -68,14 +68,15 @@ echo "Resetting $CONFIG_PATH to factory defaults..."
 # force the keys onto a command line, where they would be visible in ps.
 tmp_prev="$(mktemp)"
 tmp_new="$(mktemp)"
-trap 'rm -f "$tmp_prev" "$tmp_new"' EXIT
-chmod 600 "$tmp_prev" "$tmp_new"
+tmp_prov="$(mktemp)"
+trap 'rm -f "$tmp_prev" "$tmp_new" "$tmp_prov"' EXIT
+chmod 600 "$tmp_prev" "$tmp_new" "$tmp_prov"
 
 if ! sudo cat "$CONFIG_PATH" > "$tmp_prev" 2>/dev/null; then
   printf '{}\n' > "$tmp_prev"
 fi
 
-PYTHONPATH="$REPO_ROOT" python3 - "$tmp_prev" "$tmp_new" <<'PY'
+PYTHONPATH="$REPO_ROOT" python3 - "$tmp_prev" "$tmp_new" "$tmp_prov" <<'PY'
 import json
 import sys
 
@@ -83,7 +84,7 @@ import sys
 # disagree about what "factory" means.
 import factory_defaults
 
-previous_path, out_path = sys.argv[1], sys.argv[2]
+previous_path, out_path, provisioning_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
 try:
     with open(previous_path, "r", encoding="utf-8") as f:
@@ -95,7 +96,7 @@ except Exception:
 
 # An image build takes provider keys from the environment; it never inherits
 # whatever happened to be on the build unit.
-data = factory_defaults.build(previous=previous, keep_shipped_keys=False)
+data = factory_defaults.build()
 
 cleared = factory_defaults.cleared_keys(previous)
 if cleared:
@@ -109,13 +110,19 @@ for setting, env_var in factory_defaults.SHIPPED_KEY_FIELDS.items():
 
 with open(out_path, "w", encoding="utf-8") as f:
     json.dump(data, f, indent=2, sort_keys=True)
-    f.write("
-")
+    f.write("\n")
+
+# Recorded separately so a field factory reset can restore the keys this image
+# shipped with, rather than whatever key the user later typed into the app.
+with open(provisioning_path, "w", encoding="utf-8") as f:
+    json.dump(factory_defaults.provisioning_payload(data), f, indent=2, sort_keys=True)
+    f.write("\n")
 print(f"  wrote {len(data)} factory defaults")
 PY
 
 sudo mkdir -p "$(dirname "$CONFIG_PATH")"
 sudo install -m 600 -o root -g root "$tmp_new" "$CONFIG_PATH"
+sudo install -m 600 -o root -g root "$tmp_prov" "${METROCLOCK_PROVISIONING_PATH:-/etc/metroclock/provisioning.json}"
 
 if [ "$RESTART" -eq 1 ]; then
   echo "Restarting metroclock..."

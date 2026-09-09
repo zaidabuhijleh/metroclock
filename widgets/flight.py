@@ -161,7 +161,9 @@ class FlightWidget(Widget):
                 timeout=10,
             )
         except Exception as exc:
-            self._log(f"Flight API error: {exc}")
+            # Never the exception itself: requests puts the full URL, and so
+            # the access_key, into its error strings.
+            self._log(f"Flight API error: {type(exc).__name__}")
             self.status_text = "NO NETWORK"
             return False
 

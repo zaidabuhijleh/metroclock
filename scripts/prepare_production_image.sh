@@ -248,16 +248,16 @@ fi
 # Catches the case that motivated all of this: prep is run, the card is booted
 # again to "just check something", a setting gets changed, and that setting
 # ships in the image.
-extra_keys="$(sudo python3 - "$CONFIG_PATH" <<'PY'
+extra_keys="$(sudo python3 - "$CONFIG_PATH" "$REPO_DIR" <<'PY'
 import json, sys
-factory = {
-    "DISPLAY_MODE", "CLOCK_SHOW_AMPM", "CLOCK_SHOW_DATE", "SETUP_MODE",
-    "WIFI_SETUP_ENABLED", "WIFI_SETUP_FORCE_HOTSPOT_UNPAIRED",
-    "WIFI_SETUP_HOTSPOT_SSID", "WIFI_SETUP_HOTSPOT_IP", "WIFI_SETUP_HOTSPOT_PASSWORD",
-    "METROCLOCK_CLOUD_ENABLED", "METROCLOCK_CLOUD_BASE_URL",
-    "METROCLOCK_CLOUD_DEVICE_TOKEN", "METROCLOCK_CLOUD_PAIRING_CODE",
-    "WMATA_API_KEY", "OPENWEATHER_API_KEY", "AVIATIONSTACK_API_KEY",
-}
+
+# Derived, not restated. This list was a second copy of the factory key set and
+# had already drifted: a key added to factory_defaults was missing here, so
+# every prep run would have failed this gate on a setting it had just written.
+sys.path.insert(0, sys.argv[2])
+import factory_defaults
+
+factory = set(factory_defaults.FACTORY_DEFAULTS) | set(factory_defaults.SHIPPED_KEY_FIELDS)
 try:
     with open(sys.argv[1], "r", encoding="utf-8") as f:
         data = json.load(f)

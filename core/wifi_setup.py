@@ -469,7 +469,9 @@ class WifiSetupManager:
 
     def _delete_network_manager_profiles_for(self, ssid: str):
         listing = self._run_command(
-            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], timeout=8, capture=True
+            ["nmcli", "--escape", "no", "-t", "-f", "NAME,TYPE", "connection", "show"],
+            timeout=8,
+            capture=True,
         )
         for line in listing.splitlines():
             # Profile names may contain ':', so split off the type from the right.

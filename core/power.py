@@ -177,7 +177,9 @@ def _deregister_from_cloud() -> None:
 
 def _reset_runtime_config() -> None:
     previous = config_manager.read_runtime_overrides()
-    data = factory_defaults.build(previous=previous, keep_shipped_keys=True)
+    # Provisioned keys, never the ones in the runtime config: a user may have
+    # entered their own, and those must not survive into the next owner's hands.
+    data = factory_defaults.build(provisioned=factory_defaults.load_provisioned())
     cleared = factory_defaults.cleared_keys(previous)
     config_manager.replace_config(data)
     print(f"  config reset, cleared {len(cleared)} personalised setting(s)", flush=True)
@@ -189,12 +191,17 @@ def _forget_wifi() -> None:
     removed = 0
 
     if shutil.which("nmcli"):
-        listing = _run_capture(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"])
+        # --escape no, then split from the right: profile names may contain ':'
+        # and terse output escapes it as '\:'. Splitting at every colon
+        # misreads such a name, and the profile survives the reset with the
+        # customer's PSK in it. core/wifi_setup.py takes the same care.
+        listing = _run_capture(
+            ["nmcli", "--escape", "no", "-t", "-f", "NAME,TYPE", "connection", "show"]
+        )
         for line in (listing or "").splitlines():
-            parts = line.split(":")
-            if len(parts) < 2:
+            name, separator, conn_type = line.rpartition(":")
+            if not separator:
                 continue
-            name, conn_type = parts[0], parts[1]
             if "wireless" not in conn_type.lower():
                 continue
             if name == hotspot_ssid:

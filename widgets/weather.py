@@ -151,7 +151,9 @@ class WeatherWidget(Widget):
             status = getattr(getattr(exc, "response", None), "status_code", None)
             # Shown on a 64px panel, so keep it to a few characters.
             self._last_fetch_error = f"http {status}" if status else "no network"
-            self._log_error(f"Weather {endpoint} fetch error: {exc}")
+            # Never the exception itself: requests puts the full URL, appid
+            # included, into its error strings.
+            self._log_error(f"Weather {endpoint} fetch error: {type(exc).__name__}")
             return False
 
     def _log_error(self, message: str):

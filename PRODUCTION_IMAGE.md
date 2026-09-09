@@ -58,8 +58,12 @@ Run this only when the source SD card is ready to become the reusable base:
 
 ```bash
 cd /home/zaid/metroclock
-METROCLOCK_IMAGE_OPENWEATHER_API_KEY='...' ./scripts/prepare_production_image.sh --yes --shutdown
+METROCLOCK_IMAGE_OPENWEATHER_API_KEY='...'   METROCLOCK_IMAGE_WMATA_API_KEY='...'   METROCLOCK_IMAGE_AVIATIONSTACK_API_KEY='...'   ./scripts/prepare_production_image.sh --yes --shutdown
 ```
+
+The script refuses to start if any of the three is unset, so supply them all, or
+pass `--allow-missing-keys` to build an image that carries no provider keys and
+relies on the cloud data proxy instead.
 
 ### Shipped API keys
 
