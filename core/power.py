@@ -127,10 +127,83 @@ def _do_factory_reset() -> None:
     print("Factory reset starting", flush=True)
     _deregister_from_cloud()
     _reset_runtime_config()
-    _forget_wifi()
-    _forget_device_identity()
+    wifi_ok = _forget_wifi()
+    identity_ok = _forget_device_identity()
+
+    problems = _verify_wiped()
+    if not wifi_ok:
+        problems.append("some saved Wi-Fi profiles could not be deleted")
+    if not identity_ok:
+        problems.append("the device id file could not be removed")
+
+    if problems:
+        # Deliberately do not reboot. Rebooting would hide the failure behind a
+        # clock that looks freshly reset while still holding the customer's
+        # credentials, and it would drop the network they need to retry over.
+        print("FACTORY RESET INCOMPLETE - not rebooting:", flush=True)
+        for problem in problems:
+            print(f"  - {problem}", flush=True)
+        raise RuntimeError("; ".join(problems))
+
     print("Factory reset complete, rebooting", flush=True)
     _do_reboot()
+
+
+def _verify_wiped() -> list[str]:
+    """Confirm the sensitive state is actually gone.
+
+    Each wipe step swallows its own errors so that one failure does not abort
+    the others, which means looking afterwards is the only honest way to say
+    whether the device was reset. Cloud deregistration is excluded on purpose:
+    it is remote, best effort, and its failure leaves an orphaned row rather
+    than data on the device.
+    """
+    problems: list[str] = []
+
+    if os.path.exists(os.environ.get("METROCLOCK_DEVICE_ID_PATH", DEVICE_ID_PATH)):
+        problems.append("device id file is still present")
+
+    remaining = config_manager.read_runtime_overrides()
+    if str(remaining.get("METROCLOCK_CLOUD_DEVICE_TOKEN", "") or "").strip():
+        problems.append("cloud device token is still in the config")
+
+    try:
+        with open(WPA_SUPPLICANT_PATH, "r", encoding="utf-8") as f:
+            if _WPA_NETWORK_BLOCK.search(f.read()):
+                problems.append("wpa_supplicant.conf still holds a saved network")
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        problems.append(f"could not read wpa_supplicant.conf: {type(exc).__name__}")
+
+    leftover = [name for name, _ in _saved_wifi_profiles()]
+    if leftover:
+        problems.append(f"{len(leftover)} Wi-Fi profile(s) still saved: {', '.join(leftover)}")
+
+    return problems
+
+
+def _saved_wifi_profiles() -> list[tuple[str, str]]:
+    """Wireless NM profiles, excluding the clock's own setup hotspot."""
+    if not shutil.which("nmcli"):
+        return []
+    hotspot_ssid = str(factory_defaults.FACTORY_DEFAULTS.get("WIFI_SETUP_HOTSPOT_SSID", "") or "")
+    # --escape no, then split from the right: profile names may contain ':'
+    # and terse output escapes it as '\:'. Splitting at every colon misreads
+    # such a name, and the profile survives the reset with the customer's PSK
+    # in it. core/wifi_setup.py takes the same care.
+    listing = _run_capture(
+        ["nmcli", "--escape", "no", "-t", "-f", "NAME,TYPE", "connection", "show"]
+    )
+    found = []
+    for line in (listing or "").splitlines():
+        name, separator, conn_type = line.rpartition(":")
+        if not separator or "wireless" not in conn_type.lower():
+            continue
+        if name == hotspot_ssid:
+            continue
+        found.append((name, conn_type))
+    return found
 
 
 _ACTIONS: dict[str, Callable[[], None]] = {
@@ -185,34 +258,26 @@ def _reset_runtime_config() -> None:
     print(f"  config reset, cleared {len(cleared)} personalised setting(s)", flush=True)
 
 
-def _forget_wifi() -> None:
-    """Remove saved networks so the clock returns to the setup hotspot."""
-    hotspot_ssid = str(factory_defaults.FACTORY_DEFAULTS.get("WIFI_SETUP_HOTSPOT_SSID", "") or "")
-    removed = 0
+def _forget_wifi() -> bool:
+    """Remove saved networks so the clock returns to the setup hotspot.
 
-    if shutil.which("nmcli"):
-        # --escape no, then split from the right: profile names may contain ':'
-        # and terse output escapes it as '\:'. Splitting at every colon
-        # misreads such a name, and the profile survives the reset with the
-        # customer's PSK in it. core/wifi_setup.py takes the same care.
-        listing = _run_capture(
-            ["nmcli", "--escape", "no", "-t", "-f", "NAME,TYPE", "connection", "show"]
-        )
-        for line in (listing or "").splitlines():
-            name, separator, conn_type = line.rpartition(":")
-            if not separator:
-                continue
-            if "wireless" not in conn_type.lower():
-                continue
-            if name == hotspot_ssid:
-                # Deleting the setup hotspot would remove the way back in.
-                continue
-            if _run(["nmcli", "connection", "delete", name]):
-                removed += 1
+    Returns False if any deletion failed, so the caller can refuse to call the
+    reset a success.
+    """
+    removed = 0
+    failed = 0
+
+    for name, _ in _saved_wifi_profiles():
+        if _run(["nmcli", "connection", "delete", name]):
+            removed += 1
+        else:
+            failed += 1
+            print(f"  could not delete Wi-Fi profile: {name}", flush=True)
 
     if _clear_wpa_supplicant():
         removed += 1
     print(f"  removed {removed} saved network profile(s)", flush=True)
+    return failed == 0
 
 
 _WPA_NETWORK_BLOCK = re.compile(r"^\s*network\s*=\s*\{.*?^\s*\}\s*$", re.MULTILINE | re.DOTALL)
@@ -247,16 +312,18 @@ def _clear_wpa_supplicant() -> bool:
         return False
 
 
-def _forget_device_identity() -> None:
+def _forget_device_identity() -> bool:
     """Drop the device id so the clock comes back as a new unit."""
     path = os.environ.get("METROCLOCK_DEVICE_ID_PATH", DEVICE_ID_PATH)
     try:
         os.remove(path)
         print("  device id cleared, a new one is generated on boot", flush=True)
+        return True
     except FileNotFoundError:
-        pass
+        return True
     except Exception as exc:
-        print(f"  could not remove {path}: {exc}", flush=True)
+        print(f"  could not remove {path}: {type(exc).__name__}", flush=True)
+        return False
 
 
 # ------------------------------------------------------------------- utilities

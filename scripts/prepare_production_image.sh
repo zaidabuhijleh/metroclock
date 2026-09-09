@@ -292,7 +292,7 @@ PY
 if [ -n "$missing_keys" ]; then
   echo "  NOTE: shipping with no value for: $missing_keys"
   echo "        Those widgets will show a placeholder on every unit."
-  echo "        Re-run with METROCLOCK_IMAGE_<NAME> set if that is not intended."
+  echo "        Re-run with METROCLOCK_IMAGE_<NAME>_API_KEY set if that is not intended."
 fi
 
 if [ "$LEAKS" -gt 0 ]; then

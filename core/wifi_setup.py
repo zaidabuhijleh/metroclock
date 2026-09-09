@@ -151,6 +151,12 @@ class WifiSetupManager:
     def _switch_network(self, ssid: str, password: str, previous: str, delay_seconds: float):
         if delay_seconds > 0:
             time.sleep(delay_seconds)
+
+        # Changing the password of the network the clock is already on is the
+        # dangerous case: _join_network deletes the existing profile before it
+        # tries, so a wrong new password destroys the only working credential
+        # and there is nothing left to fall back to. Keep the old secret first.
+        previous_secret = self._saved_psk_for(ssid) if previous and previous == ssid else ""
         try:
             with self._wifi_recovery_lock(), self._transition_lock:
                 if not self._use_network_manager():
@@ -161,18 +167,33 @@ class WifiSetupManager:
             if joined:
                 return
 
-            if self._fall_back_to(previous, ssid, detail):
+            if self._fall_back_to(previous, ssid, detail, previous_secret):
                 return
             self._start_hotspot(detail or f"Could not join {ssid}")
         except Exception as exc:
-            if self._fall_back_to(previous, ssid, str(exc)):
+            if self._fall_back_to(previous, ssid, str(exc), previous_secret):
                 return
             self._start_hotspot(f"WiFi switch failed: {exc}")
 
-    def _fall_back_to(self, previous: str, failed_ssid: str, detail: str) -> bool:
+    def _fall_back_to(self, previous: str, failed_ssid: str, detail: str,
+                      previous_secret: str = "") -> bool:
         """Return to the network the clock was on before a failed switch."""
-        if not previous or previous == failed_ssid:
+        if not previous:
             return False
+
+        if previous == failed_ssid:
+            # Same network, new password, attempt failed. The working profile
+            # was deleted before the attempt, so restoring means rebuilding it
+            # from the secret captured beforehand rather than rejoining a saved
+            # profile that no longer exists.
+            if not previous_secret:
+                return False
+            joined, _ = self._join_network(previous, previous_secret)
+            if not joined:
+                return False
+            self._set_status(last_error=f"{detail}; kept the previous password")
+            print(f"WiFi password change for {failed_ssid} failed, kept the old one", flush=True)
+            return True
 
         # Discard the failed profile first. Left in place it stays a candidate
         # for autoconnect and can keep stealing the radio from the good network.
@@ -467,12 +488,14 @@ class WifiSetupManager:
             return (lines[-1] if lines else "nmcli connect failed")[:120]
         return ""
 
-    def _delete_network_manager_profiles_for(self, ssid: str):
+    def _network_manager_profiles_for(self, ssid: str) -> list:
+        """Names of NM profiles configured for ``ssid``."""
         listing = self._run_command(
             ["nmcli", "--escape", "no", "-t", "-f", "NAME,TYPE", "connection", "show"],
             timeout=8,
             capture=True,
         )
+        names = []
         for line in listing.splitlines():
             # Profile names may contain ':', so split off the type from the right.
             name, _, conn_type = line.rpartition(":")
@@ -484,7 +507,44 @@ class WifiSetupManager:
                 capture=True,
             ).strip()
             if configured == ssid:
-                self._run_command(["nmcli", "connection", "delete", name], timeout=8)
+                names.append(name)
+        return names
+
+    def _delete_network_manager_profiles_for(self, ssid: str):
+        for name in self._network_manager_profiles_for(ssid):
+            self._run_command(["nmcli", "connection", "delete", name], timeout=8)
+
+    def _saved_psk_for(self, ssid: str) -> str:
+        """The stored secret for a saved network, or "" if there is none.
+
+        Only ever used to put back what was already on the device after a failed
+        password change. Never logged or reported through the status API.
+        """
+        if self._use_network_manager():
+            for name in self._network_manager_profiles_for(ssid):
+                secret = self._run_command(
+                    ["nmcli", "-s", "-g", "802-11-wireless-security.psk",
+                     "connection", "show", name],
+                    timeout=8,
+                    capture=True,
+                ).strip()
+                if secret:
+                    return secret
+            return ""
+
+        try:
+            with open(WPA_SUPPLICANT_CONF, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            return ""
+        for match in re.finditer(r"network=\{(.*?)\}", content, re.DOTALL):
+            body = match.group(1)
+            found = re.search(r'ssid="([^"]*)"', body)
+            if not found or found.group(1) != ssid:
+                continue
+            secret = re.search(r'psk="([^"]*)"', body)
+            return secret.group(1) if secret else ""
+        return ""
 
     def _restart_wifi_client(self):
         if self._use_network_manager():

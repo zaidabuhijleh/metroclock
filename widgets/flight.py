@@ -136,7 +136,26 @@ class FlightWidget(Widget):
         self._request_times.append(now)
         return True
 
+    def _is_stale(self, request_signature) -> bool:
+        """True when the config moved on while this request was in flight.
+
+        Publishing anyway would put the previous flight back on the panel, and if
+        the follow-up fetch then failed it would stay there for the whole
+        backoff. Returns without treating it as a failure: the wake event is
+        already set, so the worker refetches immediately, and counting this as
+        a failure would inflate the backoff for something that did not fail.
+        """
+        # None means the render thread has not declared what it wants yet, so
+        # the first fetch of the session has nothing to conflict with.
+        if self._config_signature is None or request_signature == self._config_signature:
+            return False
+        self._log("Discarding a fetch whose config changed mid-flight")
+        return True
+
     def _fetch_once(self) -> bool:
+        # Snapshot of the config this request is for; checked again before
+        # anything is published.
+        request_signature = self._current_config_signature()
         api_key = str(getattr(config, "AVIATIONSTACK_API_KEY", "") or "").strip()
         flight_number = str(getattr(config, "FLIGHT_NUMBER", "") or "").strip().upper()
         if not flight_number:
@@ -152,7 +171,7 @@ class FlightWidget(Widget):
             if not cloud_data.is_available():
                 self.status_text = "NOT PAIRED"
                 return False
-            return self._fetch_via_cloud(flight_number)
+            return self._fetch_via_cloud(flight_number, request_signature)
 
         try:
             response = self._session.get(
@@ -164,8 +183,13 @@ class FlightWidget(Widget):
             # Never the exception itself: requests puts the full URL, and so
             # the access_key, into its error strings.
             self._log(f"Flight API error: {type(exc).__name__}")
+            if self._is_stale(request_signature):
+                return True
             self.status_text = "NO NETWORK"
             return False
+
+        if self._is_stale(request_signature):
+            return True
 
         if response.status_code != 200:
             self._log(f"Flight API status {response.status_code}")
@@ -199,7 +223,7 @@ class FlightWidget(Widget):
         self.status_text = None if self.data else "BAD DATA"
         return True
 
-    def _fetch_via_cloud(self, flight_number: str) -> bool:
+    def _fetch_via_cloud(self, flight_number: str, request_signature=None) -> bool:
         """Fetch through the cloud proxy, which returns an already-normalised record.
 
         The payload is the subset of fields this widget reads, so swapping flight
@@ -209,8 +233,13 @@ class FlightWidget(Widget):
             payload = cloud_data.get("flight", {"number": flight_number})
         except cloud_data.CloudDataError as exc:
             self._log(f"Flight via cloud failed: {exc.reason}")
+            if self._is_stale(request_signature):
+                return True
             self.status_text = exc.reason.upper()[:12]
             return False
+
+        if self._is_stale(request_signature):
+            return True
 
         if not isinstance(payload, dict):
             self.status_text = "BAD DATA"

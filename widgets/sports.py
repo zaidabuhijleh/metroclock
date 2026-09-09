@@ -445,9 +445,28 @@ class SportsWidget(Widget):
 
     # ----------------------------------------------------------------- fetching
 
+    def _is_stale(self, request_signature) -> bool:
+        """True when the league or date changed while this request was in flight.
+
+        Without this, clearing the slate does not help: the in-flight request
+        for the previous league can rebind all_games afterwards, and if the
+        replacement request fails the panel keeps showing the wrong slate.
+        """
+        # None means the render thread has not declared what it wants yet, so
+        # the first fetch of the session has nothing to conflict with.
+        if self._fetch_signature is None or request_signature == self._fetch_signature:
+            return False
+        print("Sports: discarding a fetch whose league/date changed", flush=True)
+        return True
+
     def _fetch_games(self, test_date="") -> bool:
         league = self._get_league()
         date_key = test_date or self._today_key()
+        # Describe what this request is actually for, rather than reading
+        # _fetch_signature: the worker starts before the render thread has set
+        # it, so the first fetch of the session would compare against None and
+        # discard a perfectly good slate.
+        request_signature = (self._get_league_key(), date_key)
         url = f"{league['url']}?dates={date_key}"
         try:
             response = self._session.get(url, timeout=8)
@@ -465,6 +484,8 @@ class SportsWidget(Widget):
                 parsed.append(game)
 
         parsed.sort(key=self._sort_key)
+        if self._is_stale(request_signature):
+            return True
         # Whole-list rebind so the render thread never sees a partial slate.
         self.all_games = parsed
         return True

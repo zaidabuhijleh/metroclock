@@ -94,6 +94,9 @@ class WeatherWidget(Widget):
             self._fetch_wake.clear()
 
     def _fetch_once(self) -> bool:
+        # Snapshot of the config this request is for; checked again before
+        # anything is published.
+        request_signature = self._current_config_signature()
         # A locally configured key wins, so developer units and anyone who
         # supplies their own key keep calling OpenWeather directly. Otherwise go
         # through the cloud proxy, which holds the key: a clock in the field has
@@ -101,9 +104,13 @@ class WeatherWidget(Widget):
         api_key = str(getattr(config, "OPENWEATHER_API_KEY", "") or "").strip()
         if api_key:
             params = {**self._location_params(), "appid": api_key, "units": self._units()}
-            fetch = lambda endpoint, attribute: self._fetch_direct(endpoint, params, attribute)
+            fetch = lambda endpoint, attribute: self._fetch_direct(
+                endpoint, params, attribute, request_signature
+            )
         elif cloud_data.is_available():
-            fetch = self._fetch_via_cloud
+            fetch = lambda endpoint, attribute: self._fetch_via_cloud(
+                endpoint, attribute, request_signature
+            )
         else:
             self._last_fetch_error = "not paired"
             return False
@@ -113,11 +120,28 @@ class WeatherWidget(Widget):
 
         now = time.time()
         if now - self._last_forecast_fetch >= self.forecast_interval:
-            if fetch("forecast", "forecast_data"):
+            # The timestamp is only advanced when the data was actually
+            # published, so a discarded fetch does not mark the forecast fresh.
+            if fetch("forecast", "forecast_data") and not self._is_stale(request_signature):
                 self._last_forecast_fetch = now
         return True
 
-    def _fetch_via_cloud(self, endpoint: str, attribute: str) -> bool:
+    def _is_stale(self, request_signature) -> bool:
+        """True when location or units changed while this request was in flight.
+
+        The forecast timestamp is the sharp edge here: an in-flight request can
+        publish the previous location's forecast and reset _last_forecast_fetch
+        to "fresh", after which the new location gets no forecast for half an
+        hour.
+        """
+        # None means the render thread has not declared what it wants yet, so
+        # the first fetch of the session has nothing to conflict with.
+        if self._config_signature is None or request_signature == self._config_signature:
+            return False
+        self._log_error("Discarding a weather fetch whose config changed mid-flight")
+        return True
+
+    def _fetch_via_cloud(self, endpoint: str, attribute: str, request_signature=None) -> bool:
         zip_code = str(getattr(config, "WEATHER_ZIP", "") or "").strip()
         params = {"units": self._units()}
         if zip_code:
@@ -131,11 +155,13 @@ class WeatherWidget(Widget):
             self._last_fetch_error = exc.reason
             self._log_error(f"Weather {endpoint} via cloud failed: {exc.reason}")
             return False
+        if self._is_stale(request_signature):
+            return True
         setattr(self, attribute, payload)
         self._last_fetch_error = ""
         return True
 
-    def _fetch_direct(self, endpoint: str, params: dict, attribute: str) -> bool:
+    def _fetch_direct(self, endpoint: str, params: dict, attribute: str, request_signature=None) -> bool:
         try:
             resp = self._session.get(
                 f"https://api.openweathermap.org/data/2.5/{endpoint}",
@@ -143,8 +169,11 @@ class WeatherWidget(Widget):
                 timeout=8,
             )
             resp.raise_for_status()
+            payload = resp.json()
+            if self._is_stale(request_signature):
+                return True
             # Whole-object rebind: the render thread always sees a complete payload.
-            setattr(self, attribute, resp.json())
+            setattr(self, attribute, payload)
             self._last_fetch_error = ""
             return True
         except Exception as exc:
