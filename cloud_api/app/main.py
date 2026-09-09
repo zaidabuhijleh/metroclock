@@ -292,6 +292,26 @@ def _ensure_profile(supabase: Client, user: dict[str, Any]):
         _profile_upsert_cache[user_id] = time.monotonic() + _profile_upsert_ttl_seconds
 
 
+# Validated here as well as on the device so an unsupported action fails when
+# the user presses the button, rather than being queued, delivered, rejected,
+# and only then surfaced as a failed command.
+# Actions whose payload carries a secret. The value has done its job the moment
+# the device acknowledges, so it is cleared then rather than left sitting in the
+# commands table.
+SECRET_PAYLOAD_ACTIONS = frozenset({"set_wifi"})
+
+SUPPORTED_COMMAND_ACTIONS = frozenset({
+    "set_mode",
+    "set_settings",
+    "set_display_sleep",
+    "set_wifi",
+    "reboot",
+    "restart",
+    "shutdown",
+    "factory_reset",
+})
+
+
 def _normalize_command_request(request: CreateCommandRequest) -> tuple[str, dict[str, Any]]:
     action = request.action
     payload = request.payload
@@ -993,6 +1013,8 @@ def create_device_command(
     _ensure_user_can_control_device(supabase, user["id"], device["id"])
 
     action, payload = _normalize_command_request(request)
+    if action not in SUPPORTED_COMMAND_ACTIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported action: {action}")
     command = _create_device_command(
         supabase=supabase,
         device_id=device["id"],
@@ -1065,6 +1087,43 @@ def device_heartbeat(
         on_conflict="device_id",
     ).execute()
     return {"ok": True}
+
+
+@app.post("/api/devices/{device_uid}/deregister")
+def device_deregister(
+    device_uid: str,
+    authorization: str | None = Header(default=None),
+    supabase: Client = Depends(get_supabase),
+):
+    """Forget a device, at the device's own request during a factory reset.
+
+    Authenticated with the device token rather than a user token: the clock is
+    the one initiating, and the user who pressed the button in the app may not
+    be the account the device is still attached to.
+
+    Children are removed before the device row because they reference it. Any
+    step failing leaves the rest to a retry; the device wipes itself locally
+    regardless, so a partial delete here is an orphaned row rather than a device
+    stuck paired.
+    """
+    device = _authenticate_device(device_uid, authorization, supabase)
+    device_id = device["id"]
+
+    now = _now_iso()
+    supabase.table("device_tokens").update({"revoked_at": now}).eq(
+        "device_id", device_id
+    ).is_("revoked_at", "null").execute()
+
+    for table in ("device_status", "device_commands", "device_memberships"):
+        supabase.table(table).delete().eq("device_id", device_id).execute()
+
+    supabase.table("devices").delete().eq("id", device_id).execute()
+
+    # Drop the in-process preview too, or a stale frame would outlive the device
+    # row until the next restart. Keyed by the internal id, not the uid.
+    with _device_preview_lock:
+        _device_preview_frames.pop(device_id, None)
+    return {"ok": True, "deregistered": device_uid}
 
 
 @app.post("/api/devices/{device_uid}/preview")
@@ -1336,4 +1395,12 @@ def acknowledge_device_command(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not response.data:
         raise HTTPException(status_code=404, detail="Command not found")
+
+    if (response.data[0] or {}).get("action") in SECRET_PAYLOAD_ACTIONS:
+        # A Wi-Fi PSK travelled in this row. Keeping a customer's network
+        # password in the commands table after delivery buys nothing.
+        supabase.table("device_commands").update({"payload": {}}).eq(
+            "id", command_id
+        ).execute()
+
     return {"ok": True}

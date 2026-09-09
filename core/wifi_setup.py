@@ -123,6 +123,85 @@ class WifiSetupManager:
             daemon=True,
         ).start()
 
+    def switch_network(self, ssid: str, password: str = "", delay_seconds: float = 0.0):
+        """Change networks after setup, keeping the current one as a fallback.
+
+        connect_to_network drops to the setup hotspot when a join fails, which
+        is right during onboarding because there is nothing to fall back to.
+        After setup it is wrong: one mistyped password would take a working
+        clock off a good network and strand it on a hotspot that only helps
+        somebody standing next to it.
+
+        ``delay_seconds`` exists for the cloud path, which has to acknowledge
+        the command before the radio drops.
+        """
+        ssid = str(ssid or "").strip()
+        if not ssid:
+            raise ValueError("SSID required")
+
+        previous = self._current_ssid()
+        threading.Thread(
+            target=self._switch_network,
+            args=(ssid, str(password or ""), previous, float(delay_seconds)),
+            name="wifi-switch",
+            daemon=True,
+        ).start()
+        return {"ok": True, "switching_to": ssid, "fallback": previous}
+
+    def _switch_network(self, ssid: str, password: str, previous: str, delay_seconds: float):
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        try:
+            with self._wifi_recovery_lock(), self._transition_lock:
+                if not self._use_network_manager():
+                    self._write_wpa_supplicant_network(ssid, password)
+                config_manager.write_config({"SETUP_MODE": False})
+
+            joined, detail = self._join_network(ssid, password)
+            if joined:
+                return
+
+            if self._fall_back_to(previous, ssid, detail):
+                return
+            self._start_hotspot(detail or f"Could not join {ssid}")
+        except Exception as exc:
+            if self._fall_back_to(previous, ssid, str(exc)):
+                return
+            self._start_hotspot(f"WiFi switch failed: {exc}")
+
+    def _fall_back_to(self, previous: str, failed_ssid: str, detail: str) -> bool:
+        """Return to the network the clock was on before a failed switch."""
+        if not previous or previous == failed_ssid:
+            return False
+
+        # Discard the failed profile first. Left in place it stays a candidate
+        # for autoconnect and can keep stealing the radio from the good network.
+        self._discard_profile(failed_ssid)
+
+        if not self._try_saved_wifi(
+            f"Rejoining {previous}",
+            restart_client=True,
+            stop_hotspot=True,
+            fallback_ssid=previous,
+        ):
+            return False
+
+        self._set_status(last_error=f"{detail}; stayed on {previous}")
+        print(f"WiFi switch to {failed_ssid} failed, stayed on {previous}", flush=True)
+        return True
+
+    def _discard_profile(self, ssid: str):
+        if self._use_network_manager():
+            self._delete_network_manager_profiles_for(ssid)
+            return
+        try:
+            with open(WPA_SUPPLICANT_CONF, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            return
+        cleaned = self._remove_network_for_ssid(content, ssid).strip() + "\n"
+        self._write_file(WPA_SUPPLICANT_CONF, cleaned, mode=0o600)
+
     def _run(self):
         if not self.enabled:
             self._set_status(enabled=False, checking=False, reason="WiFi setup fallback disabled")

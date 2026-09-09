@@ -15,6 +15,16 @@ import config
 import config_manager
 import web_server
 from core.modes import DEFAULT_MODE_CATALOG
+from core import power
+
+
+# Headroom for the acknowledgement round trip before a factory reset
+# invalidates the token it would be sent with.
+FACTORY_RESET_DELAY_SECONDS = 6.0
+
+# Same reasoning: a network switch takes the radio down under the request that
+# asked for it.
+WIFI_SWITCH_DELAY_SECONDS = 4.0
 
 
 class MetroClockCloudAgent:
@@ -352,8 +362,36 @@ class MetroClockCloudAgent:
                 changed = config_manager.write_config({"DISPLAY_MODE": mode})
                 self._apply_runtime_updates(changed)
                 return {"ok": True, "mode": mode}
-            if action == "restart":
-                return {"ok": False, "error": "restart command is intentionally not enabled yet"}
+            if action == "set_wifi":
+                manager = web_server.get_wifi_setup_manager()
+                if manager is None:
+                    raise RuntimeError("WiFi setup manager unavailable")
+                ssid = str(payload.get("ssid") or "").strip()
+                if not ssid:
+                    raise ValueError("ssid required")
+                # Delayed for the same reason the power actions are: switching
+                # networks drops the radio, and the acknowledgement has to be
+                # on the wire before that happens or this command is redelivered
+                # forever.
+                result = manager.switch_network(
+                    ssid,
+                    str(payload.get("password") or ""),
+                    delay_seconds=WIFI_SWITCH_DELAY_SECONDS,
+                )
+                return result
+            if action == "set_display_sleep":
+                return power.set_display_sleep(bool(payload.get("asleep", True)))
+            if action in ("reboot", "restart"):
+                # "restart" is kept as an alias: it was the original action name
+                # and older clients may still send it.
+                return power.schedule("reboot")
+            if action == "shutdown":
+                return power.schedule("shutdown")
+            if action == "factory_reset":
+                # Longer than the others on purpose. The wipe revokes this
+                # device's token, so the acknowledgement below has to land
+                # first or the command looks like it failed.
+                return power.schedule("factory_reset", delay=FACTORY_RESET_DELAY_SECONDS)
             return {"ok": False, "error": f"Unsupported action: {action}"}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}

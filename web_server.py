@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import config
 import config_manager
+from core import power
 from core.modes import DEFAULT_MODE_CATALOG
 from flask import Flask, Response, jsonify, request, send_from_directory
 from scenes import SCENE_KEYS
@@ -39,6 +40,10 @@ WRITE_ENDPOINTS = {
     "/api/cloud/disable",
     "/api/restart",
     "/api/reboot",
+    "/api/shutdown",
+    "/api/factory-reset",
+    "/api/display/sleep",
+    "/api/wifi/switch",
 }
 
 app = Flask(__name__, static_folder="web", static_url_path="")
@@ -515,6 +520,10 @@ def set_wifi_setup_manager(manager):
     _wifi_setup_manager = manager
 
 
+def get_wifi_setup_manager():
+    return _wifi_setup_manager
+
+
 def get_wifi_setup_status():
     if _wifi_setup_manager is None:
         return {
@@ -971,8 +980,43 @@ def api_cloud_disable():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+@app.route("/api/wifi/switch", methods=["POST"])
+def api_wifi_switch():
+    """Move an already-configured clock to a different network.
+
+    Separate from /api/wifi/connect on purpose. Connect is the onboarding path
+    and falls back to the setup hotspot, which is correct when there is no
+    working network to lose. This one keeps the current network as a fallback.
+    """
+    try:
+        manager = get_wifi_setup_manager()
+        if manager is None:
+            return jsonify({"ok": False, "error": "WiFi setup manager unavailable"}), 503
+        payload = request.get_json(silent=True) or {}
+        ssid = str(payload.get("ssid") or "").strip()
+        if not ssid:
+            return jsonify({"ok": False, "error": "ssid required"}), 400
+        return jsonify(manager.switch_network(ssid, str(payload.get("password") or "")))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/display/sleep", methods=["POST"])
+def api_display_sleep():
+    """Put the panel to sleep or wake it. The device stays online either way."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        asleep = payload.get("asleep", True)
+        if isinstance(asleep, str):
+            asleep = asleep.strip().lower() not in {"false", "0", "no", "off"}
+        return jsonify(power.set_display_sleep(bool(asleep)))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 @app.route("/api/restart", methods=["POST"])
 def api_restart():
+    """Restart the clock service only. Kept separate from a full reboot."""
     try:
         subprocess.Popen(["systemctl", "restart", "metroclock"])
         return jsonify({"ok": True})
@@ -980,11 +1024,50 @@ def api_restart():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+def _schedule_power_action(action: str):
+    """Schedule a power action, mapping a refusal to 409 rather than 200.
+
+    schedule() refuses when another action is already pending; without this the
+    caller would see a success status carrying a failure body.
+    """
+    result = power.schedule(action)
+    return jsonify(result), (200 if result.get("ok") else 409)
+
+
 @app.route("/api/reboot", methods=["POST"])
 def api_reboot():
     try:
-        subprocess.Popen(["reboot"])
-        return jsonify({"ok": True})
+        return _schedule_power_action("reboot")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/shutdown", methods=["POST"])
+def api_shutdown():
+    """Power the device off. Recovering needs physical access to the plug."""
+    try:
+        return _schedule_power_action("shutdown")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/factory-reset", methods=["POST"])
+def api_factory_reset():
+    """Wipe settings, unpair, forget Wi-Fi, and take a new device identity.
+
+    Requires an explicit confirm flag. Every other endpoint here is recoverable
+    by sending the opposite request; this one is not, and it is one curl away
+    from anyone already on the local network.
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        if payload.get("confirm") is not True:
+            return jsonify({
+                "ok": False,
+                "error": "Refusing to factory reset without confirmation",
+                "hint": 'POST {"confirm": true} to proceed. This cannot be undone.',
+            }), 400
+        return _schedule_power_action("factory_reset")
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 

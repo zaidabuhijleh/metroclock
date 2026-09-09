@@ -332,13 +332,101 @@ data: {"type":"commands_available","command_id":"cmd_123"}
 The Pi should respond by calling `GET /api/devices/{device_id}/commands`.
 Polling remains the fallback if the event stream disconnects.
 
-Supported MVP commands:
+Supported commands:
 
 - `set_mode`: payload `{ "mode": "clock" }`
 - `set_settings`: payload is any subset of existing runtime-editable settings
+- `set_display_sleep`: payload `{ "asleep": true }`
+- `set_wifi`: payload `{ "ssid": "...", "password": "..." }`
+- `reboot` (alias `restart`), `shutdown`, `factory_reset`: no payload
 
-`restart` is recognized but intentionally disabled until update rollout has
-rollback/health-check protection.
+The action list is validated on the cloud side as well as on the device, so an
+unsupported action is rejected with 400 when the user presses the button rather
+than being queued, delivered, refused, and surfaced later as a failed command.
+
+## Device lifecycle commands
+
+These four are the ones that can leave a clock unreachable, so the mechanics
+matter more than the payloads.
+
+| Command | Effect | Recovery |
+|---|---|---|
+| `set_display_sleep` | Render loop holds the panel dark. Web server and cloud agent keep running. | Send it again with `asleep: false`. |
+| `reboot` | Full OS reboot, roughly 40 seconds dark. | Comes back on its own. |
+| `shutdown` | Powers the device off. | **Physical access only** - nothing remote can turn a powered-off Pi back on. |
+| `factory_reset` | Wipes settings, deregisters from the account, forgets Wi-Fi, takes a new device id, reboots. | Re-onboard through the app over `MetroClock-Setup`. |
+
+Everything except display sleep is *scheduled* a few seconds out rather than run
+inline. The device has to acknowledge the command before it goes away: run
+inline, a reboot kills the process mid-acknowledgement, the command is never
+marked done, and it is redelivered on the next poll - a clock that reboots
+forever. `factory_reset` waits longer still, because the wipe revokes the very
+token the acknowledgement is sent with.
+
+Only one action can be pending at a time, first one wins. A reboot queued behind
+a factory reset would cut the wipe short and leave the device half-reset.
+
+Factory reset order is load-bearing: deregister (needs the cloud token) -> wipe
+config (removes the token) -> forget Wi-Fi (removes the network) -> drop the
+device id -> reboot. Deregistering is best effort; an offline clock still
+resets, leaving an orphaned row rather than a device that cannot be reset
+without a network.
+
+Provider API keys baked into an image survive a factory reset. They are device
+provisioning rather than user data, and wiping them would leave a reset clock
+unable to fetch weather until it was re-flashed. `factory_defaults.py` is shared
+by the image build and the field reset so the two cannot disagree about what
+"factory" means.
+
+## Changing Wi-Fi after setup
+
+`set_wifi` moves an already-configured clock to a different network. It is a
+different code path from onboarding, and deliberately so.
+
+Onboarding's `/api/wifi/connect` falls back to the setup hotspot when a join
+fails, which is correct there: there is no working network to lose. After setup
+that behaviour is dangerous - one mistyped password would take a working clock
+off a good network and strand it on a hotspot that only helps somebody standing
+next to it.
+
+So a switch keeps the current network as a fallback:
+
+1. Record the SSID the clock is on now.
+2. Try the new one, confirming it landed on *that* network and not a different
+   saved one.
+3. On failure, delete the failed profile - left in place it stays an autoconnect
+   candidate and can keep stealing the radio - then rejoin the previous network.
+4. Only if that also fails does it fall back to the hotspot.
+
+The device acknowledges before the radio drops, for the same reason the power
+actions do. The local equivalent is `POST /api/wifi/switch` with
+`{"ssid": "...", "password": "..."}`.
+
+**On the cloud route the password travels through the backend.** It is written
+to `device_commands.payload` on the way to the device and cleared as soon as the
+device acknowledges, so the exposure is bounded by delivery - but a command
+queued for a clock that never comes back online leaves a customer's PSK in that
+table until it is, and anyone with database read access can see it in that
+window.
+
+The app already prefers the local route: `CloudDeviceControlView` resolves a
+local client whenever the route store has the device marked `.local`, and falls
+back to the cloud only when it does not. That fallback is not a gap to close -
+if the phone is not on the clock's network there is no local route, and changing
+Wi-Fi remotely is exactly the case the cloud path exists for.
+
+What is worth adding when the UI is built: the route is already displayed, so
+say plainly on the Wi-Fi screen that a remote change sends the password through
+the backend. It is also the case where a wrong password costs the most, since
+nobody is nearby to reach the setup hotspot if the rollback fails too.
+
+### `POST /api/devices/{device_uid}/deregister`
+
+Authenticated with the **device token**, not a user token: the clock initiates
+this during its own factory reset, and the account that pressed the button may
+not be the one the device is still attached to. Revokes device tokens, deletes
+status, commands and memberships, then the device row, and drops the in-process
+preview frame.
 
 ### `POST /api/devices/{device_id}/commands/{command_id}/ack`
 

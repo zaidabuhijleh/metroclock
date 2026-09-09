@@ -24,6 +24,9 @@
 set -euo pipefail
 
 CONFIG_PATH="${METROCLOCK_CONFIG_PATH:-/etc/metroclock/config.json}"
+# `python3 -` has no __file__, so the repo root is resolved here and passed
+# in as PYTHONPATH for the factory_defaults import below.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RESTART=0
 YES=0
 
@@ -72,41 +75,15 @@ if ! sudo cat "$CONFIG_PATH" > "$tmp_prev" 2>/dev/null; then
   printf '{}\n' > "$tmp_prev"
 fi
 
-python3 - "$tmp_prev" "$tmp_new" <<'PY'
+PYTHONPATH="$REPO_ROOT" python3 - "$tmp_prev" "$tmp_new" <<'PY'
 import json
-import os
 import sys
 
+# Shared with core/power.py so an image build and a field factory reset cannot
+# disagree about what "factory" means.
+import factory_defaults
+
 previous_path, out_path = sys.argv[1], sys.argv[2]
-
-# Only values a factory unit should boot with. Anything absent falls through to
-# config.py, so this list stays short and reviewable on purpose.
-data = {
-    "DISPLAY_MODE": "clock",
-    "CLOCK_SHOW_AMPM": False,
-    "CLOCK_SHOW_DATE": False,
-    "SETUP_MODE": False,
-    "WIFI_SETUP_ENABLED": True,
-    "WIFI_SETUP_FORCE_HOTSPOT_UNPAIRED": True,
-    "WIFI_SETUP_HOTSPOT_SSID": "MetroClock-Setup",
-    "WIFI_SETUP_HOTSPOT_IP": "192.168.4.1",
-    "WIFI_SETUP_HOTSPOT_PASSWORD": "metroclock",
-    "METROCLOCK_CLOUD_ENABLED": False,
-    "METROCLOCK_CLOUD_BASE_URL": "",
-    "METROCLOCK_CLOUD_DEVICE_TOKEN": "",
-    "METROCLOCK_CLOUD_PAIRING_CODE": "",
-}
-
-# Shipped keys. Written to config.json rather than the environment so a user can
-# still override them from the app; an env var would silently win and make that
-# settings field a no-op.
-shipped = {
-    "OPENWEATHER_API_KEY": "METROCLOCK_IMAGE_OPENWEATHER_API_KEY",
-    "WMATA_API_KEY": "METROCLOCK_IMAGE_WMATA_API_KEY",
-    "AVIATIONSTACK_API_KEY": "METROCLOCK_IMAGE_AVIATIONSTACK_API_KEY",
-}
-for setting, env_var in shipped.items():
-    data[setting] = os.environ.get(env_var, "").strip()
 
 try:
     with open(previous_path, "r", encoding="utf-8") as f:
@@ -116,19 +93,24 @@ try:
 except Exception:
     previous = {}
 
-cleared = sorted(k for k in previous if k not in data)
+# An image build takes provider keys from the environment; it never inherits
+# whatever happened to be on the build unit.
+data = factory_defaults.build(previous=previous, keep_shipped_keys=False)
+
+cleared = factory_defaults.cleared_keys(previous)
 if cleared:
     print("  cleared %d personalised setting(s): %s" % (len(cleared), ", ".join(cleared)))
 else:
     print("  no personalised settings were present")
 
-for setting, env_var in shipped.items():
+for setting, env_var in factory_defaults.SHIPPED_KEY_FIELDS.items():
     state = "set from %s" % env_var if data[setting] else "EMPTY (widget will show a placeholder)"
     print(f"  {setting}: {state}")
 
 with open(out_path, "w", encoding="utf-8") as f:
     json.dump(data, f, indent=2, sort_keys=True)
-    f.write("\n")
+    f.write("
+")
 print(f"  wrote {len(data)} factory defaults")
 PY
 

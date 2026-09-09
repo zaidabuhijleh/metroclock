@@ -66,6 +66,32 @@ def read_config() -> dict:
         return result
 
 
+def read_runtime_overrides() -> dict:
+    """Only what is actually persisted in the runtime file.
+
+    read_config returns the merged effective view - defaults, then file, then
+    environment - which is right for the API and wrong for a factory reset:
+    every setting looks present there, so a reset would report clearing dozens
+    of settings when three were on disk.
+    """
+    with CONFIG_LOCK:
+        return _load_runtime_config()
+
+
+def replace_config(data: dict) -> dict:
+    """Overwrite the runtime config file wholesale.
+
+    write_config merges, which is right for a settings change and wrong for a
+    factory reset: merging would leave every personalised key in place. This is
+    also deliberately not filtered by EDITABLE_FIELDS, because the caller is
+    supplying a complete factory state rather than a user edit.
+    """
+    with CONFIG_LOCK:
+        _save_runtime_config(dict(data))
+        reload_config(force=True)
+        return dict(data)
+
+
 def write_config(updates: dict) -> dict:
     filtered = {k: v for k, v in updates.items() if k in EDITABLE_FIELDS}
     if not filtered:

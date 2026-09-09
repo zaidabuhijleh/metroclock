@@ -13,6 +13,9 @@ MATRIX_HEIGHT = 32
 MATRIX_SLOWDOWN = 4
 MATRIX_BRIGHTNESS = 100  # Panel brightness: applied once at matrix init; not user-editable.
 MATRIX_MAPPING = "adafruit-hat"
+# Panel asleep: the render loop holds the display dark but keeps the web
+# server and cloud agent running, which is what makes it wakeable again.
+DISPLAY_SLEEP = False
 MATRIX_PWM_BITS = 3
 MATRIX_PWM_BITS_METRO = 3
 MATRIX_PWM_BITS_FLIGHT = 3
@@ -206,6 +209,7 @@ METROCLOCK_CLOUD_PREVIEW_SECONDS = 2
 # Runtime/user-editable keys. Defaults live above; persistent overrides live in
 # a local JSON file; environment variables may override both.
 RUNTIME_EDITABLE_FIELDS = {
+    "DISPLAY_SLEEP",
     "METRO_SYSTEM",
     "WMATA_API_KEY",
     "WMATA_STATION_CODE",

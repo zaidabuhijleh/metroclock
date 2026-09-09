@@ -1,0 +1,77 @@
+"""The settings a factory-fresh clock boots with.
+
+Two callers have to agree on this and must not drift apart:
+``scripts/reset_device_config.sh`` when an SD card image is built, and
+``core/power.py`` when a user factory-resets a clock in the field. If the two
+disagreed, a reset unit would behave differently from a brand-new one, and that
+is the kind of difference you only discover in a customer's living room.
+
+Anything absent here falls through to ``config.py``, which stays the source of
+truth for defaults. That is why this list is deliberately short.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any, Mapping, Optional
+
+# Only the values a factory unit should boot with.
+FACTORY_DEFAULTS: dict[str, Any] = {
+    "DISPLAY_MODE": "clock",
+    "CLOCK_SHOW_AMPM": False,
+    "CLOCK_SHOW_DATE": False,
+    "DISPLAY_SLEEP": False,
+    "SETUP_MODE": False,
+    "WIFI_SETUP_ENABLED": True,
+    "WIFI_SETUP_FORCE_HOTSPOT_UNPAIRED": True,
+    "WIFI_SETUP_HOTSPOT_SSID": "MetroClock-Setup",
+    "WIFI_SETUP_HOTSPOT_IP": "192.168.4.1",
+    "WIFI_SETUP_HOTSPOT_PASSWORD": "metroclock",
+    "METROCLOCK_CLOUD_ENABLED": False,
+    "METROCLOCK_CLOUD_BASE_URL": "",
+    "METROCLOCK_CLOUD_DEVICE_TOKEN": "",
+    "METROCLOCK_CLOUD_PAIRING_CODE": "",
+}
+
+# Provider keys that an image may ship with. These are device provisioning
+# rather than user data, so a field factory reset carries them forward: wiping
+# them would leave a reset clock permanently unable to fetch weather without a
+# re-flash, which is not what "factory" means.
+SHIPPED_KEY_FIELDS: dict[str, str] = {
+    "OPENWEATHER_API_KEY": "METROCLOCK_IMAGE_OPENWEATHER_API_KEY",
+    "WMATA_API_KEY": "METROCLOCK_IMAGE_WMATA_API_KEY",
+    "AVIATIONSTACK_API_KEY": "METROCLOCK_IMAGE_AVIATIONSTACK_API_KEY",
+}
+
+
+def build(
+    previous: Optional[Mapping[str, Any]] = None,
+    env: Optional[Mapping[str, str]] = None,
+    keep_shipped_keys: bool = False,
+) -> dict[str, Any]:
+    """Return the config a factory-fresh unit should have.
+
+    ``keep_shipped_keys`` is the only difference between the two callers: an
+    image build takes provider keys from the environment, while a field reset
+    carries forward whatever the image was built with.
+    """
+    env = os.environ if env is None else env
+    previous = previous or {}
+
+    data = dict(FACTORY_DEFAULTS)
+    for setting, env_var in SHIPPED_KEY_FIELDS.items():
+        from_env = str(env.get(env_var, "") or "").strip()
+        if from_env:
+            data[setting] = from_env
+        elif keep_shipped_keys:
+            data[setting] = str(previous.get(setting, "") or "").strip()
+        else:
+            data[setting] = ""
+    return data
+
+
+def cleared_keys(previous: Optional[Mapping[str, Any]] = None) -> list[str]:
+    """Settings present before the reset that it removes."""
+    previous = previous or {}
+    known = set(FACTORY_DEFAULTS) | set(SHIPPED_KEY_FIELDS)
+    return sorted(k for k in previous if k not in known)
