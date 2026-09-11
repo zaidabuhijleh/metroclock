@@ -393,6 +393,15 @@ class WifiSetupManager:
                 self._run_command(["systemctl", "unmask", "hostapd"], timeout=12)
                 self._run_command(["systemctl", "restart", "hostapd"], timeout=12, check=True)
                 config_manager.write_config({"SETUP_MODE": True})
+                # last_error is deliberately *not* cleared. Whatever the radio
+                # said on the way here is the only specific explanation anyone
+                # gets, and clearing it left "Could not join X" as the whole
+                # story while the actual sentence — "No network with SSID 'X'
+                # found", a bad-key error, whatever it was — had already been
+                # thrown away seconds after it was produced.
+                #
+                # Safe to keep: every join path clears it when it starts, so
+                # this can only ever describe the most recent attempt.
                 self._set_status(
                     active=True,
                     connected=False,
@@ -400,7 +409,6 @@ class WifiSetupManager:
                     reason=reason,
                     ssid="",
                     ip=self.hotspot_ip,
-                    last_error="",
                 )
             except Exception as exc:
                 config_manager.write_config({"SETUP_MODE": False})
@@ -450,8 +458,19 @@ class WifiSetupManager:
     def _activate_network_manager_profile(self, ssid: str, password: str) -> str:
         """Create and activate an NM profile for ``ssid``.
 
-        NetworkManager only joins networks it has a profile for, so this is the
-        step that actually connects. Returns "" on success or a short error.
+        Returns "" on success or a short error.
+
+        Deliberately *not* ``nmcli device wifi connect``. That command can only
+        associate with an SSID already present in NM's scan list, and this runs
+        moments after hostapd handed the radio back, when the list is empty. It
+        fails in under a second with "No network with SSID ... found", which
+        short-circuits the caller's 45-second budget before it is ever used.
+        A rescan does not fix it: ``nmcli device wifi rescan`` only *starts* a
+        scan and returns immediately.
+
+        Creating the profile and running ``connection up`` instead makes NM scan
+        and associate as part of activation, which restores the behaviour this
+        had under wpa_supplicant — configure it, then give it time.
         """
         # The hotspot marks the interface unmanaged and turns the radio over to
         # hostapd; hand it back before asking NM to do anything.
@@ -462,31 +481,67 @@ class WifiSetupManager:
         # be reused and fail, so start clean.
         self._delete_network_manager_profiles_for(ssid)
 
-        # NM can only associate with an SSID present in its scan list, and the
-        # list is stale after hostapd has been holding the radio.
+        error = self._add_network_manager_profile(ssid, password)
+        if error:
+            return error
+
+        # Only a head start. `connection up` no longer depends on this having
+        # finished, it just associates sooner when it has.
         self._run_command(
             ["nmcli", "device", "wifi", "rescan", "ifname", self.interface], timeout=20
         )
 
-        args = ["nmcli", "--wait", str(self.connect_timeout), "device", "wifi", "connect", ssid]
-        if password:
-            args += ["password", password]
-        args += ["ifname", self.interface]
+        return self._bring_up_network_manager_profile(ssid)
 
+    def _add_network_manager_profile(self, ssid: str, password: str) -> str:
+        """Define the profile without connecting. "" on success."""
+        args = [
+            "nmcli", "connection", "add",
+            "type", "wifi",
+            "con-name", ssid,
+            "ifname", self.interface,
+            "ssid", ssid,
+            # Left on so the clock rejoins by itself after a router reboot or a
+            # power cut, without waiting for the supervisor's retry interval.
+            "connection.autoconnect", "yes",
+        ]
+        if password:
+            args += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+
+        completed = self._run_command_result(args, timeout=20)
+        if completed is None:
+            return "Could not create the WiFi profile"
+        if completed.returncode != 0:
+            return self._nmcli_error(completed, "Could not create the WiFi profile")
+        return ""
+
+    def _bring_up_network_manager_profile(self, ssid: str) -> str:
+        """Activate the profile, letting NM scan and associate. "" on success."""
+        args = [
+            "nmcli", "--wait", str(self.connect_timeout),
+            "connection", "up", ssid,
+            "ifname", self.interface,
+        ]
         completed = self._run_command_result(args, timeout=self.connect_timeout + 15)
         if completed is None:
-            # nmcli is known present here, so this is the command timing out.
             return f"Timed out joining {ssid}"[:120]
         if completed.returncode != 0:
-            # Never echo args here: they carry the PSK, and this string is
-            # surfaced through /api/status and the logs.
-            lines = [
-                line.strip()
-                for line in ((completed.stderr or "") + "\n" + (completed.stdout or "")).splitlines()
-                if line.strip()
-            ]
-            return (lines[-1] if lines else "nmcli connect failed")[:120]
+            return self._nmcli_error(completed, "nmcli connect failed")
         return ""
+
+    @staticmethod
+    def _nmcli_error(completed, fallback: str) -> str:
+        """Last meaningful line of nmcli's output, bounded.
+
+        Never built from argv: these commands carry the PSK, and this string is
+        surfaced through /api/status and the logs.
+        """
+        lines = [
+            line.strip()
+            for line in ((completed.stderr or "") + "\n" + (completed.stdout or "")).splitlines()
+            if line.strip()
+        ]
+        return (lines[-1] if lines else fallback)[:120]
 
     def _network_manager_profiles_for(self, ssid: str) -> list:
         """Names of NM profiles configured for ``ssid``."""
