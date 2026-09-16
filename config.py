@@ -182,6 +182,13 @@ COLOR_BLUE = (0, 0, 255)
 COLOR_YELLOW = (255, 255, 0)
 
 DISPLAY_MODE = "clock"
+# Optional widgets the owner has turned on, as a CSV of mode keys (for example
+# "metro,weather,ambient"). Set by the iOS app's widget picker and setup flow.
+# Empty means every widget, which is what clocks set up before this existed
+# keep. "clock" is the home screen and is always available; a value of just
+# "clock" means no optional widgets are on. The clock itself doesn't restrict
+# modes by this; it's the shared record the apps read so they agree.
+ENABLED_MODES = ""
 WEB_SERVER_PORT = 80
 SETUP_MODE = False
 WIFI_SETUP_ENABLED = True
@@ -231,6 +238,7 @@ RUNTIME_EDITABLE_FIELDS = {
     "AVIATIONSTACK_API_KEY",
     "FLIGHT_NUMBER",
     "DISPLAY_MODE",
+    "ENABLED_MODES",
     "MATRIX_PWM_BITS_CLOCK_WIDGET",
     "WEB_SERVER_PORT",
     "SETUP_MODE",
