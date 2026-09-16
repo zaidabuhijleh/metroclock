@@ -104,10 +104,15 @@ class WifiSetupManager:
 
     def should_show_setup_message(self) -> bool:
         config_manager.reload_config()
+        status = self.status()
+        # The hotspot being up means the clock is off the home network, paired
+        # or not. Hiding that behind the pairing check left a normal-looking
+        # clock on screen that could not be reached from the app.
+        if status.get("active"):
+            return True
         if self._has_device_token():
             return False
-        status = self.status()
-        if status.get("active") or status.get("last_error"):
+        if status.get("last_error"):
             return True
         return bool(getattr(config, "SETUP_MODE", False))
 
@@ -323,12 +328,16 @@ class WifiSetupManager:
                 self._restart_wifi_client()
 
             if not self._wait_for_connection(self.connect_timeout):
+                seen = self._connection_info()
                 self._set_status(
                     active=False,
                     connected=False,
                     checking=False,
                     reason=f"Connecting to {ssid}",
-                    last_error=f"Timed out joining {ssid}",
+                    last_error=(
+                        f"Timed out joining {ssid} "
+                        f"(saw ip={seen.get('ip') or '-'} ssid={seen.get('ssid') or '-'})"
+                    ),
                 )
                 return False, f"Could not join {ssid}"
 
@@ -362,6 +371,14 @@ class WifiSetupManager:
             if restart_client:
                 self._restart_wifi_client()
             if not self._wait_for_connection(self.connect_timeout):
+                seen = self._connection_info()
+                # Logged rather than stored in last_error, which _supervise
+                # reads as "wait out the retry interval" and would change timing.
+                print(
+                    f"WiFi join timed out ({reason}): saw ip={seen.get('ip') or '-'} "
+                    f"ssid={seen.get('ssid') or '-'}",
+                    flush=True,
+                )
                 self._set_status(active=False, connected=False, checking=False, reason=reason)
                 return False
             self._mark_connected(fallback_ssid=fallback_ssid)
@@ -445,6 +462,14 @@ class WifiSetupManager:
     def _stop_hotspot(self):
         self._run_command(["systemctl", "stop", "hostapd"], timeout=8)
         self._run_command(["systemctl", "stop", "dnsmasq"], timeout=8)
+        # _start_hotspot pins the hotspot address on the interface by hand, and
+        # nothing else removes it: NetworkManager adds its DHCP lease alongside
+        # rather than replacing it. Left behind, it is the first address `ip`
+        # lists, so _is_connected saw the hotspot IP, decided the join had
+        # failed, and after the timeout tore down a working connection.
+        self._run_command(
+            ["ip", "addr", "del", f"{self.hotspot_ip}/24", "dev", self.interface], timeout=8
+        )
 
     def _use_network_manager(self) -> bool:
         """True when NetworkManager owns the radio (Raspberry Pi OS bookworm+)."""
@@ -780,17 +805,26 @@ class WifiSetupManager:
         return ""
 
     def _interface_ipv4(self) -> str:
+        """The interface's IPv4 address, preferring anything but the hotspot's.
+
+        The interface can briefly hold both the hotspot address and a real
+        lease; reporting the hotspot one then made a live connection look down.
+        """
         result = self._run_command(["ip", "-4", "-o", "addr", "show", "dev", self.interface], timeout=4, capture=True)
+        addresses = []
         for part in result.split():
             if "/" not in part:
                 continue
             try:
                 iface = ipaddress.ip_interface(part)
                 if iface.version == 4:
-                    return str(iface.ip)
+                    addresses.append(str(iface.ip))
             except Exception:
                 continue
-        return ""
+        for address in addresses:
+            if address != self.hotspot_ip:
+                return address
+        return addresses[0] if addresses else ""
 
     def _has_default_route(self) -> bool:
         result = self._run_command(["ip", "route", "show", "default", "dev", self.interface], timeout=4, capture=True)
