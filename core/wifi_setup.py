@@ -21,6 +21,9 @@ WPA_SUPPLICANT_CONF = "/etc/wpa_supplicant/wpa_supplicant.conf"
 HOSTAPD_CONF = "/etc/hostapd/hostapd.conf"
 DNSMASQ_CONF = "/etc/dnsmasq.d/metroclock-setup.conf"
 RECOVERY_LOCK_PATH = "/run/metroclock/wifi-recovery.lock"
+# Consecutive failed connection checks before the supervisor treats the network
+# as lost. One is a DHCP renewal; three in a row, 15s apart, is a real outage.
+LOST_CONNECTION_CHECKS = 3
 
 
 @dataclass
@@ -255,16 +258,26 @@ class WifiSetupManager:
         self._supervise()
 
     def _supervise(self):
+        misses = 0
         while not self._stop_event.is_set():
             status = self.status()
             if status.get("active") or status.get("last_error"):
+                misses = 0
                 if status.get("active") and self._should_force_setup_hotspot():
                     if self._wait_for_stop(self.monitor_interval):
                         return
                     continue
                 if status.get("active") and self._has_device_token():
-                    if not self._try_saved_wifi("Paired; leaving setup WiFi", restart_client=True, stop_hotspot=True):
-                        self._start_hotspot("Could not join saved WiFi")
+                    if self._try_saved_wifi("Paired; leaving setup WiFi", restart_client=True, stop_hotspot=True):
+                        continue
+                    # Back on the hotspot, and staying there until the next
+                    # retry. Retrying immediately spun this loop every ~50s with
+                    # the hotspot alive a second or two at a time: long enough to
+                    # log, far too short for anyone to join it and fix the clock
+                    # by hand.
+                    self._start_hotspot("Could not join saved WiFi")
+                    if self._wait_for_stop(self.retry_interval):
+                        return
                     continue
                 if self._wait_for_stop(self.retry_interval):
                     return
@@ -275,9 +288,29 @@ class WifiSetupManager:
             if self._wait_for_stop(self.monitor_interval):
                 return
             if self._is_connected():
+                misses = 0
                 self._refresh_connected_status()
                 continue
 
+            # One failed check is not a lost network. A DHCP renewal leaves the
+            # radio associated with no address for a few seconds, and acting on
+            # that single sample tore down a working connection and dropped the
+            # clock into the hotspot retry loop, where it stayed until someone
+            # power-cycled it. Confirm over consecutive checks, and leave an
+            # association with the expected network alone however long its
+            # address takes to come back.
+            misses += 1
+            if misses < LOST_CONNECTION_CHECKS:
+                continue
+            expected_ssid = str(status.get("ssid") or "")
+            if expected_ssid and self._current_ssid() == expected_ssid:
+                print(
+                    f"WiFi still associated with {expected_ssid} but has no address; waiting",
+                    flush=True,
+                )
+                continue
+
+            misses = 0
             if not self._try_saved_wifi("WiFi lost; reconnecting", restart_client=True, stop_hotspot=False):
                 self._start_hotspot("WiFi lost")
 
@@ -630,10 +663,10 @@ class WifiSetupManager:
         if self._use_network_manager():
             # NM runs its own wpa_supplicant over D-Bus. Restarting the
             # wpa_supplicant@ unit or poking wpa_cli fights it, so just return
-            # the radio and let NM reconnect to a profile it already knows.
+            # the radio and reactivate a profile it already knows.
             self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
             self._run_command(["nmcli", "radio", "wifi", "on"], timeout=8)
-            self._run_command(["nmcli", "device", "connect", self.interface], timeout=20)
+            self._reactivate_saved_profile()
             return
 
         self._run_command(["nmcli", "device", "set", self.interface, "managed", "yes"], timeout=8)
@@ -643,6 +676,63 @@ class WifiSetupManager:
         self._run_command(["wpa_cli", "-i", self.interface, "reconfigure"], timeout=8)
         self._run_command(["dhcpcd", "-n", self.interface], timeout=8)
         self._run_command(["nmcli", "device", "connect", self.interface], timeout=8)
+
+    def _reactivate_saved_profile(self) -> bool:
+        """Bring up a saved WiFi profile by name. True when one activated.
+
+        ``nmcli device connect`` asks NetworkManager to pick the network itself,
+        which it can only do from its scan list. Coming back from the hotspot
+        that list is empty, so it failed in under a second with "A 'wireless'
+        setting is required if no AP path was given" and the caller then sat out
+        its entire connect timeout with nothing in flight. Naming the profile
+        makes NM scan and associate as part of activation, which is what
+        _activate_network_manager_profile already relies on.
+        """
+        profiles = self._saved_wifi_profiles()
+        if not profiles:
+            # Nothing saved to name; let NM try on its own rather than nothing.
+            self._run_command(["nmcli", "device", "connect", self.interface], timeout=20)
+            return False
+
+        self._run_command(
+            ["nmcli", "device", "wifi", "rescan", "ifname", self.interface], timeout=20
+        )
+        for name in profiles:
+            completed = self._run_command_result(
+                [
+                    "nmcli", "--wait", str(self.connect_timeout),
+                    "connection", "up", name,
+                    "ifname", self.interface,
+                ],
+                timeout=self.connect_timeout + 15,
+            )
+            if completed is not None and completed.returncode == 0:
+                return True
+            print(f"WiFi profile {name!r} did not activate", flush=True)
+        return False
+
+    def _saved_wifi_profiles(self) -> list:
+        """Saved WiFi profile names, most recently used first, hotspot aside."""
+        listing = self._run_command(
+            ["nmcli", "--escape", "no", "-t", "-f", "NAME,TYPE,TIMESTAMP", "connection", "show"],
+            timeout=8,
+            capture=True,
+        )
+        profiles = []
+        for line in listing.splitlines():
+            parts = line.rsplit(":", 2)
+            if len(parts) != 3:
+                continue
+            name, connection_type, timestamp = parts
+            if "wireless" not in connection_type or name == self.hotspot_ssid:
+                continue
+            try:
+                used_at = int(timestamp)
+            except ValueError:
+                used_at = 0
+            profiles.append((used_at, name))
+        profiles.sort(reverse=True)
+        return [name for _, name in profiles]
 
     def _ensure_hotspot_config(self):
         self._require_command("hostapd")
