@@ -156,7 +156,7 @@ class ClockWidget(Widget):
             "vertical": {"mode": "units", "unit_w": 1, "unit_h": 1, "gap": 1, "scale_with_thickness": True},
         },
         "segment": {
-            "thickness_ratio": 0.25,
+            "thickness_ratio": 0.16,
             # Unlit segments used to render as a dim "ghost" of every segment
             # slot (like a real LCD), but at 64x32 with ~14px-wide digits that
             # ghosting reads as visual noise rather than realism -- every
@@ -1180,13 +1180,12 @@ class ClockWidget(Widget):
     def _draw_digit_one(self, draw, x, y, dw, dh, on, style, profile):
         # "1" is the only digit with no middle ("g") segment, so composing it
         # from the normal a-g grid left a visible gap between its upper ("b")
-        # and lower ("c") pieces (nothing bridges the row where "g" would be),
-        # and in segment style the foot ("d") used the full-width digit
-        # coordinates while the stroke sat at the right edge, so the two
-        # didn't even share an x-range. Draw "1" as its own glyph instead: one
-        # continuous stroke, centered in a narrower box so it doesn't hug the
-        # right edge of a wide, mostly-empty cell, plus (segment style only)
-        # a foot that overlaps the stroke's base so they visibly connect.
+        # and lower ("c") pieces (nothing bridges the row where "g" would be).
+        # Draw "1" as its own glyph instead: one continuous stroke, centered
+        # in a narrower box so it doesn't hug the right edge of a wide,
+        # mostly-empty cell. No foot/serif -- "7" (top bar + stroke) is
+        # already unambiguous against a bare stroke, and the foot read as a
+        # stray lip stuck on the bottom rather than part of the numeral.
         base_thickness = max(1, int(round(min(dw, dh) * profile["thickness_ratio"])))
         narrow_w = max(base_thickness * 2 + 1, int(round(dw * 0.55)))
         narrow_w = min(dw, narrow_w)
@@ -1195,8 +1194,6 @@ class ClockWidget(Widget):
 
         stroke = (box_x + narrow_w - thickness, y, box_x + narrow_w - 1, y + dh - 1)
         rects = {"stroke": stroke}
-        if style == "segment":
-            rects["foot"] = (box_x, y + dh - thickness, box_x + narrow_w - 1, y + dh - 1)
 
         for rect in rects.values():
             rect_w = rect[2] - rect[0] + 1
@@ -1225,9 +1222,11 @@ class ClockWidget(Widget):
             self._draw_line_shape(draw, rect, color, line_shape, thickness)
 
     def _draw_colon(self, draw, x, y, digit_h, theme, style):
-        blink_on = (time.time() % 1.0) > 0.25
-        if not blink_on:
-            return
+        # Static, not blinking: this render is cached per rendered-text key
+        # (see _rendered_clock_face_cache), so a time-based blink could get
+        # frozen in its "off" phase for as long as that cache entry lives --
+        # which is almost certainly why the colon looked like it wasn't being
+        # drawn at all rather than just blinking.
         profile = self._font_line_profile(style)
         dot = max(1, profile["colon_size"])
         draw.rectangle((x, y + digit_h // 3, x + dot - 1, y + digit_h // 3 + dot - 1), fill=theme.accent_2)
