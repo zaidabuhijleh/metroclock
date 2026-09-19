@@ -180,9 +180,10 @@ class ClockWidget(Widget):
         "horizontal_two",
         "horizontal_two_flipped",
         "vertical_two",
-        "horizontal_three",
-        "vertical_three",
-        # Legacy preset names accepted from older clients/configs.
+        # Legacy preset names accepted from older clients/configs. The two
+        # three-slot presets (horizontal_split / vertical_split_focus*) were
+        # dropped for feeling too cramped at 64x32, so those aliases now
+        # resolve to their nearest two-slot equivalent instead.
         "horizontal_single",
         "horizontal_single_top",
         "horizontal_split",
@@ -200,15 +201,13 @@ class ClockWidget(Widget):
 
     CLOCK_WIDGET_GRID_WIDTH = 6
     CLOCK_WIDGET_GRID_HEIGHT = 3
-    VERTICAL_SIDE_WIDTH_UNITS = 3.0
-    WEATHER_MINI_WIDTH_UNITS = 2.0
     LEGACY_PRESET_ALIASES = {
         "horizontal_single": "horizontal_two",
         "horizontal_single_top": "horizontal_two_flipped",
-        "horizontal_split": "horizontal_three",
+        "horizontal_split": "horizontal_two",
         "vertical_focus": "vertical_two",
-        "vertical_split_focus": "vertical_three",
-        "vertical_split_focus_top": "vertical_three",
+        "vertical_split_focus": "vertical_two",
+        "vertical_split_focus_top": "vertical_two",
     }
 
     def __init__(self, width, height, metro_widget, weather_widget, flight_widget, sports_widget, stocks_widget):
@@ -453,11 +452,9 @@ class ClockWidget(Widget):
         return preset if preset in self.CLOCK_WIDGET_PRESET_OPTIONS else "auto"
 
     def _infer_widget_preset_from_legacy(self):
-        layout = self._layout()
-        widget_count = self._widget_count()
-        if layout == "vertical":
-            return "vertical_three" if widget_count >= 2 else "vertical_two"
-        return "horizontal_three" if widget_count >= 2 else "horizontal_two"
+        # Three-slot presets were dropped, so "auto" only ever resolves to a
+        # two-slot layout now regardless of the legacy widget count.
+        return "vertical_two" if self._layout() == "vertical" else "horizontal_two"
 
     def _active_widget_preset(self):
         requested = self._widget_preset()
@@ -481,9 +478,6 @@ class ClockWidget(Widget):
         if str(key or "primary").strip().lower() == "secondary":
             secondary = getattr(config, "CLOCK_WIDGET_SCROLL_MODE_SECONDARY", primary)
             return self._normalize_scroll_mode(secondary, fallback=primary)
-        if str(key or "primary").strip().lower() == "tertiary":
-            tertiary = getattr(config, "CLOCK_WIDGET_SCROLL_MODE_TERTIARY", primary)
-            return self._normalize_scroll_mode(tertiary, fallback=primary)
         return primary
 
     def _widget_scroll_mode_for_pane(self, pane: ClockWidgetPane):
@@ -499,19 +493,6 @@ class ClockWidget(Widget):
             unit_width=self.CLOCK_WIDGET_GRID_WIDTH,
             unit_height=self.CLOCK_WIDGET_GRID_HEIGHT,
         )
-
-    def _bottom_split_units(self, source_a: str, source_b: str):
-        total = float(self.CLOCK_WIDGET_GRID_WIDTH)
-        weather_units = max(1.0, min(total - 1.0, float(self.WEATHER_MINI_WIDTH_UNITS)))
-        src_a = str(source_a or "").strip().lower()
-        src_b = str(source_b or "").strip().lower()
-
-        if src_a == "weather" and src_b != "weather":
-            return weather_units, total - weather_units
-        if src_b == "weather" and src_a != "weather":
-            return total - weather_units, weather_units
-        # Equal split when neither or both sides are weather.
-        return total / 2.0, total / 2.0
 
     def _mini_scroll_args(self, scroll_mode="metro", *, default_align="left"):
         mode = self._normalize_scroll_mode(scroll_mode, fallback="metro")
@@ -614,18 +595,6 @@ class ClockWidget(Widget):
                 label="Left + Right Split",
                 description="Two side-by-side focus slots.",
                 builder=ClockWidget._layout_preset_vertical_two,
-            ),
-            "horizontal_three": ClockLayoutPreset(
-                key="horizontal_three",
-                label="Top Focus + Two Bottom Slots",
-                description="Large top slot with two compact bottom slots.",
-                builder=ClockWidget._layout_preset_horizontal_three,
-            ),
-            "vertical_three": ClockLayoutPreset(
-                key="vertical_three",
-                label="Left Focus + Two Right Slots",
-                description="Large left slot with two stacked right slots.",
-                builder=ClockWidget._layout_preset_vertical_three,
             ),
         }
 
@@ -820,63 +789,6 @@ class ClockWidget(Widget):
                 grid.bounds(left_units, 0.0, right_units, float(self.CLOCK_WIDGET_GRID_HEIGHT)),
                 "focused",
                 "secondary",
-            ),
-        )
-        return ClockScreenLayout(clock_faces=(), widget_panes=widget_panes)
-
-    def _layout_preset_horizontal_three(self, grid: ClockNormalizedGrid, sources: tuple[str, str, str]) -> ClockScreenLayout:
-        source_b = self._resolve_supported_source(sources[1], "horizontal")
-        source_c = self._resolve_supported_source(sources[2], "horizontal")
-        left_units, right_units = self._bottom_split_units(source_b, source_c)
-        widget_panes = (
-            self._pane(
-                sources[0],
-                "horizontal",
-                grid.bounds(0.0, 0.0, float(self.CLOCK_WIDGET_GRID_WIDTH), 2.0),
-                "focused",
-                "primary",
-            ),
-            ClockWidgetPane(
-                source=source_b,
-                slot="horizontal",
-                bounds=grid.bounds(0.0, 2.0, left_units, 1.0),
-                render_mode="compact",
-                scroll_mode_key="secondary",
-            ),
-            ClockWidgetPane(
-                source=source_c,
-                slot="horizontal",
-                bounds=grid.bounds(left_units, 2.0, right_units, 1.0),
-                render_mode="compact",
-                scroll_mode_key="tertiary",
-            ),
-        )
-        return ClockScreenLayout(clock_faces=(), widget_panes=widget_panes)
-
-    def _layout_preset_vertical_three(self, grid: ClockNormalizedGrid, sources: tuple[str, str, str]) -> ClockScreenLayout:
-        left_units = max(1.0, min(float(self.CLOCK_WIDGET_GRID_WIDTH - 1), float(self.VERTICAL_SIDE_WIDTH_UNITS)))
-        right_units = float(self.CLOCK_WIDGET_GRID_WIDTH) - left_units
-        widget_panes = (
-            self._pane(
-                sources[0],
-                "vertical",
-                grid.bounds(0.0, 0.0, left_units, float(self.CLOCK_WIDGET_GRID_HEIGHT)),
-                "focused",
-                "primary",
-            ),
-            self._pane(
-                sources[1],
-                "horizontal",
-                grid.bounds(left_units, 0.0, right_units, 1.5),
-                "compact",
-                "secondary",
-            ),
-            self._pane(
-                sources[2],
-                "horizontal",
-                grid.bounds(left_units, 1.5, right_units, 1.5),
-                "compact",
-                "tertiary",
             ),
         )
         return ClockScreenLayout(clock_faces=(), widget_panes=widget_panes)

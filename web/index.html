@@ -679,8 +679,6 @@
             <option value="horizontal_two">Top Focus + Bottom Strip</option>
             <option value="horizontal_two_flipped">Top Strip + Bottom Focus</option>
             <option value="vertical_two">Left + Right Split</option>
-            <option value="horizontal_three">Top Focus + Two Bottom Slots</option>
-            <option value="vertical_three">Left Focus + Two Right Slots</option>
           </select>
           <div class="layout-option-grid" id="clock-widget-layout-options">
             <button type="button" class="layout-option" data-widget-preset="single_full" onclick="selectClockWidgetPreset('single_full')">
@@ -702,16 +700,6 @@
               <span class="layout-preview preview-v2"><span class="slot-a"></span><span class="slot-b"></span></span>
               <span class="layout-name">Side Split</span>
               <span class="layout-meta">A left, B right</span>
-            </button>
-            <button type="button" class="layout-option" data-widget-preset="horizontal_three" onclick="selectClockWidgetPreset('horizontal_three')">
-              <span class="layout-preview preview-h3"><span class="slot-a"></span><span class="slot-b"></span><span class="slot-c"></span></span>
-              <span class="layout-name">Top + Two</span>
-              <span class="layout-meta">A large, B/C below</span>
-            </button>
-            <button type="button" class="layout-option" data-widget-preset="vertical_three" onclick="selectClockWidgetPreset('vertical_three')">
-              <span class="layout-preview preview-v3"><span class="slot-a"></span><span class="slot-b"></span><span class="slot-c"></span></span>
-              <span class="layout-name">Left + Stack</span>
-              <span class="layout-meta">A large, B/C right</span>
             </button>
           </div>
         </div>
@@ -1388,8 +1376,9 @@ const CLOCK_WIDGET_PRESET_OPTIONS = [
   "horizontal_two",
   "horizontal_two_flipped",
   "vertical_two",
-  "horizontal_three",
-  "vertical_three",
+  // Legacy preset names accepted from older clients/configs. The three-slot
+  // presets these used to resolve to were dropped, so they now normalize to
+  // their nearest two-slot equivalent (see CLOCK_WIDGET_PRESET_ALIASES).
   "horizontal_single",
   "horizontal_single_top",
   "horizontal_split",
@@ -1413,25 +1402,21 @@ const CLOCK_WIDGET_SLOT_COUNTS = {
   horizontal_two: 2,
   horizontal_two_flipped: 2,
   vertical_two: 2,
-  horizontal_three: 3,
-  vertical_three: 3,
 };
 const CLOCK_WIDGET_PRESET_ALIASES = {
   auto: "horizontal_two",
   horizontal_single: "horizontal_two",
   horizontal_single_top: "horizontal_two_flipped",
-  horizontal_split: "horizontal_three",
+  horizontal_split: "horizontal_two",
   vertical_focus: "vertical_two",
-  vertical_split_focus: "vertical_three",
-  vertical_split_focus_top: "vertical_three",
+  vertical_split_focus: "vertical_two",
+  vertical_split_focus_top: "vertical_two",
 };
 const CLOCK_WIDGET_SLOT_LABELS = {
   single_full: ["Full Display"],
   horizontal_two: ["Top Focus", "Bottom Strip"],
   horizontal_two_flipped: ["Top Strip", "Bottom Focus"],
   vertical_two: ["Left Slot", "Right Slot"],
-  horizontal_three: ["Top Focus", "Bottom Left", "Bottom Right"],
-  vertical_three: ["Left Focus", "Right Top", "Right Bottom"],
 };
 
 function normalizeClockSize(value) {
@@ -2479,9 +2464,7 @@ async function saveClock() {
   selectedClockWidgetSlotB = normalizeClockWidgetSource(document.getElementById("clock-widget-slot-b-source").value, "weather");
   selectedClockWidgetSlotC = normalizeClockWidgetSource(document.getElementById("clock-widget-slot-c-source").value, "stocks");
   selectedClockWidgetCount = CLOCK_WIDGET_SLOT_COUNTS[selectedClockWidgetPreset] || 2;
-  selectedClockLayout = selectedClockWidgetPreset === "vertical_two" || selectedClockWidgetPreset === "vertical_three"
-    ? "vertical"
-    : "horizontal";
+  selectedClockLayout = selectedClockWidgetPreset === "vertical_two" ? "vertical" : "horizontal";
   selectedClockWidgetSource = selectedClockWidgetSlotB;
   selectedClockWidgetSourceSecondary = selectedClockWidgetSlotC;
   selectedClockWidgetScrollModePrimary = normalizeClockWidgetScrollMode(
