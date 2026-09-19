@@ -26,13 +26,6 @@ SEGMENT_MAP = {
     "9": {"a", "b", "c", "d", "f", "g"},
 }
 
-# Segment-style readability overrides for low-resolution LED panels.
-# Keeps the watch-face aesthetic while making ambiguous digits easier to parse.
-SEGMENT_MAP_SEGMENT_STYLE = {
-    # Add a base foot to "1" so it separates visually from "7".
-    "1": {"b", "c", "d"},
-}
-
 
 @dataclass
 class ClockTheme:
@@ -1184,13 +1177,41 @@ class ClockWidget(Widget):
         for py in positions:
             draw.rectangle((x_start, py, min(x2, x_start + unit_w - 1), min(y2, py + unit_h - 1)), fill=color)
 
+    def _draw_digit_one(self, draw, x, y, dw, dh, on, style, profile):
+        # "1" is the only digit with no middle ("g") segment, so composing it
+        # from the normal a-g grid left a visible gap between its upper ("b")
+        # and lower ("c") pieces (nothing bridges the row where "g" would be),
+        # and in segment style the foot ("d") used the full-width digit
+        # coordinates while the stroke sat at the right edge, so the two
+        # didn't even share an x-range. Draw "1" as its own glyph instead: one
+        # continuous stroke, centered in a narrower box so it doesn't hug the
+        # right edge of a wide, mostly-empty cell, plus (segment style only)
+        # a foot that overlaps the stroke's base so they visibly connect.
+        base_thickness = max(1, int(round(min(dw, dh) * profile["thickness_ratio"])))
+        narrow_w = max(base_thickness * 2 + 1, int(round(dw * 0.55)))
+        narrow_w = min(dw, narrow_w)
+        thickness = max(1, min(base_thickness, max(1, narrow_w // 2)))
+        box_x = x + (dw - narrow_w) // 2
+
+        stroke = (box_x + narrow_w - thickness, y, box_x + narrow_w - 1, y + dh - 1)
+        rects = {"stroke": stroke}
+        if style == "segment":
+            rects["foot"] = (box_x, y + dh - thickness, box_x + narrow_w - 1, y + dh - 1)
+
+        for rect in rects.values():
+            rect_w = rect[2] - rect[0] + 1
+            rect_h = rect[3] - rect[1] + 1
+            line_shape = profile["horizontal"] if rect_w >= rect_h else profile["vertical"]
+            self._draw_line_shape(draw, rect, on, line_shape, thickness)
+
     def _draw_segment_digit(self, draw, x, y, dw, dh, digit, on, off, style):
         profile = self._font_line_profile(style)
+        if str(digit) == "1":
+            self._draw_digit_one(draw, x, y, dw, dh, on, style, profile)
+            return
         base_thickness = max(1, int(round(min(dw, dh) * profile["thickness_ratio"])))
         rects, thickness = self._segment_rects_for_digit(x, y, dw, dh, base_thickness, digit)
         segs = SEGMENT_MAP.get(digit, set())
-        if style == "segment":
-            segs = SEGMENT_MAP_SEGMENT_STYLE.get(digit, segs)
         draw_unlit = profile["draw_unlit"]
 
         for seg, rect in rects.items():
