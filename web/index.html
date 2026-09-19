@@ -631,7 +631,9 @@
       <div class="card-title">Clock Settings</div>
       <label>Font Style</label>
       <select id="clock-font-style">
-        <option value="matrix">Matrix</option>
+        <option value="font_spleen">Classic</option>
+        <option value="segment">LED Segment</option>
+        <option value="matrix">Dot Matrix</option>
       </select>
 
       <label>Clock Size</label>
@@ -1341,7 +1343,7 @@ let selectedWmataLineFilters = new Set();
 let selectedNycLineFilters = new Set();
 let selectedTtcLineFilters = new Set();
 let selectedMetroTransition = "slide";
-let selectedClockFontStyle = "matrix";
+let selectedClockFontStyle = "font_spleen";
 let selectedClockSize = 1.0;
 let selectedClockSizeBeforeWidget = 1.0;
 let selectedClockWidgetPreset = "horizontal_two";
@@ -1902,9 +1904,9 @@ async function init() {
     setActiveMode(currentDisplayMode);
 
     // Clock
-    selectedClockFontStyle = ["matrix"].includes(data.CLOCK_FONT_STYLE)
+    selectedClockFontStyle = ["font_spleen", "segment", "matrix"].includes(data.CLOCK_FONT_STYLE)
       ? data.CLOCK_FONT_STYLE
-      : "matrix";
+      : "font_spleen";
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);
     selectedClockWidgetPreset = normalizeClockWidgetPreset(data.CLOCK_WIDGET_PRESET, "horizontal_two");
     selectedClockLayout = data.CLOCK_WIDGET_LAYOUT === "vertical" ? "vertical" : "horizontal";

@@ -216,6 +216,7 @@ METROCLOCK_CLOUD_PREVIEW_SECONDS = 2
 # a local JSON file; environment variables may override both.
 RUNTIME_EDITABLE_FIELDS = {
     "DISPLAY_SLEEP",
+    "CLOCK_FONT_STYLE",
     "METRO_SYSTEM",
     "WMATA_API_KEY",
     "WMATA_STATION_CODE",

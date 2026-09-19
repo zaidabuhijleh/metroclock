@@ -18,6 +18,11 @@ from scenes import SCENE_KEYS
 API_VERSION = "1.0"
 
 CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
+CLOCK_FONT_STYLE_OPTIONS = (
+    {"key": "font_spleen", "label": "Classic"},
+    {"key": "segment", "label": "LED Segment"},
+    {"key": "matrix", "label": "Dot Matrix"},
+)
 CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 CLOCK_WIDGET_PRESET_OPTIONS = (
     {"key": "auto", "label": "Auto (Legacy Settings)", "slot_count": None},
@@ -706,6 +711,11 @@ def api_clock_styles():
             "key": "CLOCK_SIZE",
             "default": 1.0,
             "options": list(CLOCK_SIZE_OPTIONS),
+        },
+        "clock_font_style": {
+            "key": "CLOCK_FONT_STYLE",
+            "default": "font_spleen",
+            "options": list(CLOCK_FONT_STYLE_OPTIONS),
         },
         "clock_overlays": {
             "show_date_key": "CLOCK_SHOW_DATE",

@@ -164,12 +164,20 @@ class ClockWidget(Widget):
         },
         "segment": {
             "thickness_ratio": 0.25,
-            "draw_unlit": True,
+            # Unlit segments used to render as a dim "ghost" of every segment
+            # slot (like a real LCD), but at 64x32 with ~14px-wide digits that
+            # ghosting reads as visual noise rather than realism -- every
+            # digit ends up showing the same always-present grid, which is
+            # what actually made this style hard to read. Dropping it to only
+            # draw lit segments (matching the "matrix" style's behavior)
+            # makes the digit shapes read cleanly.
+            "draw_unlit": False,
             "colon_size": 2,
             "horizontal": {"mode": "solid"},
             "vertical": {"mode": "solid"},
         },
     }
+    CLOCK_FONT_STYLE_OPTIONS = {"font_spleen", "matrix", "segment"}
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"clock", "metro", "weather", "flight", "sports", "stocks", "pomodoro"}
     SCROLL_MODE_OPTIONS = {"metro", "ticker"}
@@ -253,7 +261,8 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- config
 
     def _font_style(self):
-        return "font_spleen"
+        style = str(getattr(config, "CLOCK_FONT_STYLE", "font_spleen") or "font_spleen").strip().lower()
+        return style if style in self.CLOCK_FONT_STYLE_OPTIONS else "font_spleen"
 
     def _clock_size(self):
         raw = getattr(config, "CLOCK_SIZE", getattr(config, "CLOCK_SIZE_SCALE", 1.0))
@@ -804,9 +813,16 @@ class ClockWidget(Widget):
         img = Image.new("RGB", (max(1, w), max(1, h)), theme.bg)
         d = ImageDraw.Draw(img)
         style = self._font_style()
+        face_drawer = {
+            "matrix": self._draw_face_digital_matrix,
+            "segment": self._draw_face_digital_segment,
+        }.get(style)
 
         try:
-            self._draw_face_font(d, w, h, variant, theme, style)
+            if face_drawer is not None:
+                face_drawer(d, w, h, variant, theme)
+            else:
+                self._draw_face_font(d, w, h, variant, theme, style)
         except Exception:
             # Keep clock mode alive even if one face errors in an edge case.
             try:
@@ -829,6 +845,7 @@ class ClockWidget(Widget):
             int(w),
             int(h),
             str(variant),
+            self._font_style(),
             time_text,
             now.strftime("%Y-%m-%d"),
             now.strftime("%a %b %d").upper(),
@@ -1078,10 +1095,16 @@ class ClockWidget(Widget):
         mid_bottom = min(y + dh - thickness - 1, mid_top + thickness - 1)
         upper_end = max(y + thickness, mid_top - 1)
         lower_start = min(y + dh - thickness - 1, mid_bottom + 1)
+        # Horizontal bars run the full digit width rather than stopping short
+        # of the vertical segments. Insetting them (the old behavior) leaves a
+        # thickness x thickness notch of pure background at each of the 4
+        # corners; at ~14px-wide digits that notch is big enough relative to
+        # the segment size that the outline reads as disconnected blocks
+        # instead of one shape. Overlapping into the corners closes that gap.
         rects = {
-            "a": (x + thickness, y, x + dw - thickness - 1, y + thickness - 1),
-            "g": (x + thickness, mid_top, x + dw - thickness - 1, mid_bottom),
-            "d": (x + thickness, y + dh - thickness, x + dw - thickness - 1, y + dh - 1),
+            "a": (x, y, x + dw - 1, y + thickness - 1),
+            "g": (x, mid_top, x + dw - 1, mid_bottom),
+            "d": (x, y + dh - thickness, x + dw - 1, y + dh - 1),
         }
         if upper_end >= y + thickness:
             rects["f"] = (x, y + thickness, x + thickness - 1, upper_end)
