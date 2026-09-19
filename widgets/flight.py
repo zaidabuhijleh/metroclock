@@ -35,6 +35,9 @@ class FlightWidget(Widget):
     POLL_AFTER_LANDING = 3 * 3600         # hold the result, then look for the next leg
     POLL_NOT_FOUND = 6 * 3600
     POLL_UNKNOWN = 3600
+    # How long after a passed departure time a still-"scheduled" answer stops
+    # being believable.
+    STALE_AFTER_DEPARTURE = 20 * 60
 
     FAILURE_BACKOFF_SECONDS = 300
     MAX_FAILURE_BACKOFF_SECONDS = 6 * 3600
@@ -267,6 +270,8 @@ class FlightWidget(Widget):
 
         if status == "active":
             arrival = self._leg_timestamp("arrival")
+            # Once it is airborne nothing on the panel moves until it is nearly
+            # down, so this is the long sleep the schedule is built around.
             if arrival is None:
                 return self.POLL_NEAR_ARRIVAL
             # Nothing displayed changes while airborne, so sleep until shortly
@@ -308,14 +313,47 @@ class FlightWidget(Widget):
         section = self.data.get(leg) if isinstance(self.data, dict) else None
         return section if isinstance(section, dict) else {}
 
-    def _leg_timestamp(self, leg):
+    def _leg_timestamp(self, leg, prefer_actual=False):
+        """An instant, for arithmetic. Never the display string.
+
+        ``*_utc`` first: the display fields are the airport's local time, and
+        one provider labels those "+00:00", so treating them as instants put
+        every schedule decision out by the airport's offset — four hours for a
+        clock watching a flight out of Washington.
+        """
         section = self._leg(leg)
-        return self._parse_api_time(section.get("estimated") or section.get("scheduled"))
+        keys = ("actual", "estimated", "scheduled") if prefer_actual else ("estimated", "scheduled")
+        for key in keys:
+            for field in (f"{key}_utc", key):
+                timestamp = self._parse_api_time(section.get(field))
+                if timestamp is not None:
+                    return timestamp
+        return None
+
+    def _leg_actual(self, leg):
+        """When it really happened, or None while it has not."""
+        section = self._leg(leg)
+        return self._parse_api_time(section.get("actual_utc") or section.get("actual"))
+
+    def _looks_stale(self):
+        """Departure is well past and the provider still calls it scheduled.
+
+        Not an error, and not something to hide behind "SCHEDULED": the panel
+        would read as current while the aircraft was an hour into its flight.
+        """
+        if self._raw_status() not in ("scheduled", "delayed", ""):
+            return False
+        if self._leg_actual("departure"):
+            return False
+        departure = self._leg_timestamp("departure")
+        return bool(departure and time.time() - departure > self.STALE_AFTER_DEPARTURE)
 
     def _leg_local_time(self, leg):
         """Formatted in the airport's own timezone, which is what a traveller wants."""
         section = self._leg(leg)
-        raw = section.get("estimated") or section.get("scheduled")
+        # What happened beats what was expected: a departure board that still
+        # shows the scheduled time after the aircraft has left is just wrong.
+        raw = section.get("actual") or section.get("estimated") or section.get("scheduled")
         if not raw:
             return "--:--"
         try:
@@ -354,6 +392,8 @@ class FlightWidget(Widget):
     }
 
     def _status_display(self):
+        if self._looks_stale():
+            return "NO UPDATE", "STALE", self.COLOR_DIM
         status = self._raw_status()
         entry = self.STATUS_LABELS.get(status)
         if entry is None:
@@ -368,7 +408,9 @@ class FlightWidget(Widget):
             return 1.0
         if status != "active":
             return 0.0
-        departure = self._leg_timestamp("departure")
+        # Actual wheels-up when it is known: progress measured from a scheduled
+        # departure the aircraft missed by half an hour is wrong the whole way.
+        departure = self._leg_timestamp("departure", prefer_actual=True)
         arrival = self._leg_timestamp("arrival")
         if not departure or not arrival:
             return 0.5

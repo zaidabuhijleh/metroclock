@@ -15,6 +15,13 @@ class Settings:
     # holds credentials; see app/upstream.py.
     openweather_api_key: str
     aviationstack_api_key: str
+    # AeroDataBox is the flight provider; AviationStack stays as a fallback for
+    # a deployment that still only has that key. Platform decides the base URL
+    # and auth header, since the same API is sold through three storefronts.
+    aerodatabox_api_key: str
+    aerodatabox_platform: str
+    aerodatabox_base_url: str
+    aerodatabox_auth_header: str
 
 
 def _split_csv(value: str) -> tuple[str, ...]:
@@ -37,4 +44,10 @@ def get_settings() -> Settings:
         debug_dashboard_enabled=_env_bool("METROCLOCK_DEBUG_DASHBOARD_ENABLED"),
         openweather_api_key=os.environ.get("OPENWEATHER_API_KEY", "").strip(),
         aviationstack_api_key=os.environ.get("AVIATIONSTACK_API_KEY", "").strip(),
+        aerodatabox_api_key=os.environ.get("AERODATABOX_API_KEY", "").strip(),
+        aerodatabox_platform=os.environ.get("AERODATABOX_PLATFORM", "apimarket").strip().lower(),
+        # Both optional: set them only when the storefront's defaults below are
+        # wrong, which is the one thing their published spec does not pin down.
+        aerodatabox_base_url=os.environ.get("AERODATABOX_BASE_URL", "").strip(),
+        aerodatabox_auth_header=os.environ.get("AERODATABOX_AUTH_HEADER", "").strip(),
     )

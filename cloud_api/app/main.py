@@ -1296,9 +1296,7 @@ def device_flight(
     if not upstream.allow_request(str(device["id"]), "flight", _FLIGHT_RATE_PER_HOUR):
         raise HTTPException(status_code=429, detail="Too many requests for this device")
     try:
-        record = upstream.flight_by_number(
-            flight_number, get_settings().aviationstack_api_key, _FLIGHT_TTL_SECONDS
-        )
+        record = upstream.flight_by_number(flight_number, get_settings(), _FLIGHT_TTL_SECONDS)
     except upstream.UpstreamError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     # "found: false" is a real answer, not an error: the flight may simply not
