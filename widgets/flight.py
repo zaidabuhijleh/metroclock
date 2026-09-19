@@ -38,6 +38,9 @@ class FlightWidget(Widget):
     # How long after a passed departure time a still-"scheduled" answer stops
     # being believable.
     STALE_AFTER_DEPARTURE = 20 * 60
+    # Airlines pad schedules, so a few minutes behind is normal and not worth
+    # colouring. A quarter of an hour is what a traveller would call late.
+    LATE_AFTER_MINUTES = 15
 
     FAILURE_BACKOFF_SECONDS = 300
     MAX_FAILURE_BACKOFF_SECONDS = 6 * 3600
@@ -70,6 +73,9 @@ class FlightWidget(Widget):
     COLOR_RAIL = (44, 52, 68)
     COLOR_LIVE = (64, 220, 120)
     COLOR_WARN = (255, 86, 86)
+    # Running late is not the same as cancelled: amber, not the red reserved
+    # for a flight that is not going.
+    COLOR_LATE = (255, 176, 32)
     COLOR_COOL = (96, 176, 255)
 
     def __init__(self, width, height):
@@ -335,6 +341,32 @@ class FlightWidget(Widget):
         section = self._leg(leg)
         return self._parse_api_time(section.get("actual_utc") or section.get("actual"))
 
+    def _delay_minutes(self):
+        """How late this flight is running, by its own numbers, or None.
+
+        Arrival first: that is what the person watching actually cares about,
+        and it accounts for time made up in the air.
+        """
+        for leg in ("arrival", "departure"):
+            section = self._leg(leg)
+            scheduled = self._parse_api_time(section.get("scheduled_utc") or section.get("scheduled"))
+            if scheduled is None:
+                continue
+            expected = self._parse_api_time(
+                section.get("actual_utc")
+                or section.get("actual")
+                or section.get("estimated_utc")
+                or section.get("estimated")
+            )
+            if expected is None:
+                continue
+            return (expected - scheduled) / 60
+        return None
+
+    def _is_late(self):
+        delay = self._delay_minutes()
+        return delay is not None and delay >= self.LATE_AFTER_MINUTES
+
     def _looks_stale(self):
         """Departure is well past and the provider still calls it scheduled.
 
@@ -400,6 +432,13 @@ class FlightWidget(Widget):
             short = (status.upper() or "UNKNOWN")[:8]
             return short, short[:5], self.COLOR_DIM
         full, short, color_name = entry
+        # A late flight reads amber, status text and trail together. Still
+        # "EN ROUTE" once airborne — where it is matters more than that it left
+        # late — but a delayed flight on the ground says so outright.
+        if status in ("scheduled", "active") and self._is_late():
+            if status == "scheduled":
+                full, short = self.STATUS_LABELS["delayed"][0], self.STATUS_LABELS["delayed"][1]
+            return full, short, self.COLOR_LATE
         return full, short, getattr(self, color_name)
 
     def _progress(self):
