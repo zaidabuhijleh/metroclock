@@ -25,3 +25,14 @@ services:
         sync: false
       - key: AVIATIONSTACK_API_KEY
         sync: false
+      # Flight data. AERODATABOX_API_KEY takes precedence over AviationStack.
+      # PLATFORM picks the storefront (apimarket, rapidapi, direct); BASE_URL
+      # and AUTH_HEADER override the defaults when the dashboard says otherwise.
+      - key: AERODATABOX_API_KEY
+        sync: false
+      - key: AERODATABOX_PLATFORM
+        value: apimarket
+      - key: AERODATABOX_BASE_URL
+        sync: false
+      - key: AERODATABOX_AUTH_HEADER
+        sync: false
