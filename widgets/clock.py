@@ -151,7 +151,9 @@ class ClockWidget(Widget):
         "matrix": {
             "thickness_ratio": 0.20,
             "draw_unlit": False,
-            "colon_size": 1,
+            # Match the Classic face's chunkier colon -- a single pixel read
+            # as barely-there at real panel size.
+            "colon_size": 2,
             "horizontal": {"mode": "units", "unit_w": 1, "unit_h": 1, "gap": 1, "scale_with_thickness": True},
             "vertical": {"mode": "units", "unit_w": 1, "unit_h": 1, "gap": 1, "scale_with_thickness": True},
         },
@@ -948,17 +950,26 @@ class ClockWidget(Widget):
         }
 
     def _reference_digit_box(self):
-        """Measure the actual ink extent of the default Spleen digit glyph.
+        """Target digit box for matching the Classic (Spleen) face's size.
 
-        PIL's font.getbbox()/draw.textbbox() on BDF bitmap fonts return the
-        fixed monospace cell size (e.g. 12x24), not the true ink bounds --
-        Spleen digits render noticeably smaller than their cell. Without
-        this, the segment/matrix/flip faces (which size themselves to fill
-        their layout box) end up visibly larger than the Classic (Spleen)
-        face at the same Clock Size. We pixel-scan a rendered "8" (a good
-        stand-in for the widest/tallest digit) to get the real ink size, and
-        use that as the target digit box for the "full" (real clock-face)
-        variant instead of just filling all available space.
+        Two different measurements, for two different reasons:
+
+        - Height: PIL's font.getbbox()/draw.textbbox() on BDF bitmap fonts
+          return the fixed monospace cell height (e.g. 24 for "12x24"), not
+          the true ink bounds -- Spleen digits render noticeably shorter
+          than their cell (ink height ~15 at 24pt). Using the cell height
+          here would make the segment/matrix/flip faces visibly taller than
+          Classic, so we pixel-scan a rendered "8" to get the real ink
+          height.
+        - Width: the Classic face draws "HH:MM" as one continuous string at
+          the font's natural per-character advance (its monospace cell
+          width, e.g. 12 for "12x24") -- that's what actually determines how
+          much horizontal room the rendered time takes up, not any single
+          glyph's own ink width (which is a couple pixels narrower per
+          character and, compounded across 4 digits, made segment/matrix
+          noticeably narrower than Classic). So width uses the cell width,
+          height uses the ink height -- together these make the other faces
+          occupy roughly the same footprint as Classic at the same size.
         """
         spec = self._clock_face_font_spec()
         path = spec.get("path")
@@ -981,9 +992,10 @@ class ClockWidget(Widget):
             probe_draw.text((0, 0), "8", font=font, fill=255)
             bbox = probe.getbbox()
             if bbox:
-                ink_w = bbox[2] - bbox[0]
                 ink_h = bbox[3] - bbox[1]
-                result = (max(1, ink_w * scale), max(1, ink_h * scale))
+                cell_w_match = re.search(r"(\d+)x(\d+)", str(path), re.IGNORECASE)
+                cell_w = int(cell_w_match.group(1)) if cell_w_match else (bbox[2] - bbox[0])
+                result = (max(1, cell_w * scale), max(1, ink_h * scale))
         except Exception:
             result = None
 
@@ -1181,6 +1193,19 @@ class ClockWidget(Widget):
         mid_bottom = min(y + dh - thickness - 1, mid_top + thickness - 1)
         upper_end = max(y + thickness, mid_top - 1)
         lower_start = min(y + dh - thickness - 1, mid_bottom + 1)
+        if str(digit) == "0":
+            # "0" never lights the middle bar ("g"), so its corner stems
+            # would otherwise stop a full segment-thickness short on each
+            # side of the middle (the gap "g" would occupy). At small sizes
+            # that reads as a deliberate horizontal seam/line rather than a
+            # gap -- which "0" should never have, since every other digit
+            # either lights that middle bar itself (like "8") or, like "1"
+            # and "7", doesn't have stems on both sides of it to begin with.
+            # Close the gap down to a hairline so "0"'s sides read as
+            # continuous strokes instead.
+            center = y + half
+            upper_end = max(y + thickness, min(center - 1, y + dh - thickness - 1))
+            lower_start = min(y + dh - thickness - 1, max(center + 1, y + thickness))
         # Horizontal bars run the full digit width rather than stopping short
         # of the vertical segments. Insetting them (the old behavior) leaves a
         # thickness x thickness notch of pure background at each of the 4
