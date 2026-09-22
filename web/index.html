@@ -634,6 +634,7 @@
         <option value="font_spleen">Classic</option>
         <option value="segment">LED Segment</option>
         <option value="matrix">Dot Matrix</option>
+        <option value="flip">Flip Board</option>
       </select>
 
       <label>Clock Size</label>
@@ -1904,7 +1905,7 @@ async function init() {
     setActiveMode(currentDisplayMode);
 
     // Clock
-    selectedClockFontStyle = ["font_spleen", "segment", "matrix"].includes(data.CLOCK_FONT_STYLE)
+    selectedClockFontStyle = ["font_spleen", "segment", "matrix", "flip"].includes(data.CLOCK_FONT_STYLE)
       ? data.CLOCK_FONT_STYLE
       : "font_spleen";
     selectedClockSize = normalizeClockSize(data.CLOCK_SIZE ?? data.CLOCK_SIZE_SCALE);

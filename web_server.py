@@ -22,6 +22,7 @@ CLOCK_FONT_STYLE_OPTIONS = (
     {"key": "font_spleen", "label": "Classic"},
     {"key": "segment", "label": "LED Segment"},
     {"key": "matrix", "label": "Dot Matrix"},
+    {"key": "flip", "label": "Flip Board"},
 )
 CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 CLOCK_WIDGET_PRESET_OPTIONS = (

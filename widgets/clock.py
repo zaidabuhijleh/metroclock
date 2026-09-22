@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 import config
 import config_manager
@@ -170,7 +170,8 @@ class ClockWidget(Widget):
             "vertical": {"mode": "solid"},
         },
     }
-    CLOCK_FONT_STYLE_OPTIONS = {"font_spleen", "matrix", "segment"}
+    CLOCK_FONT_STYLE_OPTIONS = {"font_spleen", "matrix", "segment", "flip"}
+    FLIP_ANIM_SECONDS = 0.35
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"clock", "metro", "weather", "flight", "sports", "stocks", "pomodoro"}
     SCROLL_MODE_OPTIONS = {"metro", "ticker"}
@@ -245,6 +246,10 @@ class ClockWidget(Widget):
         self._text_font_fit_cache = {}
         self._scroll_text_render_cache = {}
         self._rendered_clock_face_cache = self._SHARED_RENDERED_CLOCK_FACE_CACHE
+        # Split-flap ("flip" face) per-digit-position animation state: index
+        # -> {"shown": current target char, "from": char it's animating away
+        # from (None when idle), "start": monotonic() the flip began}.
+        self._flip_digit_state = {}
         self.font_small = self._load_spleen_size("5x8") or ImageFont.load_default()
         self.font_tall = self._load_spleen_size("6x12") or self.font_small
 
@@ -798,21 +803,33 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- clock faces
 
     def _render_clock_face(self, w, h, variant, theme):
-        cache_key = self._clock_face_render_cache_key(w, h, variant, theme)
-        cached = self._rendered_clock_face_cache.get(cache_key)
-        if cached is not None:
-            return cached.copy()
+        style = self._font_style()
+        # The "flip" face's mid-animation frames change every call even
+        # though the digit text doesn't (that's the whole point -- it's
+        # animating between two digits), so the normal render-per-text cache
+        # would just freeze on whichever frame got cached first. Bypass it
+        # entirely while a flip is actually in progress; once every digit
+        # settles, it's cacheable like every other style again.
+        flip_active = self._flip_update_state(self._flip_current_digits()) if style == "flip" else False
+
+        cache_key = None
+        if not flip_active:
+            cache_key = self._clock_face_render_cache_key(w, h, variant, theme)
+            cached = self._rendered_clock_face_cache.get(cache_key)
+            if cached is not None:
+                return cached.copy()
 
         img = Image.new("RGB", (max(1, w), max(1, h)), theme.bg)
         d = ImageDraw.Draw(img)
-        style = self._font_style()
         face_drawer = {
             "matrix": self._draw_face_digital_matrix,
             "segment": self._draw_face_digital_segment,
         }.get(style)
 
         try:
-            if face_drawer is not None:
+            if style == "flip":
+                self._draw_face_digital_flip(d, img, w, h, variant, theme)
+            elif face_drawer is not None:
                 face_drawer(d, w, h, variant, theme)
             else:
                 self._draw_face_font(d, w, h, variant, theme, style)
@@ -823,12 +840,13 @@ class ClockWidget(Widget):
             except Exception:
                 d.text((1, 1), self._time_text(False), font=self.font_small, fill=theme.primary)
 
-        self._store_bounded(
-            self._rendered_clock_face_cache,
-            cache_key,
-            img.copy(),
-            self.MAX_RENDERED_CLOCK_FACE_CACHE,
-        )
+        if cache_key is not None:
+            self._store_bounded(
+                self._rendered_clock_face_cache,
+                cache_key,
+                img.copy(),
+                self.MAX_RENDERED_CLOCK_FACE_CACHE,
+            )
         return img
 
     def _clock_face_render_cache_key(self, w, h, variant, theme):
@@ -1282,6 +1300,142 @@ class ClockWidget(Widget):
 
     def _draw_face_digital_segment(self, draw, w, h, variant, theme):
         self._draw_face_digital_common(draw, w, h, variant, theme, "segment")
+
+    # ----------------------------------------------------------- flip (split-flap)
+
+    def _flip_current_digits(self):
+        now, hour, _ampm = self._time_parts()
+        return f"{hour:02d}{now.minute:02d}"
+
+    def _flip_update_state(self, digits):
+        """Advance per-digit-position flip animation state to "now".
+
+        Returns True while any position is still mid-flip, so the caller
+        knows this render can't be served from the text-keyed cache.
+        """
+        now_mono = time.monotonic()
+        active = False
+        for index, ch in enumerate(digits):
+            state = self._flip_digit_state.get(index)
+            if state is None:
+                # First render ever: show it directly, no flip-in from blank.
+                self._flip_digit_state[index] = {"shown": ch, "from": None, "start": None}
+                continue
+            if state["from"] is not None:
+                elapsed = now_mono - state["start"]
+                if elapsed >= self.FLIP_ANIM_SECONDS:
+                    state["from"] = None
+                    state["start"] = None
+                else:
+                    active = True
+            if state["shown"] != ch:
+                # Animate from whatever's currently on screen -- if a new
+                # change lands mid-flip (rare: would need two digit changes
+                # inside FLIP_ANIM_SECONDS), this restarts from the
+                # in-progress display rather than queuing flips, which is a
+                # fine simplification for a clock that changes once a minute.
+                state["from"] = state["shown"]
+                state["shown"] = ch
+                state["start"] = now_mono
+                active = True
+        return active
+
+    def _flip_digit_progress(self, index):
+        state = self._flip_digit_state.get(index)
+        if not state or state["from"] is None:
+            return None, 1.0
+        elapsed = time.monotonic() - state["start"]
+        progress = max(0.0, min(1.0, elapsed / self.FLIP_ANIM_SECONDS))
+        return state["from"], progress
+
+    def _draw_flip_tile(self, draw, img, x, y, dw, dh, ch_new, ch_from, progress, theme):
+        # A muted plate so the tile reads as an object sitting on the panel
+        # rather than bare digits floating on black -- distinct from the
+        # canvas background but well under the numeral's brightness.
+        tile_bg = tuple(max(6, c // 3) for c in theme.dim)
+        on = theme.primary
+        off = tuple(max(0, c // 6) for c in theme.dim)
+
+        x2, y2 = x + dw - 1, y + dh - 1
+        draw.rectangle((x, y, x2, y2), fill=tile_bg)
+        # Clipping the four corner pixels back to the panel background reads
+        # as a hint of roundedness without needing real arcs at this size.
+        for corner in ((x, y), (x2, y), (x, y2), (x2, y2)):
+            draw.point(corner, fill=theme.bg)
+
+        pad = 1 if min(dw, dh) > 6 else 0
+        content_x, content_y = x + pad, y + pad
+        content_w = max(1, dw - 2 * pad)
+        content_h = max(1, dh - 2 * pad)
+        half = max(1, content_h // 2)
+
+        new_img = Image.new("RGB", (content_w, content_h), tile_bg)
+        self._draw_segment_digit(ImageDraw.Draw(new_img), 0, 0, content_w, content_h, ch_new, on, off, "segment")
+
+        if ch_from is not None and progress < 1.0:
+            # Real split-flap boards swap the bottom (rear) leaf to the new
+            # character immediately and hidden, then the top (front) flap
+            # swings down and away, shrinking toward the hinge at the seam
+            # and uncovering the new top half as it goes. We fake the same
+            # read here: the new digit is already the base image (so the
+            # bottom half is correct from frame one), and a shrinking sliver
+            # of the OLD digit's top, pinned to the seam, sits over it.
+            old_img = Image.new("RGB", (content_w, content_h), tile_bg)
+            self._draw_segment_digit(ImageDraw.Draw(old_img), 0, 0, content_w, content_h, ch_from, on, off, "segment")
+            remaining = max(0, round((1.0 - progress) * half))
+            if remaining > 0:
+                band_top = max(0, half - remaining)
+                flap = old_img.crop((0, band_top, content_w, half))
+                # Darken the flap progressively as it swings away toward the
+                # hinge. Some digit pairs (2->3, 5->6, ...) are pixel-identical
+                # in this band, which would otherwise make the flip invisible;
+                # the shading plus the crease line below keep the motion
+                # readable no matter what glyph is underneath.
+                shade = 1.0 - 0.5 * progress
+                if shade < 1.0:
+                    flap = ImageEnhance.Brightness(flap).enhance(shade)
+                new_img.paste(flap, (0, band_top))
+                # Leading edge of the flap -- a bright crease line that visibly
+                # travels from the top of the tile down to the seam as it
+                # shrinks, the one cue guaranteed to move every frame.
+                edge_color = tuple(min(255, c + 50) for c in tile_bg)
+                ImageDraw.Draw(new_img).line((0, band_top, content_w - 1, band_top), fill=edge_color)
+
+        img.paste(new_img, (content_x, content_y))
+
+        # The seam: the physical gap between the two flaps.
+        seam_y = min(y2 - 1, max(y + 1, content_y + half))
+        draw.line((content_x, seam_y, content_x + content_w - 1, seam_y), fill=theme.bg)
+
+    def _draw_face_digital_flip(self, draw, img, w, h, variant, theme):
+        now, hour, ampm = self._time_parts()
+        digits = f"{hour:02d}{now.minute:02d}"
+        metrics = self._clock_layout_metrics(w, h, variant)
+        date_text = now.strftime("%a %m/%d").upper()
+
+        for digit_index, ch in enumerate(digits):
+            x = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
+            if digit_index >= 2:
+                x += metrics["colon_w"] + metrics["spacing"]
+            ch_from, progress = self._flip_digit_progress(digit_index)
+            self._draw_flip_tile(
+                draw, img, x, metrics["y0"], metrics["digit_w"], metrics["digit_h"], ch, ch_from, progress, theme
+            )
+
+        colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
+        cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
+        self._draw_colon(draw, cx, metrics["y0"], metrics["digit_h"], theme, "segment")
+
+        self._draw_clock_overlays(
+            draw,
+            w,
+            h,
+            variant,
+            ampm,
+            theme,
+            date_text,
+            metrics,
+        )
 
     def draw_segment_test(self):
         """Render readability test: cycle 01..24 and display as NN:NN."""
