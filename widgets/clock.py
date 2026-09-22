@@ -242,6 +242,7 @@ class ClockWidget(Widget):
         self._clock_face_font_cache = {}
         self._widget_font_cache = {}
         self._widget_font_candidates_cache = None
+        self._reference_digit_box_cache = {}
         self._spleen_font_candidates_cache = None
         self._text_font_fit_cache = {}
         self._scroll_text_render_cache = {}
@@ -898,12 +899,13 @@ class ClockWidget(Widget):
             return 0
         if h < 20:
             return 0
-        # 6px only leaves room for the tiny fallback "4x6" font (the smallest
-        # candidate in _widget_font_candidates()) -- at that size "AM"/"PM"
-        # collapse into near-identical blocky shapes and read as "HH". 8px is
-        # just enough for the next size up, the actual 5x8 Spleen font, which
-        # is legible. The clock face itself has slack for this: its digit
-        # height now targets the Spleen face's own rendered size (see
+        # This band is used for the date only now (AM/PM moved to an inline
+        # stack beside the time -- see _draw_ampm_stack). 6px only leaves
+        # room for the tiny fallback "4x6" font (the smallest candidate in
+        # _widget_font_candidates()), which reads as blocky at small sizes.
+        # 8px is enough for the next size up, the 5x8 Spleen font, which is
+        # legible. The clock face itself has slack for this: its digit
+        # height targets the Spleen face's own rendered size (see
         # _reference_digit_box) rather than filling all available space, so
         # this doesn't push the digits off their target size.
         return 8
@@ -935,27 +937,125 @@ class ClockWidget(Widget):
             "vertical": vertical,
         }
 
+    def _reference_digit_box(self):
+        """Measure the actual ink extent of the default Spleen digit glyph.
+
+        PIL's font.getbbox()/draw.textbbox() on BDF bitmap fonts return the
+        fixed monospace cell size (e.g. 12x24), not the true ink bounds --
+        Spleen digits render noticeably smaller than their cell. Without
+        this, the segment/matrix/flip faces (which size themselves to fill
+        their layout box) end up visibly larger than the Classic (Spleen)
+        face at the same Clock Size. We pixel-scan a rendered "8" (a good
+        stand-in for the widest/tallest digit) to get the real ink size, and
+        use that as the target digit box for the "full" (real clock-face)
+        variant instead of just filling all available space.
+        """
+        spec = self._clock_face_font_spec()
+        path = spec.get("path")
+        if not path:
+            return None
+        try:
+            font_size = int(spec.get("font_size") or self._clock_face_font_size(path))
+        except Exception:
+            font_size = self._clock_face_font_size(path)
+        scale = max(1, int(spec.get("scale") or 1))
+        cache_key = (path, font_size, scale)
+        if cache_key in self._reference_digit_box_cache:
+            return self._reference_digit_box_cache[cache_key]
+
+        result = None
+        try:
+            font = ImageFont.truetype(path, font_size)
+            probe = Image.new("L", (font_size * 4, font_size * 4), 0)
+            probe_draw = ImageDraw.Draw(probe)
+            probe_draw.text((0, 0), "8", font=font, fill=255)
+            bbox = probe.getbbox()
+            if bbox:
+                ink_w = bbox[2] - bbox[0]
+                ink_h = bbox[3] - bbox[1]
+                result = (max(1, ink_w * scale), max(1, ink_h * scale))
+        except Exception:
+            result = None
+
+        self._reference_digit_box_cache[cache_key] = result
+        return result
+
+    # Bitmap font specs available for the inline AM/PM stack, largest first
+    # -- each name is literally "cell width x cell height" for these fonts.
+    _AMPM_STACK_FONT_SPECS = (("spleen-5x8", 5, 8), ("4x6", 4, 6))
+
+    def _ampm_stack_dims(self, available_h):
+        """Pick the largest AM/PM stack font whose two lines fit available_h."""
+        for key, glyph_w, glyph_h in self._AMPM_STACK_FONT_SPECS:
+            if glyph_h * 2 <= available_h:
+                return key, glyph_w, glyph_h
+        # Nothing fits cleanly -- use the smallest anyway so AM/PM still
+        # renders (just tight) instead of silently disappearing.
+        return self._AMPM_STACK_FONT_SPECS[-1]
+
+    def _draw_ampm_stack(self, draw, x, y_top, avail_h, ampm_text, theme):
+        """Draw AM/PM as two stacked glyphs (e.g. "A" over "M") beside the
+        time, instead of a horizontal string in its own band. This is what
+        lets the digits keep the full face height even when both AM/PM and
+        the date are enabled at once -- AM/PM no longer competes with the
+        digits for vertical space, only a few pixels of width.
+        """
+        text = str(ampm_text or "").upper()
+        if len(text) < 2:
+            return
+        top_char, bottom_char = text[0], text[1]
+
+        key, _glyph_w, _glyph_h = self._ampm_stack_dims(max(1, avail_h))
+        candidates = self._widget_font_candidates()
+        font = next((f for _size, f, meta in candidates if meta.get("key") == key), None)
+        if font is None:
+            return
+        color = self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")) or theme.accent_2
+
+        tl, tt, tw, th = self._font_text_metrics(draw, top_char, font)
+        bl, bt, bw, bh = self._font_text_metrics(draw, bottom_char, font)
+        pair_h = th + bh
+        y0 = y_top + max(0, (avail_h - pair_h) // 2)
+
+        draw.text((x - tl, y0 - tt), top_char, font=font, fill=color)
+        draw.text((x - bl, y0 + th - bt), bottom_char, font=font, fill=color)
+
     def _clock_layout_metrics(self, w, h, variant):
         style = self._font_style()
         profile = self._font_line_profile(style)
         size = self._effective_clock_size()
-        show_top_overlay = self._show_ampm() and (not self._use_24h())
         show_bottom_overlay = self._show_date()
-        top_band = self._overlay_band_height(h, variant, show_top_overlay)
         bottom_band = self._overlay_band_height(h, variant, show_bottom_overlay)
 
-        clock_top = top_band
+        # AM/PM used to reserve a horizontal band above the digits; it now
+        # draws inline as a stacked "A/M"-"P/M" indicator to the right of
+        # the time instead (see _draw_ampm_stack), so only the date still
+        # spends vertical space -- the clock face gets the rest.
+        clock_top = 0
         clock_bottom = max(clock_top + 1, h - bottom_band)
         available_h = max(6, clock_bottom - clock_top)
-        available_w = max(12, w - 2)
+
+        show_ampm_inline = self._show_ampm() and (not self._use_24h()) and variant in {"full", "vertical_focus"}
+        ampm_w = 0
+        ampm_gap = 2
+        if show_ampm_inline:
+            _key, ampm_w, _ampm_h = self._ampm_stack_dims(available_h)
+
+        reserved_w = (ampm_w + ampm_gap) if show_ampm_inline else 0
+        available_w = max(12, w - 2 - reserved_w)
 
         spacing = 1
         colon_w = profile["colon_size"]
         slot_w = max(2, (available_w - colon_w - (spacing * 3)) // 4)
         slot_h = max(6, available_h)
 
-        raw_digit_w = max(2, int(round(slot_w * size)))
-        raw_digit_h = max(6, int(round(slot_h * size)))
+        reference = self._reference_digit_box() if variant == "full" else None
+        if reference:
+            raw_digit_w = max(2, int(round(reference[0] * size)))
+            raw_digit_h = max(6, int(round(reference[1] * size)))
+        else:
+            raw_digit_w = max(2, int(round(slot_w * size)))
+            raw_digit_h = max(6, int(round(slot_h * size)))
         min_digit_w = 3 if style == "matrix" else 4
         min_digit_h = 6 if style == "matrix" else 8
 
@@ -963,7 +1063,9 @@ class ClockWidget(Widget):
         digit_h = min(slot_h, max(min_digit_h if slot_h >= min_digit_h else slot_h, raw_digit_h))
 
         total_w = digit_w * 4 + colon_w + (spacing * 3)
-        x0 = max(0, (w - total_w) // 2)
+        total_content_w = total_w + reserved_w
+        x0 = max(0, (w - total_content_w) // 2)
+        ampm_x = x0 + total_w + ampm_gap
         y0 = clock_top + max(0, (available_h - digit_h) // 2)
         return {
             "size": size,
@@ -973,56 +1075,41 @@ class ClockWidget(Widget):
             "digit_h": digit_h,
             "x0": x0,
             "y0": y0,
-            "top_band": top_band,
+            "top_band": 0,
             "bottom_band": bottom_band,
             "clock_top": clock_top,
             "clock_bottom": clock_bottom,
+            "available_h": available_h,
+            "show_ampm_inline": show_ampm_inline,
+            "ampm_x": ampm_x,
         }
 
     def _draw_clock_overlays(self, draw, w, h, variant, ampm, theme, date_text, metrics):
-        def draw_overlay(slot, content):
-            if content == "date":
-                if not self._show_date():
-                    return
-                text = date_text
-                color = self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")) or theme.accent
-                y_offset = -1 if slot == "top" else 1
-            elif content == "ampm":
-                if not (self._show_ampm() and ampm and not self._use_24h()):
-                    return
-                text = ampm
-                color = self._parse_color_override(getattr(config, "CLOCK_AMPM_COLOR", "")) or theme.accent_2
-                y_offset = -1 if slot == "top" else 1
-            else:
-                return
+        """Draw the date in its band at the bottom of the face.
 
-            band_key = "top_band" if slot == "top" else "bottom_band"
-            band_h = metrics.get(band_key, 0)
-            if band_h <= 0:
-                return
-            font = self._font_for_box(draw, text, max(1, w - 2), max(1, band_h), prefer_width_fit=True)
-            left, top, text_w, text_h = self._font_text_metrics(draw, text, font)
-            if slot == "top":
-                y = max(0, (band_h - text_h) // 2) - top + y_offset
-            else:
-                y = h - band_h + max(0, (band_h - text_h) // 2) - top + y_offset
-            # The +/-1 nudge above is meant to add a hair of breathing room
-            # away from the clock digits, but when a band is filled almost
-            # exactly by its font (e.g. the 8px band height matched to the
-            # 8px-tall Spleen "5x8" font) that nudge can push text half a
-            # pixel row past the canvas edge and clip it. Clamp back into
-            # the canvas rather than trusting the offset blindly.
-            y = max(-top, min(y, h - top - text_h))
-            x = max(0, (w - text_w) // 2) - left
-            draw.text((x, y), text, font=font, fill=color)
-
-        order = str(getattr(config, "CLOCK_OVERLAY_ORDER", "ampm_date") or "ampm_date").strip().lower()
-        slots = {
-            "top": "date" if order == "date_ampm" else "ampm",
-            "bottom": "ampm" if order == "date_ampm" else "date",
-        }
-        draw_overlay("top", slots["top"])
-        draw_overlay("bottom", slots["bottom"])
+        AM/PM no longer lives in a band -- it's drawn as a two-line stack
+        beside the time itself (see _draw_ampm_stack) so it doesn't cost
+        the digits any vertical space when both are enabled. Callers that
+        want the inline AM/PM indicator call _draw_ampm_stack separately
+        using the "ampm_x"/"show_ampm_inline" metrics from
+        _clock_layout_metrics.
+        """
+        if not self._show_date():
+            return
+        band_h = metrics.get("bottom_band", 0)
+        if band_h <= 0:
+            return
+        text = date_text
+        color = self._parse_color_override(getattr(config, "CLOCK_DATE_COLOR", "")) or theme.accent
+        font = self._font_for_box(draw, text, max(1, w - 2), max(1, band_h), prefer_width_fit=True)
+        left, top, text_w, text_h = self._font_text_metrics(draw, text, font)
+        y = h - band_h + max(0, (band_h - text_h) // 2) - top + 1
+        # See historical note: a small +1 nudge for breathing room can push
+        # text a half pixel row past the canvas edge when the band is
+        # filled almost exactly by its font. Clamp back into the canvas.
+        y = max(-top, min(y, h - top - text_h))
+        x = max(0, (w - text_w) // 2) - left
+        draw.text((x, y), text, font=font, fill=color)
 
     def _clock_face_size_key(self):
         size = self._effective_clock_size()
@@ -1074,34 +1161,48 @@ class ClockWidget(Widget):
         time_text = f"{hour:02d}:{now.minute:02d}"
         date_text = now.strftime("%a %b %d").upper()
         metrics = {
-            "top_band": self._overlay_band_height(h, variant, self._show_ampm() and ampm and not self._use_24h()),
+            "top_band": 0,
             "bottom_band": self._overlay_band_height(h, variant, self._show_date()),
         }
+        clock_top = metrics["top_band"]
+        clock_bottom = max(clock_top + 1, h - metrics["bottom_band"])
+        available_h = max(1, clock_bottom - clock_top)
+
+        show_ampm_inline = self._show_ampm() and ampm and not self._use_24h() and variant in {"full", "vertical_focus"}
+        ampm_w = 0
+        ampm_gap = 2
+        if show_ampm_inline:
+            _key, ampm_w, _ampm_h = self._ampm_stack_dims(available_h)
+        reserved_w = (ampm_w + ampm_gap) if show_ampm_inline else 0
+
         if variant == "full":
             font = self._load_clock_face_font()
         else:
-            available_h = max(1, h - metrics["top_band"] - metrics["bottom_band"])
-            font = self._font_for_box(draw, time_text, max(1, w - 2), available_h, prefer_width_fit=True)
+            font = self._font_for_box(draw, time_text, max(1, w - 2 - reserved_w), available_h, prefer_width_fit=True)
         if font is None:
             draw.text((1, 1), self._time_text(False), font=self.font_tall, fill=theme.primary)
             return
 
-        clock_top = metrics["top_band"]
-        clock_bottom = max(clock_top + 1, h - metrics["bottom_band"])
         text_left, text_top, text_w, text_h = self._font_text_metrics(draw, time_text, font)
-        scale = self._clock_face_font_spec()["scale"]
+        scale = self._clock_face_font_spec()["scale"] if variant == "full" else 1
+        rendered_w = text_w * max(1, scale)
+        block_x = max(0, (w - (rendered_w + reserved_w)) // 2)
+
         if scale > 1:
             text_img = Image.new("RGB", (max(1, text_w), max(1, text_h)), theme.bg)
             text_draw = ImageDraw.Draw(text_img)
             text_draw.text((-text_left, -text_top), time_text, font=font, fill=theme.primary)
             text_img = text_img.resize((text_img.width * scale, text_img.height * scale), Image.Resampling.NEAREST)
-            x = max(0, (w - text_img.width) // 2)
             y = clock_top + max(0, (clock_bottom - clock_top - text_img.height) // 2)
-            draw.bitmap((x, y), text_img.convert("1"), fill=theme.primary)
+            draw.bitmap((block_x, y), text_img.convert("1"), fill=theme.primary)
         else:
-            x = max(0, (w - text_w) // 2) - text_left
+            x = block_x - text_left
             y = clock_top + max(0, (clock_bottom - clock_top - text_h) // 2) - text_top
             draw.text((x, y), time_text, font=font, fill=theme.primary)
+
+        if show_ampm_inline:
+            ampm_x = block_x + rendered_w + ampm_gap
+            self._draw_ampm_stack(draw, ampm_x, clock_top, available_h, ampm, theme)
 
         self._draw_clock_overlays(
             draw,
@@ -1284,6 +1385,9 @@ class ClockWidget(Widget):
         cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
         self._draw_colon(draw, cx, metrics["y0"], metrics["digit_h"], theme, style)
 
+        if metrics.get("show_ampm_inline") and ampm:
+            self._draw_ampm_stack(draw, metrics["ampm_x"], metrics["clock_top"], metrics["available_h"], ampm, theme)
+
         self._draw_clock_overlays(
             draw,
             w,
@@ -1425,6 +1529,9 @@ class ClockWidget(Widget):
         colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
         cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
         self._draw_colon(draw, cx, metrics["y0"], metrics["digit_h"], theme, "segment")
+
+        if metrics.get("show_ampm_inline") and ampm:
+            self._draw_ampm_stack(draw, metrics["ampm_x"], metrics["clock_top"], metrics["available_h"], ampm, theme)
 
         self._draw_clock_overlays(
             draw,
