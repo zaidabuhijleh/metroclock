@@ -22,7 +22,9 @@ CLOCK_FONT_STYLE_OPTIONS = (
     {"key": "font_spleen", "label": "Classic"},
     {"key": "segment", "label": "LED Segment"},
     {"key": "matrix", "label": "Dot Matrix"},
-    {"key": "flip", "label": "Flip Board"},
+    # "flip" (split-flap board) is implemented in widgets/clock.py and still
+    # a valid CLOCK_FONT_STYLE value, but it's held back from the front-end
+    # picker for now -- not removed from the code, just not offered here.
 )
 CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 CLOCK_WIDGET_PRESET_OPTIONS = (
