@@ -880,7 +880,15 @@ class ClockWidget(Widget):
             return 0
         if h < 20:
             return 0
-        return 6
+        # 6px only leaves room for the tiny fallback "4x6" font (the smallest
+        # candidate in _widget_font_candidates()) -- at that size "AM"/"PM"
+        # collapse into near-identical blocky shapes and read as "HH". 8px is
+        # just enough for the next size up, the actual 5x8 Spleen font, which
+        # is legible. The clock face itself has slack for this: its digit
+        # height now targets the Spleen face's own rendered size (see
+        # _reference_digit_box) rather than filling all available space, so
+        # this doesn't push the digits off their target size.
+        return 8
 
     def _font_line_profile(self, style):
         fallback = self.FONT_LINE_SHAPES["segment"]
@@ -980,6 +988,13 @@ class ClockWidget(Widget):
                 y = max(0, (band_h - text_h) // 2) - top + y_offset
             else:
                 y = h - band_h + max(0, (band_h - text_h) // 2) - top + y_offset
+            # The +/-1 nudge above is meant to add a hair of breathing room
+            # away from the clock digits, but when a band is filled almost
+            # exactly by its font (e.g. the 8px band height matched to the
+            # 8px-tall Spleen "5x8" font) that nudge can push text half a
+            # pixel row past the canvas edge and clip it. Clamp back into
+            # the canvas rather than trusting the offset blindly.
+            y = max(-top, min(y, h - top - text_h))
             x = max(0, (w - text_w) // 2) - left
             draw.text((x, y), text, font=font, fill=color)
 
