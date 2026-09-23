@@ -156,14 +156,14 @@ CLOCK_WIDGET_SOURCE_SECONDARY = "stocks"
 # "horizontal_two"         -> large top slot + short bottom slot
 # "horizontal_two_flipped" -> short top slot + large bottom slot
 # "vertical_two"           -> left slot + right slot
-# "horizontal_three"       -> large top slot + two short bottom slots
-# "vertical_three"         -> large left slot + two stacked right slots
+# Three-slot presets ("horizontal_three" / "vertical_three") were removed:
+# at 64x32 the two compact slots they left for B/C never had enough room to
+# render cleanly, so Custom Widget mode is two-slot-only now.
 CLOCK_WIDGET_PRESET = "horizontal_two"
 # Slot sources for custom widget mode. Embedded widgets inherit their normal
 # settings from the corresponding full widget tabs.
 CLOCK_WIDGET_SLOT_A_SOURCE = "clock"
 CLOCK_WIDGET_SLOT_B_SOURCE = "weather"
-CLOCK_WIDGET_SLOT_C_SOURCE = "stocks"
 # Legacy mini-widget text motion style fallback.
 # "metro"  -> single-pass scroll with hold (like metro destination rows)
 # "ticker" -> continuous wrap-around ticker scroll
@@ -171,7 +171,6 @@ CLOCK_WIDGET_SCROLL_MODE = "metro"
 # Per-pane mini-widget text motion style.
 CLOCK_WIDGET_SCROLL_MODE_PRIMARY = "metro"
 CLOCK_WIDGET_SCROLL_MODE_SECONDARY = "metro"
-CLOCK_WIDGET_SCROLL_MODE_TERTIARY = "metro"
 # 24-hour vs 12-hour clock display.
 CLOCK_USE_24H = False
 
@@ -217,6 +216,7 @@ METROCLOCK_CLOUD_PREVIEW_SECONDS = 2
 # a local JSON file; environment variables may override both.
 RUNTIME_EDITABLE_FIELDS = {
     "DISPLAY_SLEEP",
+    "CLOCK_FONT_STYLE",
     "METRO_SYSTEM",
     "WMATA_API_KEY",
     "WMATA_STATION_CODE",
@@ -299,11 +299,9 @@ RUNTIME_EDITABLE_FIELDS = {
     "CLOCK_WIDGET_SOURCE_SECONDARY",
     "CLOCK_WIDGET_SLOT_A_SOURCE",
     "CLOCK_WIDGET_SLOT_B_SOURCE",
-    "CLOCK_WIDGET_SLOT_C_SOURCE",
     "CLOCK_WIDGET_SCROLL_MODE",
     "CLOCK_WIDGET_SCROLL_MODE_PRIMARY",
     "CLOCK_WIDGET_SCROLL_MODE_SECONDARY",
-    "CLOCK_WIDGET_SCROLL_MODE_TERTIARY",
     "CLOCK_USE_24H",
 }
 

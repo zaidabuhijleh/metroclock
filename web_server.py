@@ -18,6 +18,14 @@ from scenes import SCENE_KEYS
 API_VERSION = "1.0"
 
 CLOCK_SIZE_OPTIONS = (0.5, 0.75, 1.0)
+CLOCK_FONT_STYLE_OPTIONS = (
+    {"key": "font_spleen", "label": "Classic"},
+    {"key": "segment", "label": "LED Segment"},
+    {"key": "matrix", "label": "Dot Matrix"},
+    # "flip" (split-flap board) is implemented in widgets/clock.py and still
+    # a valid CLOCK_FONT_STYLE value, but it's held back from the front-end
+    # picker for now -- not removed from the code, just not offered here.
+)
 CLOCK_WIDGET_SCROLL_MODE_OPTIONS = ("metro", "ticker")
 CLOCK_WIDGET_PRESET_OPTIONS = (
     {"key": "auto", "label": "Auto (Legacy Settings)", "slot_count": None},
@@ -25,8 +33,6 @@ CLOCK_WIDGET_PRESET_OPTIONS = (
     {"key": "horizontal_two", "label": "Top Focus + Bottom Strip", "slot_count": 2},
     {"key": "horizontal_two_flipped", "label": "Top Strip + Bottom Focus", "slot_count": 2},
     {"key": "vertical_two", "label": "Left + Right Split", "slot_count": 2},
-    {"key": "horizontal_three", "label": "Top Focus + Two Bottom Slots", "slot_count": 3},
-    {"key": "vertical_three", "label": "Left Focus + Two Right Slots", "slot_count": 3},
 )
 
 WRITE_ENDPOINTS = {
@@ -709,6 +715,11 @@ def api_clock_styles():
             "default": 1.0,
             "options": list(CLOCK_SIZE_OPTIONS),
         },
+        "clock_font_style": {
+            "key": "CLOCK_FONT_STYLE",
+            "default": "font_spleen",
+            "options": list(CLOCK_FONT_STYLE_OPTIONS),
+        },
         "clock_overlays": {
             "show_date_key": "CLOCK_SHOW_DATE",
             "show_ampm_key": "CLOCK_SHOW_AMPM",
@@ -732,12 +743,10 @@ def api_clock_styles():
             "keys": {
                 "a": "CLOCK_WIDGET_SLOT_A_SOURCE",
                 "b": "CLOCK_WIDGET_SLOT_B_SOURCE",
-                "c": "CLOCK_WIDGET_SLOT_C_SOURCE",
             },
             "defaults": {
                 "a": "clock",
                 "b": "weather",
-                "c": "stocks",
             },
             "sources": ["clock", "weather", "metro", "stocks", "sports", "flight", "pomodoro"],
             "vertical_sources": ["clock", "weather", "stocks", "sports", "pomodoro"],
@@ -747,7 +756,6 @@ def api_clock_styles():
             "keys": {
                 "primary": "CLOCK_WIDGET_SCROLL_MODE_PRIMARY",
                 "secondary": "CLOCK_WIDGET_SCROLL_MODE_SECONDARY",
-                "tertiary": "CLOCK_WIDGET_SCROLL_MODE_TERTIARY",
                 "legacy": "CLOCK_WIDGET_SCROLL_MODE",
             },
             "default": "metro",

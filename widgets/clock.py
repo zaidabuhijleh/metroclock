@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 import config
 import config_manager
@@ -24,13 +24,6 @@ SEGMENT_MAP = {
     "7": {"a", "b", "c"},
     "8": {"a", "b", "c", "d", "e", "f", "g"},
     "9": {"a", "b", "c", "d", "f", "g"},
-}
-
-# Segment-style readability overrides for low-resolution LED panels.
-# Keeps the watch-face aesthetic while making ambiguous digits easier to parse.
-SEGMENT_MAP_SEGMENT_STYLE = {
-    # Add a base foot to "1" so it separates visually from "7".
-    "1": {"b", "c", "d"},
 }
 
 
@@ -158,18 +151,29 @@ class ClockWidget(Widget):
         "matrix": {
             "thickness_ratio": 0.20,
             "draw_unlit": False,
-            "colon_size": 1,
+            # Match the Classic face's chunkier colon -- a single pixel read
+            # as barely-there at real panel size.
+            "colon_size": 2,
             "horizontal": {"mode": "units", "unit_w": 1, "unit_h": 1, "gap": 1, "scale_with_thickness": True},
             "vertical": {"mode": "units", "unit_w": 1, "unit_h": 1, "gap": 1, "scale_with_thickness": True},
         },
         "segment": {
-            "thickness_ratio": 0.25,
-            "draw_unlit": True,
+            "thickness_ratio": 0.16,
+            # Unlit segments used to render as a dim "ghost" of every segment
+            # slot (like a real LCD), but at 64x32 with ~14px-wide digits that
+            # ghosting reads as visual noise rather than realism -- every
+            # digit ends up showing the same always-present grid, which is
+            # what actually made this style hard to read. Dropping it to only
+            # draw lit segments (matching the "matrix" style's behavior)
+            # makes the digit shapes read cleanly.
+            "draw_unlit": False,
             "colon_size": 2,
             "horizontal": {"mode": "solid"},
             "vertical": {"mode": "solid"},
         },
     }
+    CLOCK_FONT_STYLE_OPTIONS = {"font_spleen", "matrix", "segment", "flip"}
+    FLIP_ANIM_SECONDS = 0.35
     LAYOUT_OPTIONS = {"horizontal", "vertical"}
     WIDGET_SOURCES = {"clock", "metro", "weather", "flight", "sports", "stocks", "pomodoro"}
     SCROLL_MODE_OPTIONS = {"metro", "ticker"}
@@ -180,9 +184,10 @@ class ClockWidget(Widget):
         "horizontal_two",
         "horizontal_two_flipped",
         "vertical_two",
-        "horizontal_three",
-        "vertical_three",
-        # Legacy preset names accepted from older clients/configs.
+        # Legacy preset names accepted from older clients/configs. The two
+        # three-slot presets (horizontal_split / vertical_split_focus*) were
+        # dropped for feeling too cramped at 64x32, so those aliases now
+        # resolve to their nearest two-slot equivalent instead.
         "horizontal_single",
         "horizontal_single_top",
         "horizontal_split",
@@ -200,15 +205,13 @@ class ClockWidget(Widget):
 
     CLOCK_WIDGET_GRID_WIDTH = 6
     CLOCK_WIDGET_GRID_HEIGHT = 3
-    VERTICAL_SIDE_WIDTH_UNITS = 3.0
-    WEATHER_MINI_WIDTH_UNITS = 2.0
     LEGACY_PRESET_ALIASES = {
         "horizontal_single": "horizontal_two",
         "horizontal_single_top": "horizontal_two_flipped",
-        "horizontal_split": "horizontal_three",
+        "horizontal_split": "horizontal_two",
         "vertical_focus": "vertical_two",
-        "vertical_split_focus": "vertical_three",
-        "vertical_split_focus_top": "vertical_three",
+        "vertical_split_focus": "vertical_two",
+        "vertical_split_focus_top": "vertical_two",
     }
 
     def __init__(self, width, height, metro_widget, weather_widget, flight_widget, sports_widget, stocks_widget):
@@ -241,10 +244,15 @@ class ClockWidget(Widget):
         self._clock_face_font_cache = {}
         self._widget_font_cache = {}
         self._widget_font_candidates_cache = None
+        self._reference_digit_box_cache = {}
         self._spleen_font_candidates_cache = None
         self._text_font_fit_cache = {}
         self._scroll_text_render_cache = {}
         self._rendered_clock_face_cache = self._SHARED_RENDERED_CLOCK_FACE_CACHE
+        # Split-flap ("flip" face) per-digit-position animation state: index
+        # -> {"shown": current target char, "from": char it's animating away
+        # from (None when idle), "start": monotonic() the flip began}.
+        self._flip_digit_state = {}
         self.font_small = self._load_spleen_size("5x8") or ImageFont.load_default()
         self.font_tall = self._load_spleen_size("6x12") or self.font_small
 
@@ -254,7 +262,8 @@ class ClockWidget(Widget):
     # --------------------------------------------------------------- config
 
     def _font_style(self):
-        return "font_spleen"
+        style = str(getattr(config, "CLOCK_FONT_STYLE", "font_spleen") or "font_spleen").strip().lower()
+        return style if style in self.CLOCK_FONT_STYLE_OPTIONS else "font_spleen"
 
     def _clock_size(self):
         raw = getattr(config, "CLOCK_SIZE", getattr(config, "CLOCK_SIZE_SCALE", 1.0))
@@ -272,7 +281,18 @@ class ClockWidget(Widget):
         return best
 
     def _effective_clock_size(self):
-        return self._clock_size()
+        size = self._clock_size()
+        # At Large, the AM/PM and date bands together eat enough vertical
+        # space that the digits end up looking cramped/undersized relative
+        # to what "Large" implies. Rather than shrinking the bands (which
+        # made AM/PM illegible before, see _overlay_band_height) or moving
+        # AM/PM out of its band, just cap the size to Medium whenever both
+        # overlays are actually going to be shown together.
+        show_ampm = self._show_ampm() and not self._use_24h()
+        show_date = self._show_date()
+        if show_ampm and show_date and size > 0.75:
+            return 0.75
+        return size
 
     def _show_date(self):
         return bool(getattr(config, "CLOCK_SHOW_DATE", True))
@@ -453,11 +473,9 @@ class ClockWidget(Widget):
         return preset if preset in self.CLOCK_WIDGET_PRESET_OPTIONS else "auto"
 
     def _infer_widget_preset_from_legacy(self):
-        layout = self._layout()
-        widget_count = self._widget_count()
-        if layout == "vertical":
-            return "vertical_three" if widget_count >= 2 else "vertical_two"
-        return "horizontal_three" if widget_count >= 2 else "horizontal_two"
+        # Three-slot presets were dropped, so "auto" only ever resolves to a
+        # two-slot layout now regardless of the legacy widget count.
+        return "vertical_two" if self._layout() == "vertical" else "horizontal_two"
 
     def _active_widget_preset(self):
         requested = self._widget_preset()
@@ -481,9 +499,6 @@ class ClockWidget(Widget):
         if str(key or "primary").strip().lower() == "secondary":
             secondary = getattr(config, "CLOCK_WIDGET_SCROLL_MODE_SECONDARY", primary)
             return self._normalize_scroll_mode(secondary, fallback=primary)
-        if str(key or "primary").strip().lower() == "tertiary":
-            tertiary = getattr(config, "CLOCK_WIDGET_SCROLL_MODE_TERTIARY", primary)
-            return self._normalize_scroll_mode(tertiary, fallback=primary)
         return primary
 
     def _widget_scroll_mode_for_pane(self, pane: ClockWidgetPane):
@@ -499,19 +514,6 @@ class ClockWidget(Widget):
             unit_width=self.CLOCK_WIDGET_GRID_WIDTH,
             unit_height=self.CLOCK_WIDGET_GRID_HEIGHT,
         )
-
-    def _bottom_split_units(self, source_a: str, source_b: str):
-        total = float(self.CLOCK_WIDGET_GRID_WIDTH)
-        weather_units = max(1.0, min(total - 1.0, float(self.WEATHER_MINI_WIDTH_UNITS)))
-        src_a = str(source_a or "").strip().lower()
-        src_b = str(source_b or "").strip().lower()
-
-        if src_a == "weather" and src_b != "weather":
-            return weather_units, total - weather_units
-        if src_b == "weather" and src_a != "weather":
-            return total - weather_units, weather_units
-        # Equal split when neither or both sides are weather.
-        return total / 2.0, total / 2.0
 
     def _mini_scroll_args(self, scroll_mode="metro", *, default_align="left"):
         mode = self._normalize_scroll_mode(scroll_mode, fallback="metro")
@@ -614,18 +616,6 @@ class ClockWidget(Widget):
                 label="Left + Right Split",
                 description="Two side-by-side focus slots.",
                 builder=ClockWidget._layout_preset_vertical_two,
-            ),
-            "horizontal_three": ClockLayoutPreset(
-                key="horizontal_three",
-                label="Top Focus + Two Bottom Slots",
-                description="Large top slot with two compact bottom slots.",
-                builder=ClockWidget._layout_preset_horizontal_three,
-            ),
-            "vertical_three": ClockLayoutPreset(
-                key="vertical_three",
-                label="Left Focus + Two Right Slots",
-                description="Large left slot with two stacked right slots.",
-                builder=ClockWidget._layout_preset_vertical_three,
             ),
         }
 
@@ -824,77 +814,39 @@ class ClockWidget(Widget):
         )
         return ClockScreenLayout(clock_faces=(), widget_panes=widget_panes)
 
-    def _layout_preset_horizontal_three(self, grid: ClockNormalizedGrid, sources: tuple[str, str, str]) -> ClockScreenLayout:
-        source_b = self._resolve_supported_source(sources[1], "horizontal")
-        source_c = self._resolve_supported_source(sources[2], "horizontal")
-        left_units, right_units = self._bottom_split_units(source_b, source_c)
-        widget_panes = (
-            self._pane(
-                sources[0],
-                "horizontal",
-                grid.bounds(0.0, 0.0, float(self.CLOCK_WIDGET_GRID_WIDTH), 2.0),
-                "focused",
-                "primary",
-            ),
-            ClockWidgetPane(
-                source=source_b,
-                slot="horizontal",
-                bounds=grid.bounds(0.0, 2.0, left_units, 1.0),
-                render_mode="compact",
-                scroll_mode_key="secondary",
-            ),
-            ClockWidgetPane(
-                source=source_c,
-                slot="horizontal",
-                bounds=grid.bounds(left_units, 2.0, right_units, 1.0),
-                render_mode="compact",
-                scroll_mode_key="tertiary",
-            ),
-        )
-        return ClockScreenLayout(clock_faces=(), widget_panes=widget_panes)
-
-    def _layout_preset_vertical_three(self, grid: ClockNormalizedGrid, sources: tuple[str, str, str]) -> ClockScreenLayout:
-        left_units = max(1.0, min(float(self.CLOCK_WIDGET_GRID_WIDTH - 1), float(self.VERTICAL_SIDE_WIDTH_UNITS)))
-        right_units = float(self.CLOCK_WIDGET_GRID_WIDTH) - left_units
-        widget_panes = (
-            self._pane(
-                sources[0],
-                "vertical",
-                grid.bounds(0.0, 0.0, left_units, float(self.CLOCK_WIDGET_GRID_HEIGHT)),
-                "focused",
-                "primary",
-            ),
-            self._pane(
-                sources[1],
-                "horizontal",
-                grid.bounds(left_units, 0.0, right_units, 1.5),
-                "compact",
-                "secondary",
-            ),
-            self._pane(
-                sources[2],
-                "horizontal",
-                grid.bounds(left_units, 1.5, right_units, 1.5),
-                "compact",
-                "tertiary",
-            ),
-        )
-        return ClockScreenLayout(clock_faces=(), widget_panes=widget_panes)
-
     # --------------------------------------------------------------- clock faces
 
     def _render_clock_face(self, w, h, variant, theme):
-        cache_key = self._clock_face_render_cache_key(w, h, variant, theme)
-        cached = self._rendered_clock_face_cache.get(cache_key)
-        if cached is not None:
-            return cached.copy()
+        style = self._font_style()
+        # The "flip" face's mid-animation frames change every call even
+        # though the digit text doesn't (that's the whole point -- it's
+        # animating between two digits), so the normal render-per-text cache
+        # would just freeze on whichever frame got cached first. Bypass it
+        # entirely while a flip is actually in progress; once every digit
+        # settles, it's cacheable like every other style again.
+        flip_active = self._flip_update_state(self._flip_current_digits()) if style == "flip" else False
+
+        cache_key = None
+        if not flip_active:
+            cache_key = self._clock_face_render_cache_key(w, h, variant, theme)
+            cached = self._rendered_clock_face_cache.get(cache_key)
+            if cached is not None:
+                return cached.copy()
 
         img = Image.new("RGB", (max(1, w), max(1, h)), theme.bg)
         d = ImageDraw.Draw(img)
-        style = self._font_style()
+        face_drawer = {
+            "matrix": self._draw_face_digital_matrix,
+            "segment": self._draw_face_digital_segment,
+        }.get(style)
 
         try:
-            self._draw_face_font(d, w, h, variant, theme, style)
+            if style == "flip":
+                self._draw_face_digital_flip(d, img, w, h, variant, theme)
+            elif face_drawer is not None:
+                face_drawer(d, w, h, variant, theme)
+            else:
+                self._draw_face_font(d, w, h, variant, theme, style)
         except Exception:
             # Keep clock mode alive even if one face errors in an edge case.
             try:
@@ -902,12 +854,13 @@ class ClockWidget(Widget):
             except Exception:
                 d.text((1, 1), self._time_text(False), font=self.font_small, fill=theme.primary)
 
-        self._store_bounded(
-            self._rendered_clock_face_cache,
-            cache_key,
-            img.copy(),
-            self.MAX_RENDERED_CLOCK_FACE_CACHE,
-        )
+        if cache_key is not None:
+            self._store_bounded(
+                self._rendered_clock_face_cache,
+                cache_key,
+                img.copy(),
+                self.MAX_RENDERED_CLOCK_FACE_CACHE,
+            )
         return img
 
     def _clock_face_render_cache_key(self, w, h, variant, theme):
@@ -917,6 +870,7 @@ class ClockWidget(Widget):
             int(w),
             int(h),
             str(variant),
+            self._font_style(),
             time_text,
             now.strftime("%Y-%m-%d"),
             now.strftime("%a %b %d").upper(),
@@ -958,7 +912,15 @@ class ClockWidget(Widget):
             return 0
         if h < 20:
             return 0
-        return 6
+        # 6px only leaves room for the tiny fallback "4x6" font (the smallest
+        # candidate in _widget_font_candidates()) -- at that size "AM"/"PM"
+        # collapse into near-identical blocky shapes and read as "HH". 8px is
+        # just enough for the next size up, the actual 5x8 Spleen font, which
+        # is legible. The clock face itself has slack for this: its digit
+        # height targets the Spleen face's own rendered size (see
+        # _reference_digit_box) rather than filling all available space, so
+        # this doesn't push the digits off their target size.
+        return 8
 
     def _font_line_profile(self, style):
         fallback = self.FONT_LINE_SHAPES["segment"]
@@ -987,6 +949,59 @@ class ClockWidget(Widget):
             "vertical": vertical,
         }
 
+    def _reference_digit_box(self):
+        """Target digit box for matching the Classic (Spleen) face's size.
+
+        Two different measurements, for two different reasons:
+
+        - Height: PIL's font.getbbox()/draw.textbbox() on BDF bitmap fonts
+          return the fixed monospace cell height (e.g. 24 for "12x24"), not
+          the true ink bounds -- Spleen digits render noticeably shorter
+          than their cell (ink height ~15 at 24pt). Using the cell height
+          here would make the segment/matrix/flip faces visibly taller than
+          Classic, so we pixel-scan a rendered "8" to get the real ink
+          height.
+        - Width: the Classic face draws "HH:MM" as one continuous string at
+          the font's natural per-character advance (its monospace cell
+          width, e.g. 12 for "12x24") -- that's what actually determines how
+          much horizontal room the rendered time takes up, not any single
+          glyph's own ink width (which is a couple pixels narrower per
+          character and, compounded across 4 digits, made segment/matrix
+          noticeably narrower than Classic). So width uses the cell width,
+          height uses the ink height -- together these make the other faces
+          occupy roughly the same footprint as Classic at the same size.
+        """
+        spec = self._clock_face_font_spec()
+        path = spec.get("path")
+        if not path:
+            return None
+        try:
+            font_size = int(spec.get("font_size") or self._clock_face_font_size(path))
+        except Exception:
+            font_size = self._clock_face_font_size(path)
+        scale = max(1, int(spec.get("scale") or 1))
+        cache_key = (path, font_size, scale)
+        if cache_key in self._reference_digit_box_cache:
+            return self._reference_digit_box_cache[cache_key]
+
+        result = None
+        try:
+            font = ImageFont.truetype(path, font_size)
+            probe = Image.new("L", (font_size * 4, font_size * 4), 0)
+            probe_draw = ImageDraw.Draw(probe)
+            probe_draw.text((0, 0), "8", font=font, fill=255)
+            bbox = probe.getbbox()
+            if bbox:
+                ink_h = bbox[3] - bbox[1]
+                cell_w_match = re.search(r"(\d+)x(\d+)", str(path), re.IGNORECASE)
+                cell_w = int(cell_w_match.group(1)) if cell_w_match else (bbox[2] - bbox[0])
+                result = (max(1, cell_w * scale), max(1, ink_h * scale))
+        except Exception:
+            result = None
+
+        self._reference_digit_box_cache[cache_key] = result
+        return result
+
     def _clock_layout_metrics(self, w, h, variant):
         style = self._font_style()
         profile = self._font_line_profile(style)
@@ -1006,8 +1021,13 @@ class ClockWidget(Widget):
         slot_w = max(2, (available_w - colon_w - (spacing * 3)) // 4)
         slot_h = max(6, available_h)
 
-        raw_digit_w = max(2, int(round(slot_w * size)))
-        raw_digit_h = max(6, int(round(slot_h * size)))
+        reference = self._reference_digit_box() if variant == "full" else None
+        if reference:
+            raw_digit_w = max(2, int(round(reference[0] * size)))
+            raw_digit_h = max(6, int(round(reference[1] * size)))
+        else:
+            raw_digit_w = max(2, int(round(slot_w * size)))
+            raw_digit_h = max(6, int(round(slot_h * size)))
         min_digit_w = 3 if style == "matrix" else 4
         min_digit_h = 6 if style == "matrix" else 8
 
@@ -1058,6 +1078,13 @@ class ClockWidget(Widget):
                 y = max(0, (band_h - text_h) // 2) - top + y_offset
             else:
                 y = h - band_h + max(0, (band_h - text_h) // 2) - top + y_offset
+            # The +/-1 nudge above is meant to add a hair of breathing room
+            # away from the clock digits, but when a band is filled almost
+            # exactly by its font (e.g. the 8px band height matched to the
+            # 8px-tall Spleen "5x8" font) that nudge can push text half a
+            # pixel row past the canvas edge and clip it. Clamp back into
+            # the canvas rather than trusting the offset blindly.
+            y = max(-top, min(y, h - top - text_h))
             x = max(0, (w - text_w) // 2) - left
             draw.text((x, y), text, font=font, fill=color)
 
@@ -1166,10 +1193,29 @@ class ClockWidget(Widget):
         mid_bottom = min(y + dh - thickness - 1, mid_top + thickness - 1)
         upper_end = max(y + thickness, mid_top - 1)
         lower_start = min(y + dh - thickness - 1, mid_bottom + 1)
+        if str(digit) == "0":
+            # "0" never lights the middle bar ("g"), so its corner stems
+            # would otherwise stop a full segment-thickness short on each
+            # side of the middle (the gap "g" would occupy). At small sizes
+            # that reads as a deliberate horizontal seam/line rather than a
+            # gap -- which "0" should never have, since every other digit
+            # either lights that middle bar itself (like "8") or, like "1"
+            # and "7", doesn't have stems on both sides of it to begin with.
+            # Close the gap down to a hairline so "0"'s sides read as
+            # continuous strokes instead.
+            center = y + half
+            upper_end = max(y + thickness, min(center - 1, y + dh - thickness - 1))
+            lower_start = min(y + dh - thickness - 1, max(center + 1, y + thickness))
+        # Horizontal bars run the full digit width rather than stopping short
+        # of the vertical segments. Insetting them (the old behavior) leaves a
+        # thickness x thickness notch of pure background at each of the 4
+        # corners; at ~14px-wide digits that notch is big enough relative to
+        # the segment size that the outline reads as disconnected blocks
+        # instead of one shape. Overlapping into the corners closes that gap.
         rects = {
-            "a": (x + thickness, y, x + dw - thickness - 1, y + thickness - 1),
-            "g": (x + thickness, mid_top, x + dw - thickness - 1, mid_bottom),
-            "d": (x + thickness, y + dh - thickness, x + dw - thickness - 1, y + dh - 1),
+            "a": (x, y, x + dw - 1, y + thickness - 1),
+            "g": (x, mid_top, x + dw - 1, mid_bottom),
+            "d": (x, y + dh - thickness, x + dw - 1, y + dh - 1),
         }
         if upper_end >= y + thickness:
             rects["f"] = (x, y + thickness, x + thickness - 1, upper_end)
@@ -1249,13 +1295,38 @@ class ClockWidget(Widget):
         for py in positions:
             draw.rectangle((x_start, py, min(x2, x_start + unit_w - 1), min(y2, py + unit_h - 1)), fill=color)
 
+    def _draw_digit_one(self, draw, x, y, dw, dh, on, style, profile):
+        # "1" is the only digit with no middle ("g") segment, so composing it
+        # from the normal a-g grid left a visible gap between its upper ("b")
+        # and lower ("c") pieces (nothing bridges the row where "g" would be).
+        # Draw "1" as its own glyph instead: one continuous stroke, centered
+        # in a narrower box so it doesn't hug the right edge of a wide,
+        # mostly-empty cell. No foot/serif -- "7" (top bar + stroke) is
+        # already unambiguous against a bare stroke, and the foot read as a
+        # stray lip stuck on the bottom rather than part of the numeral.
+        base_thickness = max(1, int(round(min(dw, dh) * profile["thickness_ratio"])))
+        narrow_w = max(base_thickness * 2 + 1, int(round(dw * 0.55)))
+        narrow_w = min(dw, narrow_w)
+        thickness = max(1, min(base_thickness, max(1, narrow_w // 2)))
+        box_x = x + (dw - narrow_w) // 2
+
+        stroke = (box_x + narrow_w - thickness, y, box_x + narrow_w - 1, y + dh - 1)
+        rects = {"stroke": stroke}
+
+        for rect in rects.values():
+            rect_w = rect[2] - rect[0] + 1
+            rect_h = rect[3] - rect[1] + 1
+            line_shape = profile["horizontal"] if rect_w >= rect_h else profile["vertical"]
+            self._draw_line_shape(draw, rect, on, line_shape, thickness)
+
     def _draw_segment_digit(self, draw, x, y, dw, dh, digit, on, off, style):
         profile = self._font_line_profile(style)
+        if str(digit) == "1":
+            self._draw_digit_one(draw, x, y, dw, dh, on, style, profile)
+            return
         base_thickness = max(1, int(round(min(dw, dh) * profile["thickness_ratio"])))
         rects, thickness = self._segment_rects_for_digit(x, y, dw, dh, base_thickness, digit)
         segs = SEGMENT_MAP.get(digit, set())
-        if style == "segment":
-            segs = SEGMENT_MAP_SEGMENT_STYLE.get(digit, segs)
         draw_unlit = profile["draw_unlit"]
 
         for seg, rect in rects.items():
@@ -1269,9 +1340,11 @@ class ClockWidget(Widget):
             self._draw_line_shape(draw, rect, color, line_shape, thickness)
 
     def _draw_colon(self, draw, x, y, digit_h, theme, style):
-        blink_on = (time.time() % 1.0) > 0.25
-        if not blink_on:
-            return
+        # Static, not blinking: this render is cached per rendered-text key
+        # (see _rendered_clock_face_cache), so a time-based blink could get
+        # frozen in its "off" phase for as long as that cache entry lives --
+        # which is almost certainly why the colon looked like it wasn't being
+        # drawn at all rather than just blinking.
         profile = self._font_line_profile(style)
         dot = max(1, profile["colon_size"])
         draw.rectangle((x, y + digit_h // 3, x + dot - 1, y + digit_h // 3 + dot - 1), fill=theme.accent_2)
@@ -1312,6 +1385,142 @@ class ClockWidget(Widget):
 
     def _draw_face_digital_segment(self, draw, w, h, variant, theme):
         self._draw_face_digital_common(draw, w, h, variant, theme, "segment")
+
+    # ----------------------------------------------------------- flip (split-flap)
+
+    def _flip_current_digits(self):
+        now, hour, _ampm = self._time_parts()
+        return f"{hour:02d}{now.minute:02d}"
+
+    def _flip_update_state(self, digits):
+        """Advance per-digit-position flip animation state to "now".
+
+        Returns True while any position is still mid-flip, so the caller
+        knows this render can't be served from the text-keyed cache.
+        """
+        now_mono = time.monotonic()
+        active = False
+        for index, ch in enumerate(digits):
+            state = self._flip_digit_state.get(index)
+            if state is None:
+                # First render ever: show it directly, no flip-in from blank.
+                self._flip_digit_state[index] = {"shown": ch, "from": None, "start": None}
+                continue
+            if state["from"] is not None:
+                elapsed = now_mono - state["start"]
+                if elapsed >= self.FLIP_ANIM_SECONDS:
+                    state["from"] = None
+                    state["start"] = None
+                else:
+                    active = True
+            if state["shown"] != ch:
+                # Animate from whatever's currently on screen -- if a new
+                # change lands mid-flip (rare: would need two digit changes
+                # inside FLIP_ANIM_SECONDS), this restarts from the
+                # in-progress display rather than queuing flips, which is a
+                # fine simplification for a clock that changes once a minute.
+                state["from"] = state["shown"]
+                state["shown"] = ch
+                state["start"] = now_mono
+                active = True
+        return active
+
+    def _flip_digit_progress(self, index):
+        state = self._flip_digit_state.get(index)
+        if not state or state["from"] is None:
+            return None, 1.0
+        elapsed = time.monotonic() - state["start"]
+        progress = max(0.0, min(1.0, elapsed / self.FLIP_ANIM_SECONDS))
+        return state["from"], progress
+
+    def _draw_flip_tile(self, draw, img, x, y, dw, dh, ch_new, ch_from, progress, theme):
+        # A muted plate so the tile reads as an object sitting on the panel
+        # rather than bare digits floating on black -- distinct from the
+        # canvas background but well under the numeral's brightness.
+        tile_bg = tuple(max(6, c // 3) for c in theme.dim)
+        on = theme.primary
+        off = tuple(max(0, c // 6) for c in theme.dim)
+
+        x2, y2 = x + dw - 1, y + dh - 1
+        draw.rectangle((x, y, x2, y2), fill=tile_bg)
+        # Clipping the four corner pixels back to the panel background reads
+        # as a hint of roundedness without needing real arcs at this size.
+        for corner in ((x, y), (x2, y), (x, y2), (x2, y2)):
+            draw.point(corner, fill=theme.bg)
+
+        pad = 1 if min(dw, dh) > 6 else 0
+        content_x, content_y = x + pad, y + pad
+        content_w = max(1, dw - 2 * pad)
+        content_h = max(1, dh - 2 * pad)
+        half = max(1, content_h // 2)
+
+        new_img = Image.new("RGB", (content_w, content_h), tile_bg)
+        self._draw_segment_digit(ImageDraw.Draw(new_img), 0, 0, content_w, content_h, ch_new, on, off, "segment")
+
+        if ch_from is not None and progress < 1.0:
+            # Real split-flap boards swap the bottom (rear) leaf to the new
+            # character immediately and hidden, then the top (front) flap
+            # swings down and away, shrinking toward the hinge at the seam
+            # and uncovering the new top half as it goes. We fake the same
+            # read here: the new digit is already the base image (so the
+            # bottom half is correct from frame one), and a shrinking sliver
+            # of the OLD digit's top, pinned to the seam, sits over it.
+            old_img = Image.new("RGB", (content_w, content_h), tile_bg)
+            self._draw_segment_digit(ImageDraw.Draw(old_img), 0, 0, content_w, content_h, ch_from, on, off, "segment")
+            remaining = max(0, round((1.0 - progress) * half))
+            if remaining > 0:
+                band_top = max(0, half - remaining)
+                flap = old_img.crop((0, band_top, content_w, half))
+                # Darken the flap progressively as it swings away toward the
+                # hinge. Some digit pairs (2->3, 5->6, ...) are pixel-identical
+                # in this band, which would otherwise make the flip invisible;
+                # the shading plus the crease line below keep the motion
+                # readable no matter what glyph is underneath.
+                shade = 1.0 - 0.5 * progress
+                if shade < 1.0:
+                    flap = ImageEnhance.Brightness(flap).enhance(shade)
+                new_img.paste(flap, (0, band_top))
+                # Leading edge of the flap -- a bright crease line that visibly
+                # travels from the top of the tile down to the seam as it
+                # shrinks, the one cue guaranteed to move every frame.
+                edge_color = tuple(min(255, c + 50) for c in tile_bg)
+                ImageDraw.Draw(new_img).line((0, band_top, content_w - 1, band_top), fill=edge_color)
+
+        img.paste(new_img, (content_x, content_y))
+
+        # The seam: the physical gap between the two flaps.
+        seam_y = min(y2 - 1, max(y + 1, content_y + half))
+        draw.line((content_x, seam_y, content_x + content_w - 1, seam_y), fill=theme.bg)
+
+    def _draw_face_digital_flip(self, draw, img, w, h, variant, theme):
+        now, hour, ampm = self._time_parts()
+        digits = f"{hour:02d}{now.minute:02d}"
+        metrics = self._clock_layout_metrics(w, h, variant)
+        date_text = now.strftime("%a %m/%d").upper()
+
+        for digit_index, ch in enumerate(digits):
+            x = metrics["x0"] + digit_index * (metrics["digit_w"] + metrics["spacing"])
+            if digit_index >= 2:
+                x += metrics["colon_w"] + metrics["spacing"]
+            ch_from, progress = self._flip_digit_progress(digit_index)
+            self._draw_flip_tile(
+                draw, img, x, metrics["y0"], metrics["digit_w"], metrics["digit_h"], ch, ch_from, progress, theme
+            )
+
+        colon_left = metrics["x0"] + 2 * (metrics["digit_w"] + metrics["spacing"])
+        cx = colon_left + max(0, (metrics["colon_w"] - 1) // 2)
+        self._draw_colon(draw, cx, metrics["y0"], metrics["digit_h"], theme, "segment")
+
+        self._draw_clock_overlays(
+            draw,
+            w,
+            h,
+            variant,
+            ampm,
+            theme,
+            date_text,
+            metrics,
+        )
 
     def draw_segment_test(self):
         """Render readability test: cycle 01..24 and display as NN:NN."""
