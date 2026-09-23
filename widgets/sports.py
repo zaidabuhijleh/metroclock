@@ -68,6 +68,11 @@ class SportsWidget(Widget):
     POLL_IDLE = 120
     TEAM_INDEX_TTL = 24 * 3600
     SCHEDULE_TTL = 3 * 3600
+    # With no games today, the panel rotates your teams' upcoming games:
+    # everything in the next week, or at least each team's next game.
+    UPCOMING_WINDOW = 7 * 24 * 3600
+    UPCOMING_PER_TEAM = 4
+    UPCOMING_MAX = 12
 
     STATUS_HOLD_SECONDS = 4
     LEADER_HOLD_SECONDS = 3
@@ -81,7 +86,6 @@ class SportsWidget(Widget):
         self.last_rotate = time.time()
         self.rotate_interval = 8
         self.placeholder_reason = "loading"
-        self.upcoming_game = None
 
         self.color_text = (244, 246, 252)
         self.color_dim = (150, 162, 186)
@@ -225,8 +229,6 @@ class SportsWidget(Widget):
         previous_id = self.games[self.current_game_index].get("id") if self.games else None
         leagues = self._get_league_keys()
         all_games = [g for g in self.all_games if g.get("league") in leagues]
-        self.upcoming_game = None
-
         if self._get_view_mode() == "favorites":
             favorites = self._get_favorites()
             base = [
@@ -238,8 +240,9 @@ class SportsWidget(Widget):
             elif not favorites and any(self.LEAGUES[k].get("favorites", True) for k in leagues):
                 self.placeholder_reason = "pick a team"
             else:
-                self.placeholder_reason = "no games today"
-                self.upcoming_game = self._next_favorite_game(favorites)
+                # Nothing today: rotate the upcoming games instead.
+                base = self._upcoming_favorite_games(favorites)
+                self.placeholder_reason = None if base else "no games today"
         else:
             base = all_games
             self.placeholder_reason = None if base else "no games today"
@@ -422,21 +425,21 @@ class SportsWidget(Widget):
             reached = True
             team = payload.get("team") or {}
             self._remember_color(league, team)
-            upcoming = None
-            for event in (team.get("nextEvent") or [])[:2]:
+            upcoming = []
+            for event in team.get("nextEvent") or []:
                 game = self._parse_event(event, league)
                 if not game:
                     continue
                 if self._is_today(game, now):
                     games[game["id"]] = game
-                elif game["state"] == "pre" and game["date_ts"] > now and upcoming is None:
-                    upcoming = dict(game, upcoming=True)
-            self._schedule_cache[(league, f"#{team_id}")] = (now, upcoming)
+                elif game["state"] == "pre" and game["date_ts"] > now:
+                    upcoming.append(dict(game, upcoming=True))
+            self._schedule_cache[(league, f"#{team_id}")] = (now, self._pick_upcoming(upcoming, now))
         if ids and not reached:
             return None
-        for game in list(games.values()) + [c[1] for c in self._schedule_cache.values() if c[1]]:
-            if game.get("league") == league:
-                self._fill_colors(league, game)
+        cached = [g for (lg, _), (_, games_) in self._schedule_cache.items() if lg == league for g in games_]
+        for game in list(games.values()) + cached:
+            self._fill_colors(league, game)
         return list(games.values())
 
     def _is_today(self, game, now):
@@ -494,16 +497,19 @@ class SportsWidget(Widget):
                 continue
             path = self.LEAGUES[league]["path"]
             payload = self._get_json(f"{ESPN_SITE}/{path}/teams/{team['id']}/schedule")
-            upcoming = None
+            upcoming = []
             if payload:
                 for event in payload.get("events", []):
                     game = self._parse_event(event, league)
                     if game and game["state"] == "pre" and game.get("date_ts", 0) > now:
-                        if upcoming is None or game["date_ts"] < upcoming["date_ts"]:
-                            upcoming = game
-            if upcoming:
-                upcoming["upcoming"] = True
-            self._schedule_cache[(league, abbr)] = (now, upcoming)
+                        upcoming.append(dict(game, upcoming=True))
+            self._schedule_cache[(league, abbr)] = (now, self._pick_upcoming(upcoming, now))
+
+    def _pick_upcoming(self, games, now):
+        """A team's games in the next week, or at least its next one."""
+        games = sorted(games, key=lambda g: g["date_ts"])
+        soon = [g for g in games if g["date_ts"] - now <= self.UPCOMING_WINDOW]
+        return (soon or games[:1])[: self.UPCOMING_PER_TEAM]
 
     def _team_info(self, league, abbr, now):
         if now - self._team_index_at.get(league, 0) > self.TEAM_INDEX_TTL:
@@ -529,17 +535,21 @@ class SportsWidget(Widget):
                 self._team_index_at[league] = now - self.TEAM_INDEX_TTL + 600
         return (self._team_index.get(league) or {}).get(abbr)
 
-    def _next_favorite_game(self, favorites):
-        best = None
+    def _upcoming_favorite_games(self, favorites):
+        """Every followed team's upcoming games, soonest first.
+
+        A game between two followed teams appears once.
+        """
+        now = time.time()
         leagues = set(self._get_league_keys())
-        for (league, abbr), (_, game) in list(self._schedule_cache.items()):
-            if game is None or league not in leagues or (league, abbr) not in favorites:
+        found = {}
+        for (league, key), (_, games) in list(self._schedule_cache.items()):
+            if league not in leagues or (league, key) not in favorites:
                 continue
-            if game["date_ts"] <= time.time():
-                continue
-            if best is None or game["date_ts"] < best["date_ts"]:
-                best = game
-        return best
+            for game in games:
+                if game["date_ts"] > now:
+                    found.setdefault(game["id"], game)
+        return sorted(found.values(), key=lambda g: g["date_ts"])[: self.UPCOMING_MAX]
 
     # ================================================================= parsing
 
@@ -647,10 +657,7 @@ class SportsWidget(Widget):
         draw = ImageDraw.Draw(self.canvas)
 
         if not self.games:
-            if self.upcoming_game:
-                self._draw_game(draw, self.upcoming_game)
-            else:
-                self._draw_placeholder(draw)
+            self._draw_placeholder(draw)
             return self.canvas
 
         self._draw_game(draw, self.games[self.current_game_index % len(self.games)])
