@@ -2359,10 +2359,6 @@ class ClockWidget(Widget):
                 name_y = row_y + max(0, (row_h - name_h) // 2) - name_top
                 draw.text((name_x, name_y), name, font=name_font, fill=team_color)
 
-                if game.get("possession") == side and hasattr(self.sports, "_draw_possession_arrow"):
-                    arrow_x = name_x + int(name_font.getlength(name)) + 1
-                    if arrow_x + 3 < score_x:
-                        self.sports._draw_possession_arrow(draw, arrow_x, row_y + 2)
 
             draw_team_row(away, home, "away", away_y)
             draw_team_row(home, away, "home", home_y)
