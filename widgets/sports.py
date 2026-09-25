@@ -68,10 +68,11 @@ class SportsWidget(Widget):
     POLL_IDLE = 120
     TEAM_INDEX_TTL = 24 * 3600
     SCHEDULE_TTL = 3 * 3600
-    # With no games today, the panel rotates your teams' upcoming games:
-    # everything in the next week, or at least each team's next game.
-    UPCOMING_WINDOW = 7 * 24 * 3600
-    UPCOMING_PER_TEAM = 4
+    # With no games today, the panel rotates each team's last result (from
+    # the past two days), then this week's upcoming games. Once this week has
+    # nothing left, next week's. Never further out than that.
+    RECENT_RESULT_WINDOW = 48 * 3600
+    UPCOMING_PER_TEAM = 8
     UPCOMING_MAX = 12
 
     STATUS_HOLD_SECONDS = 4
@@ -240,9 +241,9 @@ class SportsWidget(Widget):
             elif not favorites and any(self.LEAGUES[k].get("favorites", True) for k in leagues):
                 self.placeholder_reason = "pick a team"
             else:
-                # Nothing today: rotate the upcoming games instead.
-                base = self._upcoming_favorite_games(favorites)
-                self.placeholder_reason = None if base else "no games today"
+                # Nothing today: last results, then this week's games.
+                base = self._off_day_games(favorites)
+                self.placeholder_reason = None if base else "no games this week"
         else:
             base = all_games
             self.placeholder_reason = None if base else "no games today"
@@ -412,7 +413,7 @@ class SportsWidget(Widget):
 
         /teams/{id} is ~18 KB and its nextEvent carries the live score and
         status, and stays on a finished game until the next one is due.
-        A game that is not today becomes that team's "next game".
+        Results and upcoming games come from the schedule, like pro teams.
         """
         path = self.LEAGUES[league]["path"]
         ids = sorted(key[1:] for lg, key in self._get_favorites() if lg == league and key.startswith("#"))
@@ -425,20 +426,13 @@ class SportsWidget(Widget):
             reached = True
             team = payload.get("team") or {}
             self._remember_color(league, team)
-            upcoming = []
             for event in team.get("nextEvent") or []:
                 game = self._parse_event(event, league)
-                if not game:
-                    continue
-                if self._is_today(game, now):
+                if game and self._is_today(game, now):
                     games[game["id"]] = game
-                elif game["state"] == "pre" and game["date_ts"] > now:
-                    upcoming.append(dict(game, upcoming=True))
-            self._schedule_cache[(league, f"#{team_id}")] = (now, self._pick_upcoming(upcoming, now))
         if ids and not reached:
             return None
-        cached = [g for (lg, _), (_, games_) in self._schedule_cache.items() if lg == league for g in games_]
-        for game in list(games.values()) + cached:
+        for game in games.values():
             self._fill_colors(league, game)
         return list(games.values())
 
@@ -476,40 +470,59 @@ class SportsWidget(Widget):
             side["colored"] = True
 
     def _refresh_favorite_schedules(self, now):
-        """Keep each followed team's next game, for days they do not play.
+        """Each followed team's recent result and upcoming games.
 
         Scoreboards only cover one day, so without this the panel would say
-        "no games" all week between NFL Sundays.
+        "no games" all week between NFL Sundays. Refetched every few hours,
+        and on a new day so last night's final shows up in the morning.
         """
         favorites = self._get_favorites()
         leagues = set(self._get_league_keys())
         playing_today = {key for g in self.all_games for key in self._team_keys(g, g["league"])}
-        for league, abbr in favorites:
-            if league not in leagues or (league, abbr) in playing_today:
+        today = datetime.fromtimestamp(now).date()
+        for league, key in favorites:
+            if league not in leagues or (league, key) in playing_today:
                 continue
-            if self.LEAGUES[league].get("per_team") or abbr.startswith("#"):
-                continue  # the per-team fetch keeps these
-            cached = self._schedule_cache.get((league, abbr))
-            if cached and now - cached[0] < self.SCHEDULE_TTL:
+            cached = self._schedule_cache.get((league, key))
+            if cached and now - cached["fetched"] < self.SCHEDULE_TTL and cached["day"] == today:
                 continue
-            team = self._team_info(league, abbr, now)
-            if not team:
+            if key.startswith("#"):
+                team_id = key[1:]
+            else:
+                team = self._team_info(league, key, now)
+                team_id = team["id"] if team else ""
+            if not team_id:
                 continue
             path = self.LEAGUES[league]["path"]
-            payload = self._get_json(f"{ESPN_SITE}/{path}/teams/{team['id']}/schedule")
-            upcoming = []
-            if payload:
-                for event in payload.get("events", []):
-                    game = self._parse_event(event, league)
-                    if game and game["state"] == "pre" and game.get("date_ts", 0) > now:
-                        upcoming.append(dict(game, upcoming=True))
-            self._schedule_cache[(league, abbr)] = (now, self._pick_upcoming(upcoming, now))
+            payload = self._get_json(f"{ESPN_SITE}/{path}/teams/{team_id}/schedule")
+            if payload is None:
+                continue
+            recent, upcoming = None, []
+            horizon = self._week_end(now) + 7 * 24 * 3600
+            for event in payload.get("events", []):
+                game = self._parse_event(event, league)
+                if not game:
+                    continue
+                start = game.get("date_ts", 0)
+                if game["state"] == "pre" and now < start <= horizon:
+                    upcoming.append(dict(game, upcoming=True))
+                elif game["state"] == "post" and 0 <= now - start <= self.RECENT_RESULT_WINDOW:
+                    if recent is None or start > recent["date_ts"]:
+                        recent = dict(game, recent=True)
+            upcoming.sort(key=lambda g: g["date_ts"])
+            upcoming = upcoming[: self.UPCOMING_PER_TEAM]
+            for game in upcoming + ([recent] if recent else []):
+                self._fill_colors(league, game)
+            self._schedule_cache[(league, key)] = {
+                "fetched": now, "day": today, "recent": recent, "upcoming": upcoming,
+            }
 
-    def _pick_upcoming(self, games, now):
-        """A team's games in the next week, or at least its next one."""
-        games = sorted(games, key=lambda g: g["date_ts"])
-        soon = [g for g in games if g["date_ts"] - now <= self.UPCOMING_WINDOW]
-        return (soon or games[:1])[: self.UPCOMING_PER_TEAM]
+    @staticmethod
+    def _week_end(now):
+        """End of this week (Sunday, 23:59:59 local) as a timestamp."""
+        day = datetime.fromtimestamp(now)
+        sunday = day + timedelta(days=6 - day.weekday())
+        return sunday.replace(hour=23, minute=59, second=59, microsecond=0).timestamp()
 
     def _team_info(self, league, abbr, now):
         if now - self._team_index_at.get(league, 0) > self.TEAM_INDEX_TTL:
@@ -535,21 +548,34 @@ class SportsWidget(Widget):
                 self._team_index_at[league] = now - self.TEAM_INDEX_TTL + 600
         return (self._team_index.get(league) or {}).get(abbr)
 
-    def _upcoming_favorite_games(self, favorites):
-        """Every followed team's upcoming games, soonest first.
+    def _off_day_games(self, favorites):
+        """What rotates when none of your teams play today.
 
+        Each team's last result from the past two days, most recent first,
+        then this week's upcoming games, soonest first. When nothing is left
+        this week (a Sunday with no games, a bye week), next week's games.
         A game between two followed teams appears once.
         """
         now = time.time()
         leagues = set(self._get_league_keys())
-        found = {}
-        for (league, key), (_, games) in list(self._schedule_cache.items()):
+        recents, upcoming = {}, {}
+        for (league, key), entry in list(self._schedule_cache.items()):
             if league not in leagues or (league, key) not in favorites:
                 continue
-            for game in games:
+            recent = entry.get("recent")
+            if recent and 0 <= now - recent["date_ts"] <= self.RECENT_RESULT_WINDOW:
+                recents.setdefault(recent["id"], recent)
+            for game in entry.get("upcoming") or []:
                 if game["date_ts"] > now:
-                    found.setdefault(game["id"], game)
-        return sorted(found.values(), key=lambda g: g["date_ts"])[: self.UPCOMING_MAX]
+                    upcoming.setdefault(game["id"], game)
+
+        week_end = self._week_end(now)
+        this_week = [g for g in upcoming.values() if g["date_ts"] <= week_end]
+        if not this_week:
+            this_week = [g for g in upcoming.values() if week_end < g["date_ts"] <= week_end + 7 * 24 * 3600]
+        this_week.sort(key=lambda g: g["date_ts"])
+        results = sorted(recents.values(), key=lambda g: -g["date_ts"])
+        return (results + this_week)[: self.UPCOMING_MAX]
 
     # ================================================================= parsing
 
@@ -676,6 +702,8 @@ class SportsWidget(Widget):
             head, sub = "NO SCORES", "RETRYING"
         elif reason == "PICK A TEAM":
             head, sub = "MY TEAMS", "PICK A TEAM"
+        elif reason == "NO GAMES THIS WEEK":
+            head, sub = "NO GAMES", "THIS WEEK"
         else:
             head, sub = "NO GAMES", "TODAY"
 
@@ -870,19 +898,14 @@ class SportsWidget(Widget):
             return self._start_text(game)
 
         if state == "post":
-            if sport == "soccer":
-                if "PEN" in detail:
-                    return "FT PENS"
-                if "AET" in detail or "EXTRA" in detail:
-                    return "AET"
-                return "FT"
-            if sport == "baseball":
-                inning = self._as_int(game.get("period"), 9)
-                return f"FINAL/{inning}" if inning > 9 else "FINAL"
-            if "OT" in detail or "SO" in detail:
-                label = detail.split("/", 1)[-1].strip() if "/" in detail else "OT"
-                return f"FINAL/{label}"
-            return "FINAL"
+            text = self._final_text(game, detail, sport)
+            if game.get("recent"):
+                # A result from an earlier day says which day.
+                try:
+                    text += " " + datetime.fromtimestamp(game["date_ts"]).strftime("%a").upper()
+                except Exception:
+                    pass
+            return text
 
         if sport == "soccer":
             return self._soccer_live_status(game, detail)
@@ -895,6 +918,21 @@ class SportsWidget(Widget):
             return f"END {self._period_label(game, game.get('period'))}"
         clock = game.get("clock") or ""
         return f"{self._period_label(game)} {clock}".strip()
+
+    def _final_text(self, game, detail, sport):
+        if sport == "soccer":
+            if "PEN" in detail:
+                return "FT PENS"
+            if "AET" in detail or "EXTRA" in detail:
+                return "AET"
+            return "FT"
+        if sport == "baseball":
+            inning = self._as_int(game.get("period"), 9)
+            return f"FINAL/{inning}" if inning > 9 else "FINAL"
+        if "OT" in detail or "SO" in detail:
+            label = detail.split("/", 1)[-1].strip() if "/" in detail else "OT"
+            return f"FINAL/{label}"
+        return "FINAL"
 
     def _start_text(self, game):
         ts = game.get("date_ts", 0.0)
