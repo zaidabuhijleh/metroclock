@@ -94,9 +94,14 @@ FLIGHT_NUMBER = "AC57"  # Default flight to track
 FLIGHT_UPDATE_INTERVAL = 1800
 
 # --- SPORTS ---
-SPORTS_LEAGUE = "nba"  # "nba", "eng.1", "esp.1", or "fifa.world"
-SPORTS_VIEW_MODE = "all_live"  # "all_live" (all teams) or "favorites"
-SPORTS_FAVORITE_TEAMS = ""  # CSV of NBA abbreviations, e.g. "LAL,BOS"
+# Leagues: nba, wnba, nfl, mlb, nhl, usa.1 (MLS), eng.1, esp.1,
+# uefa.champions, fifa.world, college-football, mens-college-basketball,
+# womens-college-basketball. See widgets/sports.py LEAGUES.
+SPORTS_LEAGUES = ""  # CSV of leagues, e.g. "nfl,nba,mlb"; empty = SPORTS_LEAGUE alone
+SPORTS_LEAGUE = "nba"  # Primary league; the only one older app/web builds know
+SPORTS_VIEW_MODE = "all_live"  # "all_live" (all teams) or "favorites" (My Teams)
+SPORTS_MY_TEAMS = ""  # CSV of league:ESPN-abbr, or league:ESPN-team-id for college, e.g. "nfl:WSH,college-football:120"
+SPORTS_FAVORITE_TEAMS = ""  # Legacy: bare abbreviations for SPORTS_LEAGUE; used when SPORTS_MY_TEAMS is empty
 SPORTS_TEST_DATE = ""  # YYYYMMDD to pin a date for testing; empty = today
 SPORTS_LIVE_FOCUS = True  # If True: when any chosen game is live, rotate only live games
 
@@ -260,6 +265,8 @@ RUNTIME_EDITABLE_FIELDS = {
     "METROCLOCK_CLOUD_PREVIEW_SECONDS",
     "SPORTS_VIEW_MODE",
     "SPORTS_LEAGUE",
+    "SPORTS_LEAGUES",
+    "SPORTS_MY_TEAMS",
     "SPORTS_FAVORITE_TEAMS",
     "SPORTS_TEST_DATE",
     "SPORTS_LIVE_FOCUS",

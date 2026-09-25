@@ -881,6 +881,7 @@
         <button class="unit-btn" data-sports-league="fifa.world" onclick="setSportsLeague('fifa.world')">World Cup</button>
       </div>
       <p class="hint">World Cup shows the day's games as a daily slate, no favorite team required.</p>
+      <p class="hint" id="sports-multi-hint" style="display:none;"></p>
     </div>
     <div class="card">
       <div class="card-title">View Mode</div>
@@ -1235,7 +1236,7 @@ const NBA_TEAMS = [
   {abbr:"DAL", name:"Mavericks",     color:"#00538C"},
   {abbr:"DEN", name:"Nuggets",       color:"#0E2240"},
   {abbr:"DET", name:"Pistons",       color:"#C8102E"},
-  {abbr:"GSW", name:"Warriors",      color:"#1D428A"},
+  {abbr:"GS", name:"Warriors",      color:"#1D428A"},
   {abbr:"HOU", name:"Rockets",       color:"#CE1141"},
   {abbr:"IND", name:"Pacers",        color:"#FDBB30"},
   {abbr:"LAC", name:"Clippers",      color:"#C8102E"},
@@ -1244,18 +1245,18 @@ const NBA_TEAMS = [
   {abbr:"MIA", name:"Heat",          color:"#98002E"},
   {abbr:"MIL", name:"Bucks",         color:"#00471B"},
   {abbr:"MIN", name:"Timberwolves",  color:"#236192"},
-  {abbr:"NOP", name:"Pelicans",      color:"#85714D"},
-  {abbr:"NYK", name:"Knicks",        color:"#F58426"},
+  {abbr:"NO", name:"Pelicans",      color:"#85714D"},
+  {abbr:"NY", name:"Knicks",        color:"#F58426"},
   {abbr:"OKC", name:"Thunder",       color:"#007AC1"},
   {abbr:"ORL", name:"Magic",         color:"#0077C0"},
   {abbr:"PHI", name:"76ers",         color:"#006BB6"},
   {abbr:"PHX", name:"Suns",          color:"#E56020"},
   {abbr:"POR", name:"Trail Blazers", color:"#E03A3E"},
   {abbr:"SAC", name:"Kings",         color:"#7A4DAB"},
-  {abbr:"SAS", name:"Spurs",         color:"#C4CED4"},
+  {abbr:"SA", name:"Spurs",         color:"#C4CED4"},
   {abbr:"TOR", name:"Raptors",       color:"#CE1141"},
-  {abbr:"UTA", name:"Jazz",          color:"#F9A01B"},
-  {abbr:"WAS", name:"Wizards",       color:"#E31837"},
+  {abbr:"UTAH", name:"Jazz",          color:"#F9A01B"},
+  {abbr:"WSH", name:"Wizards",       color:"#E31837"},
 ];
 
 const SPORTS_LEAGUES = {
@@ -1273,22 +1274,21 @@ const SPORTS_LEAGUES = {
       {abbr:"BOU", name:"Bournemouth", color:"#DA291C"},
       {abbr:"BRE", name:"Brentford", color:"#E30613"},
       {abbr:"BHA", name:"Brighton", color:"#0057B8"},
-      {abbr:"BUR", name:"Burnley", color:"#6C1D45"},
       {abbr:"CHE", name:"Chelsea", color:"#034694"},
       {abbr:"COV", name:"Coventry City", color:"#77BBEE"},
       {abbr:"CRY", name:"Crystal Palace", color:"#1B458F"},
       {abbr:"EVE", name:"Everton", color:"#003399"},
       {abbr:"FUL", name:"Fulham", color:"#FFFFFF"},
+      {abbr:"HUL", name:"Hull City", color:"#F28800"},
+      {abbr:"IPS", name:"Ipswich Town", color:"#3A64A3"},
       {abbr:"LEE", name:"Leeds United", color:"#FFCD00"},
       {abbr:"LIV", name:"Liverpool", color:"#C8102E"},
-      {abbr:"MCI", name:"Manchester City", color:"#6CABDD"},
-      {abbr:"MUN", name:"Manchester United", color:"#DA291C"},
+      {abbr:"MNC", name:"Manchester City", color:"#6CABDD"},
+      {abbr:"MAN", name:"Manchester United", color:"#DA291C"},
       {abbr:"NEW", name:"Newcastle United", color:"#FFFFFF"},
       {abbr:"NFO", name:"Nottingham Forest", color:"#DD0000"},
       {abbr:"SUN", name:"Sunderland", color:"#EB172B"},
       {abbr:"TOT", name:"Tottenham Hotspur", color:"#FFFFFF"},
-      {abbr:"WHU", name:"West Ham United", color:"#7A263A"},
-      {abbr:"WOL", name:"Wolverhampton", color:"#FDB913"},
     ],
   },
   "esp.1": {
@@ -1301,13 +1301,14 @@ const SPORTS_LEAGUES = {
       {abbr:"BAR", name:"Barcelona", color:"#A50044"},
       {abbr:"BET", name:"Real Betis", color:"#00954C"},
       {abbr:"CEL", name:"Celta Vigo", color:"#8AC3EE"},
+      {abbr:"DEP", name:"Deportivo La Coruna", color:"#3366CC"},
       {abbr:"ELC", name:"Elche", color:"#007A3D"},
       {abbr:"ESP", name:"Espanyol", color:"#0070B8"},
       {abbr:"GET", name:"Getafe", color:"#005999"},
-      {abbr:"GIR", name:"Girona", color:"#D71920"},
       {abbr:"LEV", name:"Levante", color:"#C8102E"},
-      {abbr:"MLL", name:"Mallorca", color:"#E20613"},
+      {abbr:"MCF", name:"Malaga", color:"#6FB7E6"},
       {abbr:"OSA", name:"Osasuna", color:"#C8102E"},
+      {abbr:"RAC", name:"Racing Santander", color:"#1E8C4E"},
       {abbr:"RAY", name:"Rayo Vallecano", color:"#E53027"},
       {abbr:"RMA", name:"Real Madrid", color:"#FFFFFF"},
       {abbr:"RSO", name:"Real Sociedad", color:"#0067B1"},
@@ -2026,12 +2027,27 @@ async function init() {
     setActiveSportsView(selectedSportsView);
     selectedSportsLiveFocus = data.SPORTS_LIVE_FOCUS !== false;
     setActiveSportsLiveFocus(selectedSportsLiveFocus);
+    // App builds save league-qualified teams ("nfl:WSH") in SPORTS_MY_TEAMS;
+    // older saves only have bare abbreviations, some of them pre-ESPN names.
+    const legacyAliases = {GSW:"GS", NOP:"NO", NYK:"NY", SAS:"SA", UTA:"UTAH", WAS:"WSH", MCI:"MNC", MUN:"MAN"};
+    const qualified = String(data.SPORTS_MY_TEAMS || "").split(",").map(s => s.trim()).filter(s => s.includes(":"));
     selectedTeams = new Set(
-      String(data.SPORTS_FAVORITE_TEAMS || "")
-        .split(",")
-        .map(s => s.trim().toUpperCase())
-        .filter(Boolean)
+      qualified.length
+        ? qualified
+            .filter(t => t.split(":")[0].toLowerCase() === selectedSportsLeague)
+            .map(t => t.split(":")[1].toUpperCase())
+        : String(data.SPORTS_FAVORITE_TEAMS || "")
+            .split(",")
+            .map(s => s.trim().toUpperCase())
+            .filter(Boolean)
+            .map(abbr => legacyAliases[abbr] || abbr)
     );
+    const appLeagues = String(data.SPORTS_LEAGUES || "").split(",").map(s => s.trim()).filter(Boolean);
+    const multiHint = document.getElementById("sports-multi-hint");
+    if (multiHint) {
+      multiHint.style.display = appLeagues.length > 1 ? "" : "none";
+      multiHint.textContent = `The app has ${appLeagues.length} leagues selected (${appLeagues.join(", ")}). Saving here keeps only the league chosen above.`;
+    }
     renderTeams();
     document.getElementById("sports-test-date").value = data.SPORTS_TEST_DATE || "";
 
@@ -2773,11 +2789,16 @@ async function saveSports() {
     toast("Test date must be YYYYMMDD or empty", "error");
     return;
   }
+  const teams = Array.from(selectedTeams);
+  // This page edits one league. Saving here replaces a multi-league setup
+  // from the app with this league and its teams.
   const payload = {
     SPORTS_LEAGUE: selectedSportsLeague,
+    SPORTS_LEAGUES: selectedSportsLeague,
     SPORTS_VIEW_MODE: selectedSportsView,
     SPORTS_LIVE_FOCUS: selectedSportsLiveFocus,
-    SPORTS_FAVORITE_TEAMS: Array.from(selectedTeams).join(","),
+    SPORTS_FAVORITE_TEAMS: teams.join(","),
+    SPORTS_MY_TEAMS: teams.map(abbr => `${selectedSportsLeague}:${abbr}`).join(","),
     SPORTS_TEST_DATE: dateRaw,
   };
   await saveSettings(payload);
